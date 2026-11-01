@@ -1,7 +1,8 @@
 'use client';
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
-import { api, fmtDate, fmtDateTime } from '@/components/api';
+import { api, fmtDate, fmtDateTime, fmtMoney } from '@/components/api';
+import { NewVendorRequest } from '@/components/NewVendorRequest';
 import { useMe } from '@/components/Shell';
 import { JobFileFields } from '@/components/JobFileForm';
 import JobFileDocs from '@/components/JobFileDocs';
@@ -34,6 +35,48 @@ function Milestones({ d, act }: { d: any; act: (b: any) => Promise<void> }) {
                 }}>Done</button>}</td>}
         </tr>)}</tbody></table></div>
       <p className="muted small" style={{ marginBottom: 0 }}>Marking departure or arrival done also fills the actual departure / arrival date.</p>
+    </div>
+  );
+}
+
+/** Enquiry → vendor rates (several vendors per request, lowest marked) → quotations, all on this Job No. */
+function Enquiry({ d, reload }: { d: any; reload: () => void }) {
+  const { me } = useMe();
+  const [ask, setAsk] = useState<null | { sameAs?: { id: string; asked: string[] } }>(null);
+  const cost = me.financial_access.buyingView;
+  const rates = (d.vendor_requests ?? []).filter((r: any) => r.service === 'rate');
+  const others = (d.vendor_requests ?? []).filter((r: any) => r.service !== 'rate');
+  const groups: any[][] = [];
+  for (const r of rates) { const g = r.rate_group && groups.find((x) => x[0].rate_group === r.rate_group); if (g) g.push(r); else groups.push([r]); }
+  if (d.quotations === null && d.vendor_requests === null) return null;
+  return (
+    <div className="panel"><h2>Enquiry and quotation</h2>
+      {d.status === 'enquiry' && <p className="small" style={{ marginTop: 0 }}>Step 1: ask vendors for a rate. Step 2: make the quotation from the best rate.
+        Step 3: when the customer accepts, this same Job No. becomes a live shipment.</p>}
+      {d.vendor_requests !== null && <>
+        <h3 className="small" style={{ margin: '6px 0' }}>Vendor rates</h3>
+        {groups.length === 0 && <p className="muted small">No vendor has been asked for a rate yet.</p>}
+        {groups.map((g) => <div key={g[0].rate_group ?? g[0].id} style={{ marginBottom: 10 }}>
+          <div className="small" style={{ display: 'flex', gap: 8, alignItems: 'center' }}><span className="muted">{g[0].description.slice(0, 90)}</span><span className="spacer" />
+            {d.can.ask_vendor && <button className="linkish" onClick={() => setAsk({ sameAs: { id: g[0].id, asked: g.filter((r) => r.status !== 'cancelled').map((r) => r.vendor_id).filter(Boolean) } })}>+ Ask more vendors</button>}</div>
+          <div className="table-wrap"><table className="t"><thead><tr><th>Request</th><th>Vendor</th>{cost && <th className="num">Price</th>}<th>Valid until</th><th>Status</th></tr></thead>
+            <tbody>{g.map((r) => <tr key={r.id} className={r.lowest ? 'is-lowest' : ''}><td><Link href={`/vendor-requests/${r.id}`}>{r.request_no}</Link></td>
+              <td>{r.vendor_name}{r.lowest && <span className="lowest">Lowest</span>}</td>
+              {cost && <td className="num">{r.quoted_cost ? fmtMoney(r.quoted_cost, r.currency) : <span className="muted">waiting</span>}</td>}
+              <td>{fmtDate(r.rate_valid_until)}</td><td className="small">{r.status === 'requested' ? 'Waiting for price' : r.status === 'quoted' ? 'Quoted' : r.status === 'confirmed' ? 'Chosen / confirmed' : r.status === 'cancelled' ? 'Cancelled' : r.status}</td></tr>)}</tbody></table></div>
+        </div>)}
+        {others.length > 0 && <p className="small muted">Other vendor requests: {others.map((r: any, i: number) => <span key={r.id}>{i ? ', ' : ''}<Link href={`/vendor-requests/${r.id}`}>{r.request_no}</Link> ({r.vendor_name})</span>)}</p>}
+        {d.can.ask_vendor && <button className="btn small" onClick={() => setAsk({})}>Ask vendors for a rate</button>}
+      </>}
+      {d.quotations !== null && <>
+        <h3 className="small" style={{ margin: '14px 0 6px' }}>Quotations</h3>
+        {d.quotations.length === 0 && <p className="muted small">No quotation yet.</p>}
+        {d.quotations.map((x: any) => <div key={x.id} className="small" style={{ padding: '3px 0' }}><Link href={`/quotations/${x.id}`}><b>{x.quote_no}</b></Link>{' '}
+          <span className="badge" style={{ background: x.status_color }}>{x.status_name}</span> <span className="muted">valid until {fmtDate(x.valid_until)}</span></div>)}
+        {d.can.quote && <Link className="btn small primary" style={{ marginTop: 6 }} href={`/quotations/new?job_file=${d.id}`}>Make quotation</Link>}
+      </>}
+      {ask && <NewVendorRequest jobNo={d.job_no} sameAs={ask.sameAs} description={[d.origin, d.destination].filter(Boolean).join(' → ') + (d.cargo_description ? ` — ${d.cargo_description}` : '')}
+        onClose={() => setAsk(null)} onDone={() => { setAsk(null); reload(); }} />}
     </div>
   );
 }
@@ -83,6 +126,7 @@ export default function JobFile({ params }: { params: { id: string } }) {
       {d.status === 'cancelled' && <div className="msg warn">Cancelled: {d.cancel_reason}</div>}
       {d.service_instructions && <div className="msg">Customer's standing instructions: {d.service_instructions}</div>}
 
+      {!edit && (d.status === 'enquiry' || (d.quotations?.length ?? 0) > 0 || (d.vendor_requests?.length ?? 0) > 0) && <Enquiry d={d} reload={load} />}
       {edit ? <>
         <JobFileFields f={edit} setF={setEdit} />
         <div className="form-actions"><button className="btn" onClick={() => setEdit(null)}>Cancel</button>

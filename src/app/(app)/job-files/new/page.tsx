@@ -10,7 +10,7 @@ import { CONTAINER_TYPES } from '@/lib/jobfileRules';
 export default function NewJobFile() {
   const { can } = useMe();
   const router = useRouter();
-  const [f, setF] = useState<any>({ direction: 'import', mode: 'sea_fcl' });
+  const [f, setF] = useState<any>({ direction: 'import', mode: 'sea_fcl', status: 'enquiry' });
   const [conts, setConts] = useState<{ container_no: string; size_type: string; seal_no: string }[]>([{ container_no: '', size_type: '40HC', seal_no: '' }]);
   const [fe, setFe] = useState<Record<string, string>>({});
   const [err, setErr] = useState<{ m: string; id?: string } | null>(null);
@@ -33,6 +33,10 @@ export default function NewJobFile() {
     <div className="page">
       <div className="page-head"><h1>New Job File</h1></div>
       {err && <div className="msg err">{err.m} {err.id && <Link href={`/job-files/${err.id}`}>Open it</Link>}</div>}
+      <div className="panel"><h2>What is it?</h2><div style={{ display: 'flex', gap: 22, flexWrap: 'wrap' }}>
+        {[['enquiry', 'Customer enquiry — ask vendors for rates and quote first'], ['open', 'Confirmed shipment — no quotation needed']].map(([v, t]) =>
+          <label key={v} className="check"><input type="radio" name="jf_kind" checked={f.status === v} onChange={() => setF({ ...f, status: v })} /> {t}</label>)}</div>
+        {f.status === 'enquiry' && <p className="muted small" style={{ marginBottom: 0 }}>The Job No. is kept from now to the end: vendor rates, quotation, and — when the customer accepts — the shipment itself.</p>}</div>
       <JobFileFields f={f} setF={(v) => { setF(v); setFe({}); }} fe={fe} isNew />
       {containersNeeded && <div className="panel"><h2>Containers</h2>
         <p className="muted small" style={{ marginTop: 0 }}>Optional now — they can be added later on the Job File.</p>
@@ -45,7 +49,7 @@ export default function NewJobFile() {
         <button className="btn small" type="button" onClick={() => setConts([...conts, { container_no: '', size_type: conts[conts.length - 1]?.size_type ?? '40HC', seal_no: '' }])}>+ Add container</button>
       </div>}
       <div className="form-actions"><Link className="btn" href="/job-files">Cancel</Link>
-        <button className="btn primary" disabled={busy} onClick={save}>{busy ? 'Saving…' : 'Create Job File'}</button></div>
+        <button className="btn primary" disabled={busy} onClick={save}>{busy ? 'Saving…' : f.status === 'enquiry' ? 'Open enquiry' : 'Create Job File'}</button></div>
     </div>
   );
 }

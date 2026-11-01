@@ -63,7 +63,7 @@ async function ready(types: string[] = Object.keys(ERP_TYPES), ids?: string[]) {
       quantity: String(Number(r.qty)), unit: 'units', selling_amount: '', cost_amount: '', currency: cur });
   if (types.includes('vendor')) for (const r of await q(`select r.id, r.request_no, r.completed_at, r.service, r.description, r.quoted_cost, r.currency, r.vendor_reference,
       v.name vendor, f.job_no from vendor_requests r join vendors v on v.id = r.vendor_id left join job_files f on f.id = r.job_file_id
-    where r.status = 'completed' and ${notExported('vendor', 'r.id')}${only('r.id')} order by r.completed_at`, p))
+    where r.status = 'completed' and r.service <> 'rate' and ${notExported('vendor', 'r.id')}${only('r.id')} order by r.completed_at`, p))
     out.push({ source_type: 'vendor', source_id: r.id, external_ref: `RFSOPS-VR-${r.request_no}`, type: ERP_TYPES.vendor, date: new Date(r.completed_at).toISOString().slice(0, 10),
       customer: r.vendor, job_no: r.job_no ?? '', reference: r.vendor_reference ? `${r.request_no} / ${r.vendor_reference}` : r.request_no,
       description: r.description.slice(0, 200), quantity: '1', unit: 'service', selling_amount: '', cost_amount: r.quoted_cost === null ? '' : Number(r.quoted_cost).toFixed(2), currency: r.currency });

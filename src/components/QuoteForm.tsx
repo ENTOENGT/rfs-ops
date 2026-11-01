@@ -27,7 +27,16 @@ function totals(lines: any[]) {
  * Quotation header + charge lines. Cost columns only for people who see cost, selling only for people who
  * see selling — the server enforces the same and keeps hidden values when lines are saved.
  */
-export function QuoteFields({ f, setF, fe = {}, minMargin }: { f: any; setF: (v: any) => void; fe?: Record<string, string>; minMargin?: number }) {
+/** The message when a rate is not the lowest valid price for the same request, or null. */
+export function cheaperThan(rates: any[], r: any): string | null {
+  if (!r?.rate_group || r.lowest) return null;
+  const best = rates.find((x) => x.rate_group === r.rate_group && x.lowest);
+  if (!best || Number(best.quoted_cost) >= Number(r.quoted_cost)) return null;
+  return `${best.vendor_name} quoted less for the same request: ${fmtMoney(best.quoted_cost, best.currency)} (${best.request_no}) against ${r.vendor_name} ${fmtMoney(r.quoted_cost, r.currency)}.`;
+}
+
+export function QuoteFields({ f, setF, fe = {}, minMargin, vendorRates = [], jobNo }: { f: any; setF: (v: any) => void; fe?: Record<string, string>; minMargin?: number;
+  vendorRates?: any[]; jobNo?: string }) {
   const { me, lk } = useMe();
   const { buyingView, sellingView, profitView } = me.financial_access;
   const set = (k: string) => (e: any) => setF({ ...f, [k]: e.target.value });
@@ -42,11 +51,21 @@ export function QuoteFields({ f, setF, fe = {}, minMargin }: { f: any; setF: (v:
   }) });
   const t = totals(lines);
   const cur = lk.currency ?? 'AED';
+  const rates = vendorRates.filter((r) => r.quoted_cost !== null && r.quoted_cost !== undefined && r.status !== 'cancelled');
+  const useRate = (r: any) => {
+    const w = cheaperThan(rates, r);
+    if (w && !confirm(`${w}\n\nUse ${r.vendor_name}'s rate anyway?`)) return;
+    const line = { ...emptyLine(), description: `${r.service === 'rate' ? 'Freight' : r.service} — ${r.vendor_name}`, cost_rate: r.quoted_cost, margin_type: sellingView ? 'percent' : '', margin_value: '',
+      sell_rate: '', vendor_request_id: r.id };
+    const blank = lines.length === 1 && !lines[0].description && !lines[0].cost_rate && !lines[0].sell_rate;
+    setF({ ...f, lines: blank ? [line] : [...lines, line] });
+  };
   return <>
     <div className="panel"><h2>Enquiry</h2><div className="grid g3">
       <label className={`f span2${fe.customer_id ? ' bad' : ''}`}><span>Customer <em>*</em></span>
-        <select value={f.customer_id ?? ''} onChange={set('customer_id')}><option value="">Choose customer</option>
+        <select value={f.customer_id ?? ''} onChange={set('customer_id')} disabled={!!f.job_file_id} title={f.job_file_id ? "The Job File's customer" : ''}><option value="">Choose customer</option>
           {lk.customers.map((c: any) => <option key={c.id} value={c.id}>{c.name}</option>)}</select><Err m={fe.customer_id} /></label>
+      {jobNo && <label className="f"><span>Job No.</span><input value={jobNo} readOnly /></label>}
       <label className="f"><span>Enquiry / customer ref.</span><input value={f.enquiry_reference ?? ''} onChange={set('enquiry_reference')} /></label>
       <label className={`f${fe.service_type ? ' bad' : ''}`}><span>Service <em>*</em></span>
         <select value={f.service_type ?? ''} onChange={set('service_type')}><option value="">Choose</option>
@@ -62,13 +81,24 @@ export function QuoteFields({ f, setF, fe = {}, minMargin }: { f: any; setF: (v:
       <label className="f"><span>Chargeable weight (kg)</span><input type="number" min={0} value={f.chargeable_weight_kg ?? ''} onChange={set('chargeable_weight_kg')} /></label>
       <label className="f span2"><span>Cargo</span><input value={f.cargo_description ?? ''} onChange={set('cargo_description')} /></label>
     </div></div>
+    {buyingView && rates.length > 0 && <div className="panel"><h2>Vendor rates on Job No. {jobNo}</h2>
+      <p className="muted small" style={{ marginTop: 0 }}>Press "Use" to add a vendor's rate as a cost line, then put your margin on it.</p>
+      <div className="table-wrap"><table className="t"><thead><tr><th>Request</th><th>Vendor</th><th className="num">Rate</th><th>Valid until</th><th /></tr></thead>
+        <tbody>{rates.map((r) => { const used = lines.some((l) => l.vendor_request_id === r.id); return <tr key={r.id} className={r.lowest ? 'is-lowest' : ''}>
+          <td>{r.request_no}<div className="muted small">{String(r.description ?? '').slice(0, 50)}</div></td>
+          <td>{r.vendor_name}{r.lowest && <span className="lowest">Lowest</span>}</td><td className="num">{fmtMoney(r.quoted_cost, r.currency)}</td><td>{r.rate_valid_until ?? '—'}</td>
+          <td style={{ textAlign: 'right' }}>{used ? <span className="muted small">Used</span> : <button className="btn small" type="button" onClick={() => useRate(r)}>Use</button>}</td></tr>; })}</tbody></table></div>
+    </div>}
     <div className="panel"><h2>Charges ({cur}, excluding VAT)</h2>
       <div className="table-wrap"><table className="t">
         <thead><tr><th style={{ width: '32%' }}>Charge</th><th>Charged</th><th className="num">Qty</th>
           {buyingView && <th className="num">Cost rate</th>}{canMargin && <th>Margin</th>}{sellingView && <th className="num">Selling rate</th>}
           {sellingView && <th className="num">Amount</th>}<th /></tr></thead>
         <tbody>{lines.map((l, i) => <tr key={i}>
-          <td><input value={l.description} onChange={(e) => setLine(i, 'description', e.target.value)} placeholder="e.g. Ocean freight, THC, DO fee" /></td>
+          <td><input value={l.description} onChange={(e) => setLine(i, 'description', e.target.value)} placeholder="e.g. Ocean freight, THC, DO fee" />
+            {l.vendor_request_id && (() => { const r = rates.find((x) => x.id === l.vendor_request_id); const w = r && cheaperThan(rates, r);
+              return r ? <div className="small" style={{ marginTop: 3 }}><span className="muted">Vendor rate {r.request_no} · {r.vendor_name}</span>
+                {w && <div className="flag" style={{ display: 'block', marginTop: 3, whiteSpace: 'normal' }}>{w}</div>}</div> : null; })()}</td>
           <td><select value={l.charge_unit} onChange={(e) => setLine(i, 'charge_unit', e.target.value)}>
             {CHARGE_UNITS.map(([c, n]) => <option key={c} value={c}>{n}</option>)}</select></td>
           <td className="num"><input style={{ width: 80, textAlign: 'right' }} value={l.quantity} onChange={(e) => setLine(i, 'quantity', e.target.value)} inputMode="decimal" /></td>

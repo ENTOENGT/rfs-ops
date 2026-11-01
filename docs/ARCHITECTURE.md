@@ -468,6 +468,24 @@ quotations within validity; every print / download is written to the quotation h
   index); the ERP result is typed back (confirm with the ERP reference; reject single lines with a reason → ready again).
   `erp.*` permissions are commercial. No ERP API is assumed; storage billing waits for rate cards.
 
+## 15f. One Job No. from enquiry to closing (migration 017)
+
+- A Job File can start as an **enquiry** (`status = 'enquiry'`, list view "Enquiries (quoting)"). It is not a live
+  shipment and cannot be closed until a quotation is accepted (or it is set to Open / cancelled).
+- **Rate requests** (`vendor_requests.service = 'rate'`, `rate_valid_until`) on the Job No. One request can go to
+  several vendors at once (`vendor_ids`): one row per vendor sharing `rate_group`; "Ask more vendors" (`same_as`) adds
+  to the group; the same vendor can't be asked twice. The lowest priced, not cancelled, not expired rate is marked
+  "Lowest" (`markLowest`, `rateGroup`). Cost viewers only.
+- **Choosing a dearer vendor** is allowed but always flagged: `cheaperRateWarning` gives the message ("X quoted less
+  for the same request …") on the vendor request page, when picking the rate in the quotation form (confirm box), on
+  the quotation (`rate_warnings`, and a "Dearer vendor rate used" event), and confirming that vendor writes a
+  "Chosen although another vendor quoted less" event.
+- **Quotation on the Job No.** (`quotations.job_file_id`; `/quotations/new?job_file=ID` fills customer and shipment).
+  Vendor rates become cost lines (`quotation_lines.vendor_request_id`, must belong to the same Job File); margin on top.
+- **Accept** on a file-linked quotation: the same Job File goes enquiry → open, `quotation_id` set, other open
+  quotations on it are cancelled ("Qx was accepted instead"). No new Job No.
+- Rate requests are never sent to the ERP (nothing to pay).
+
 ## 16. Phase status
 
 | Phase | Status |
@@ -488,5 +506,6 @@ quotations within validity; every print / download is written to the quotation h
 | Freight + 3PL — Part A: Job Files, quotations, new roles, contacts, money switch (migration 013) | Done |
 | Freight + 3PL — Part B: quotation margin + customer copy, warehouse core (migrations 014–015) | Done |
 | Freight + 3PL — Part C: documents + checklists, customer service, vendors, ERP export (migration 016) | Done |
+| Enquiry flow — one Job No. from enquiry; rate requests to several vendors with lowest-price warning (migration 017) | Done |
 | Freight + 3PL — remaining phases: see `docs/FREIGHT_3PL_PLAN.md` | Planned |
 | 7 Email notifications · 8 Saved views, column prefs, live ops table, performance | Planned |

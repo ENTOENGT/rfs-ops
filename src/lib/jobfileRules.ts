@@ -4,7 +4,7 @@ export const DIRECTIONS: [string, string][] = [['import', 'Import'], ['export', 
 export const MODES: [string, string][] = [['sea_fcl', 'Sea FCL'], ['sea_lcl', 'Sea LCL'], ['air', 'Air'], ['road', 'Road / land']];
 export const JF_STATUSES: [string, string, string][] = [
   // code, name, colour
-  ['open', 'Open', '#5B6B82'], ['booked', 'Booked', '#2B6CB0'], ['in_transit', 'In transit', '#553C9A'],
+  ['enquiry', 'Enquiry / quoting', '#8A94A6'], ['open', 'Open', '#5B6B82'], ['booked', 'Booked', '#2B6CB0'], ['in_transit', 'In transit', '#553C9A'],
   ['arrived', 'Arrived', '#2C7A7B'], ['delivering', 'Clearance / delivery', '#B7791F'],
   ['closed', 'Closed', '#22543D'], ['cancelled', 'Cancelled', '#9B2C2C'],
 ];

@@ -18,13 +18,13 @@ import { PoolClient } from 'pg';
 import { Actor } from './auth';
 import { ApiError, bad, Db, forbidden, getSetting, notFound, one, q, tx } from './db';
 import { jobNoProblem } from '../lib/requestRules';
-import { DIRECTIONS, MODES, JF_STATUSES, INCOTERMS, jfStatusName, jfStatusColor, label, milestonePlan } from '../lib/jobfileRules';
+import { DIRECTIONS, MODES, JF_STATUSES, INCOTERMS, jfStatusName, jfStatusColor, label, milestonePlan, qStatusName, qStatusColor } from '../lib/jobfileRules';
 import { normContainer } from './pro';
 
 const UUID = /^[0-9a-f-]{36}$/i;
 const isUuid = (v: unknown): v is string => typeof v === 'string' && UUID.test(v);
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
-const ACTIVE = ['open', 'booked', 'in_transit', 'arrived', 'delivering'];
+const ACTIVE = ['enquiry', 'open', 'booked', 'in_transit', 'arrived', 'delivering'];
 
 // ------------------------------------------------------------ who sees / does what
 export const canSeeJobFiles = (a: Actor) =>
@@ -186,9 +186,11 @@ export async function createJobFile(actor: Actor, b: any, c?: PoolClient, from?:
       if (!d) throw bad('Choose an operations department');
       deptId = d.id;
     }
+    // An enquiry starts the Job File before any quotation (migration 017): same Job No. from enquiry to closing
+    vals.status = b.status === 'enquiry' && !from ? 'enquiry' : 'open';
     const cols = Object.keys(vals);
     const f = await one(`insert into job_files (job_no, department_id, created_by, quotation_id${cols.map((k) => ', ' + k).join('')})
-      values ($1, $2, $3, $4${cols.map((_, i) => `, $${i + 5}`).join('')}) returning id, job_no, direction, mode, needs_clearance, needs_transport, needs_warehouse`,
+      values ($1, $2, $3, $4${cols.map((_, i) => `, $${i + 5}`).join('')}) returning id, job_no, direction, mode, needs_clearance, needs_transport, needs_warehouse, status`,
       [jobNo, deptId, actor.id, from?.quotation_id ?? null, ...cols.map((k) => vals[k])], db);
     const plan = milestonePlan(f.direction, f.mode, { clearance: f.needs_clearance, transport: f.needs_transport, warehouse: f.needs_warehouse });
     for (const [i, [code, name]] of plan.entries())
@@ -200,7 +202,7 @@ export async function createJobFile(actor: Actor, b: any, c?: PoolClient, from?:
     await relink(db, jobNo);
     const linked = await one(`select (select count(*) from transport_requests where job_file_id = $1)::int trips,
       (select count(*) from pro_requests where job_file_id = $1)::int pro`, [f.id], db);
-    await event(db, actor, f.id, { kind: 'created', title: from ? 'Job File created from an accepted quotation' : 'Job File created',
+    await event(db, actor, f.id, { kind: 'created', title: from ? 'Job File created from an accepted quotation' : f.status === 'enquiry' ? 'Enquiry received — Job File opened for quoting' : 'Job File created',
       new_value: linked.trips + linked.pro ? `Linked ${linked.trips} truck trip(s) and ${linked.pro} PRO request(s) with the same Job No.` : null });
     await refreshSearch(db, f.id);
     return { id: f.id as string, job_no: f.job_no as string };
@@ -210,6 +212,7 @@ export async function createJobFile(actor: Actor, b: any, c?: PoolClient, from?:
 
 // ------------------------------------------------------------ list
 export const VIEWS: Record<string, { label: string; sql: string }> = {
+  enquiry: { label: 'Enquiries (quoting)', sql: `f.status = 'enquiry'` },
   open: { label: 'Open', sql: `f.status in ('open','booked','in_transit','arrived','delivering')` },
   arriving: { label: 'Arriving in 7 days', sql: `f.status in ('open','booked','in_transit') and f.ata is null
     and f.eta between (now() at time zone 'Asia/Dubai')::date and (now() at time zone 'Asia/Dubai')::date + 7` },
@@ -308,6 +311,16 @@ export async function getJobFile(actor: Actor, id: string) {
   // The quotation (and its rates) only for people who may see quotations
   const quotation = f.quotation_id && actor.has('quotes.view')
     ? await one('select id, quote_no, status from quotations where id = $1', [f.quotation_id]) : null;
+  // Enquiry side (migration 017): every quotation and vendor request on this Job No.
+  const quotations = actor.has('quotes.view') ? await q(`select id, quote_no, status, valid_until, created_at from quotations
+    where job_file_id = $1 and deleted_at is null order by created_at`, [id]) : null;
+  const seeVendors = actor.isSuperAdmin || actor.has('vendors.requests') || actor.has('vendors.manage') || actor.has('quotes.view');
+  // requests sent to several vendors for the same rate share a rate_group; the lowest valid price is marked (cost viewers only)
+  const { markLowest } = await import('./vendorreqs');
+  const vendorRequests = seeVendors ? markLowest(await q(`select r.id, r.request_no, r.service, r.status, r.description, r.quoted_cost, r.currency, r.rate_valid_until,
+      r.vendor_reference, r.rate_group, r.vendor_id, v.name vendor_name from vendor_requests r join vendors v on v.id = r.vendor_id where r.job_file_id = $1
+      order by coalesce(r.rate_group, r.id), r.quoted_cost nulls last, r.created_at`, [id]))
+      .map((r) => (actor.fin.buyingView ? r : { ...r, quoted_cost: undefined, lowest: undefined })) : null;
   const docsRequired = (await getSetting('jobfile_docs_required_to_close', true)) !== false;
   const docList = await checklist(f);
   const documents = await q(`select d.id, d.doc_type, d.file_name, d.mime_type, d.size_bytes, d.version, d.replaced_at, d.issue_date, d.expiry_date,
@@ -319,10 +332,12 @@ export async function getJobFile(actor: Actor, id: string) {
   return {
     ...shape({ ...f, ...extra }), search_text: undefined, quotation_id: quotation ? f.quotation_id : undefined, quotation,
     containers, milestones, events, ...work, checklist: docList, documents, docs_required_to_close: docsRequired,
+    quotations: quotations?.map((x) => ({ ...x, status_name: qStatusName(x.status), status_color: qStatusColor(x.status) })) ?? null, vendor_requests: vendorRequests,
     closure: { can_close: blockers.length === 0, blockers,
       warnings: milestones.filter((m) => !m.actual_at).map((m) => `Milestone "${m.name}" has no actual date`) },
     can: { edit, status: edit, close: (actor.isSuperAdmin || actor.has('jobfiles.close')) && f.status !== 'cancelled',
       request_transport: actor.has('jobs.create') && isOpen(f), request_pro: actor.has('pro.create') && isOpen(f),
+      quote: actor.has('quotes.create') && isOpen(f), ask_vendor: (actor.isSuperAdmin || actor.has('vendors.requests')) && isOpen(f),
       upload: edit, approve_docs: (actor.isSuperAdmin || actor.has('documents.approve')) && f.status !== 'cancelled' },
   };
 }
@@ -369,6 +384,8 @@ export async function setJobFileStatus(actor: Actor, id: string, b: any) {
     if (to === 'closed' || to === 'cancelled' || f.status === 'closed') { if (!closer) throw forbidden('Only people who close Job Files can do this'); }
     else if (!canEdit(actor, f)) throw forbidden('You cannot change this Job File');
     let note: string | null = null;
+    if (to === 'closed' && f.status === 'enquiry')
+      throw new ApiError(409, 'JOB_FILE_ENQUIRY', 'This is still an enquiry. Accept a quotation (or set it to Open) first, or cancel it if the customer did not go ahead.');
     if (to === 'closed') {
       const docsRequired = (await getSetting('jobfile_docs_required_to_close', true, c)) !== false;
       const blockers = closureBlockers(f, await linkedWork(id, c), docsRequired ? await checklist(f, c) : []);

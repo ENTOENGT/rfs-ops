@@ -291,3 +291,10 @@ a.kpi:hover { background: #faf8f4; text-decoration: none; }
 .qp-block p { white-space: pre-wrap; margin: 0; }
 .qp-sign { margin-top: 26px; font-size: 12px; }
 @media print { .qp-sheet { border: 0; padding: 0; max-width: none; } .qp .page-head { display: none; } }
+
+/* tick-boxes list (several vendors for one rate request) */
+.checks { display: flex; flex-wrap: wrap; gap: 6px 14px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; max-height: 180px; overflow: auto; }
+.check { display: inline-flex; align-items: center; gap: 6px; font-weight: 400; cursor: pointer; }
+.check input { width: auto; margin: 0; }
+.lowest { display: inline-block; font-size: 11px; font-weight: 600; color: #22543D; background: #E6F4EA; border-radius: 10px; padding: 1px 8px; margin-left: 6px; }
+tr.is-lowest td { background: #F3FBF5; }

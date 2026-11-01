@@ -95,6 +95,7 @@ function present(actor: Actor, x: any, lines: any[]) {
       ...(buyingView ? { cost_rate: l.cost_rate, cost_amount: t.each[i].cost } : {}),
       ...(sellingView ? { sell_rate: l.sell_rate, sell_amount: t.each[i].sell } : {}),
       ...(profitView ? { margin_type: l.margin_type, margin_value: l.margin_value } : {}),
+      ...(buyingView ? { vendor_request_id: l.vendor_request_id } : {}),
     })),
     totals: {
       ...(buyingView ? { cost_total: t.cost_total } : {}),
@@ -102,6 +103,28 @@ function present(actor: Actor, x: any, lines: any[]) {
       ...(profitView ? { margin: t.margin, margin_pct: t.margin_pct } : {}),
     },
   };
+}
+
+/** Vendor rates on a Job File that can become cost lines (cost viewers only). */
+export async function vendorRatesFor(jobFileId: string) {
+  const { markLowest } = await import('./vendorreqs');
+  const rows = await q(`select r.id, r.request_no, r.service, r.status, r.quoted_cost, r.currency, r.rate_valid_until, r.vendor_reference, r.description,
+      r.rate_group, v.name vendor_name
+    from vendor_requests r join vendors v on v.id = r.vendor_id
+    where r.job_file_id = $1 and r.quoted_cost is not null and r.status not in ('cancelled') order by r.created_at`, [jobFileId]);
+  return markLowest(rows);
+}
+
+/** One message per cost line whose vendor rate is dearer than another vendor's rate for the same request. */
+async function cheaperWarnings(lines: { vendor_request_id?: string | null; description?: string }[], db?: Db) {
+  const { cheaperRateWarning } = await import('./vendorreqs');
+  const out: string[] = [];
+  for (const l of lines) {
+    if (!l.vendor_request_id) continue;
+    const w = await cheaperRateWarning(l.vendor_request_id, db);
+    if (w) out.push(`"${l.description}": ${w}`);
+  }
+  return [...new Set(out)];
 }
 
 // ------------------------------------------------------------ list
@@ -137,12 +160,14 @@ export async function getQuotation(actor: Actor, id: string) {
   ]);
   const v = present(actor, { ...x, ...extra }, lines);
   const minMargin = Number(await getSetting('quote_min_margin_pct', 10));
+  const vendorRates = x.job_file_id && actor.fin.buyingView ? await vendorRatesFor(x.job_file_id) : [];
   const editable = ['draft', 'pending_approval', 'approved'].includes(x.status) && actor.has('quotes.create');
-  return { ...v, events, min_margin_pct: minMargin,
+  const rateWarnings = actor.fin.buyingView ? await cheaperWarnings(lines) : [];
+  return { ...v, events, min_margin_pct: minMargin, vendor_rates: vendorRates, rate_warnings: rateWarnings,
     can: { edit: editable, submit: x.status === 'draft' && actor.has('quotes.create'),
       approve: x.status === 'pending_approval' && actor.has('quotes.approve'),
       send: x.status === 'approved' && v.status !== 'expired' && actor.has('quotes.create'),
-      accept: ['approved', 'sent'].includes(x.status) && v.status !== 'expired' && actor.has('quotes.create') && actor.has('jobfiles.create'),
+      accept: ['approved', 'sent'].includes(x.status) && v.status !== 'expired' && actor.has('quotes.create') && (!!x.job_file_id || actor.has('jobfiles.create')),
       decline: ['approved', 'sent'].includes(x.status) && actor.has('quotes.create'),
       cancel: ['draft', 'pending_approval', 'approved', 'sent'].includes(x.status) && actor.has('quotes.create'),
       copy: actor.has('quotes.create'),
@@ -203,8 +228,18 @@ function parseLines(actor: Actor, raw: unknown, old: any[]) {
       margin_type = null; margin_value = null;
     }
     if (margin_type) sell = sellFromMargin(cost, margin_type as any, margin_value!);
-    return { description, charge_unit: l.charge_unit, quantity: String(l.quantity).trim(), cost_rate: cost, sell_rate: sell, margin_type, margin_value };
+    const vendor_request_id = typeof l.vendor_request_id === 'string' && UUID.test(l.vendor_request_id) ? l.vendor_request_id : prev?.vendor_request_id ?? null;
+    return { description, charge_unit: l.charge_unit, quantity: String(l.quantity).trim(), cost_rate: cost, sell_rate: sell, margin_type, margin_value, vendor_request_id };
   });
+}
+
+/** A cost line taken from a vendor rate must come from a vendor request on the same Job File. */
+async function validateVendorLines(c: Db, jobFileId: string | null, lines: { vendor_request_id: string | null }[]) {
+  const ids = [...new Set(lines.map((l) => l.vendor_request_id).filter((x): x is string => !!x))];
+  if (!ids.length) return;
+  if (!jobFileId) throw bad('Vendor rates can only be used on a quotation for their own Job No.');
+  const ok = await q('select id from vendor_requests where id = any($1) and job_file_id = $2', [ids, jobFileId], c);
+  if (ok.length !== ids.length) throw bad('A vendor rate on this quotation belongs to another Job No.');
 }
 
 export async function createQuotation(actor: Actor, b: any) {
@@ -220,17 +255,39 @@ export async function createQuotation(actor: Actor, b: any) {
   if (!lines) throw bad('Add at least one charge line');
   return tx(async (c) => {
     if (!(await one('select 1 from customers where id = $1 and deleted_at is null', [vals.customer_id], c))) throw bad('Customer not found');
-    const dept = actor.department_side === 'operations' ? actor.department_id : null;
+    let dept = actor.department_side === 'operations' ? actor.department_id : null;
+    // A quotation belongs to the Job No. of the enquiry (migration 017)
+    if (b.job_file_id || b.job_no) {
+      const { loadFile } = await import('./jobfiles');
+      let fid = b.job_file_id;
+      if (!fid) {
+        const f = await one(`select id from job_files where upper(btrim(job_no)) = upper(btrim($1)) and deleted_at is null and status <> 'cancelled'`, [b.job_no], c);
+        if (!f) throw bad(`No Job File with Job No. ${String(b.job_no).trim()}`);
+        fid = f.id;
+      }
+      const f = await loadFile(actor, fid, c);
+      if (['closed', 'cancelled'].includes(f.status)) throw bad(`Job File ${f.job_no} is ${f.status}`);
+      if (f.customer_id !== vals.customer_id) throw bad(`Job File ${f.job_no} is for another customer`);
+      vals.job_file_id = f.id;
+      dept = f.department_id ?? dept;
+      await validateVendorLines(c, f.id, lines);
+    } else if (lines.some((l) => l.vendor_request_id)) throw bad('Vendor rates can only be used on a quotation for their own Job No.');
     const cols = Object.keys(vals);
     const x = await one(`insert into quotations (quote_no, department_id, created_by, currency${cols.map((k) => ', ' + k).join('')})
       values ('Q-' || nextval('quote_no_seq'), $1, $2, $3${cols.map((_, i) => `, $${i + 4}`).join('')}) returning id, quote_no`,
       [dept, actor.id, await getSetting('currency', 'AED', c), ...cols.map((k) => vals[k])], c);
     for (const [i, l] of lines.entries())
-      await c.query(`insert into quotation_lines (quotation_id, sort_order, description, charge_unit, quantity, cost_rate, sell_rate, margin_type, margin_value)
-        values ($1,$2,$3,$4,$5,$6,$7,$8,$9)`, [x.id, i, l.description, l.charge_unit, l.quantity, l.cost_rate, l.sell_rate, l.margin_type, l.margin_value]);
+      await c.query(`insert into quotation_lines (quotation_id, sort_order, description, charge_unit, quantity, cost_rate, sell_rate, margin_type, margin_value, vendor_request_id)
+        values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`, [x.id, i, l.description, l.charge_unit, l.quantity, l.cost_rate, l.sell_rate, l.margin_type, l.margin_value, l.vendor_request_id]);
     await evt(c, actor, x.id, 'Quotation created', `${lines.length} line(s)`);
+    if (vals.job_file_id) {
+      const { event } = await import('./jobfiles');
+      await event(c, actor, vals.job_file_id as string, { kind: 'link', title: `Quotation ${x.quote_no} prepared` });
+    }
+    const warnings = await cheaperWarnings(lines, c);
+    for (const w of warnings) await evt(c, actor, x.id, 'Dearer vendor rate used', w);
     await refreshSearch(c, x.id);
-    return { id: x.id, quote_no: x.quote_no };
+    return { id: x.id, quote_no: x.quote_no, warnings };
   });
 }
 
@@ -244,13 +301,16 @@ export async function updateQuotation(actor: Actor, id: string, b: any) {
     for (const [k, parse] of Object.entries(HEAD)) if (b[k] !== undefined) sets.push([k, parse(b[k])]);
     const old = await q('select * from quotation_lines where quotation_id = $1 order by sort_order', [id], c);
     const lines = parseLines(actor, b.lines, old);
+    if (lines) await validateVendorLines(c, x.job_file_id, lines);
+    if (sets.length && x.job_file_id && sets.some(([k, v]) => k === 'customer_id' && v !== x.customer_id))
+      throw bad('This quotation is on a Job File; its customer is the Job File\'s customer');
     if (sets.length) await c.query(`update quotations set ${sets.map(([k], i) => `${k} = $${i + 2}`).join(', ')}, updated_at = now() where id = $1`,
       [id, ...sets.map(([, v]) => v)]);
     if (lines) {
       await c.query('delete from quotation_lines where quotation_id = $1', [id]);
       for (const [i, l] of lines.entries())
-        await c.query(`insert into quotation_lines (quotation_id, sort_order, description, charge_unit, quantity, cost_rate, sell_rate, margin_type, margin_value)
-          values ($1,$2,$3,$4,$5,$6,$7,$8,$9)`, [id, i, l.description, l.charge_unit, l.quantity, l.cost_rate, l.sell_rate, l.margin_type, l.margin_value]);
+        await c.query(`insert into quotation_lines (quotation_id, sort_order, description, charge_unit, quantity, cost_rate, sell_rate, margin_type, margin_value, vendor_request_id)
+          values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`, [id, i, l.description, l.charge_unit, l.quantity, l.cost_rate, l.sell_rate, l.margin_type, l.margin_value, l.vendor_request_id]);
     }
     // a changed quotation must be checked again before it goes out
     if (x.status !== 'draft') {
@@ -320,8 +380,27 @@ export async function quotationAction(actor: Actor, id: string, b: any) {
       case 'accept': {
         need('quotes.create'); from('approved', 'sent');
         if (expired) throw new ApiError(409, 'QUOTE_EXPIRED', 'The rates have expired. Change the validity date and approve again.');
+        if (x.job_file_id) {
+          // The enquiry's own Job File goes live — same Job No. from enquiry to closing (migration 017)
+          const f = await one('select id, job_no, status from job_files where id = $1 for update', [x.job_file_id], c);
+          if (['closed', 'cancelled'].includes(f.status)) throw new ApiError(409, 'QUOTE_STATE', `Job File ${f.job_no} is ${f.status}`);
+          const { event } = await import('./jobfiles');
+          if (f.status === 'enquiry') await c.query(`update job_files set status = 'open', quotation_id = $2, updated_at = now() where id = $1`, [f.id, id]);
+          else await c.query('update job_files set quotation_id = $2, updated_at = now() where id = $1', [f.id, id]);
+          await event(c, actor, f.id, { kind: 'status', title: `Quotation ${x.quote_no} accepted by the customer`, field: 'Status',
+            old_value: f.status === 'enquiry' ? 'Enquiry / quoting' : null, new_value: f.status === 'enquiry' ? 'Open — shipment confirmed' : null });
+          // any other open quotation on the same Job No. is no longer needed
+          const others = await q(`update quotations set status = 'cancelled', decline_reason = $3, updated_at = now()
+            where job_file_id = $1 and id <> $2 and status in ('draft','pending_approval','approved','sent') returning id`,
+            [f.id, id, `${x.quote_no} was accepted instead`], c);
+          for (const o of others) await evt(c, actor, o.id, 'Cancelled', `${x.quote_no} was accepted instead`);
+          await set('accepted', ', accepted_at = now()');
+          await evt(c, actor, id, 'Accepted by the customer', `Job File ${f.job_no} is now open`);
+          created = { id: f.id, job_no: f.job_no };
+          break;
+        }
         if (!actor.has('jobfiles.create')) throw forbidden('You need permission to create Job Files to accept a quotation');
-        // The accepted quotation becomes a Job File. The Job No. is typed, as everywhere else.
+        // A quotation made without a Job File becomes one now. The Job No. is typed, as everywhere else.
         const mode = ['sea_fcl', 'sea_lcl', 'air', 'road'].includes(x.service_type) ? x.service_type : (b.mode || null);
         created = await createJobFile(actor, {
           job_no: b.job_no, customer_id: x.customer_id, direction: x.direction, mode,
@@ -360,6 +439,7 @@ export async function copyQuotation(actor: Actor, id: string) {
   const lines = await q('select * from quotation_lines where quotation_id = $1 order by sort_order', [id]);
   const fresh = await createQuotation(actor, {
     ...Object.fromEntries(Object.keys(HEAD).filter((k) => k !== 'valid_until').map((k) => [k, x[k]])),
+    job_file_id: x.job_file_id && !(await one(`select 1 from job_files where id = $1 and status in ('closed','cancelled')`, [x.job_file_id])) ? x.job_file_id : undefined,
     // keep both sides as they were, even if this person can't see one of them
     lines: lines.map((l) => ({ ...l, id: undefined })),
   });
