@@ -17,6 +17,9 @@ const NAV: { href: string; label: string; perm?: string | string[]; phase?: numb
   { href: '/dashboard', label: 'Dashboard' },
   { href: '/job-files', label: 'Job Files', perm: ['jobfiles.view_all', 'jobfiles.view_department', 'jobfiles.create', 'jobfiles.edit'] },
   { href: '/quotations', label: 'Quotations', perm: 'quotes.view' },
+  { href: '/cases', label: 'Customer service', perm: ['cases.view_all', 'cases.manage'] },
+  { href: '/vendor-requests', label: 'Vendor requests', perm: ['vendors.requests', 'vendors.manage'] },
+  { href: '/vendors', label: 'Vendors', perm: 'vendors.manage' },
   { href: '/warehouse', label: 'Warehouse', perm: ['warehouse.view', 'warehouse.receive', 'warehouse.dispatch', 'warehouse.configure', 'warehouse.orders.create'] },
   { href: '/requests', label: 'Transport requests', perm: 'jobs.view' },
   { href: '/jobs', label: 'Jobs', perm: 'jobs.view' },
@@ -28,6 +31,7 @@ const NAV: { href: string; label: string; perm?: string | string[]; phase?: numb
   { href: '/locations', label: 'Locations', perm: 'jobs.view' },
   { href: '/financials', label: 'Financials', perm: ['finance.buying.view', 'finance.selling.view'] },
   { href: '/reports', label: 'Reports', perm: 'reports.view' },
+  { href: '/erp', label: 'ERP export', perm: ['erp.view', 'erp.export'] },
   { href: '/documents', label: 'Documents', perm: 'jobs.view' },
   { href: '/runs', label: 'Messenger runs', perm: ['runs.view_all', 'runs.view_department', 'runs.create', 'runs.update_status'] },
   { href: '/pro', label: 'PRO clearance', perm: ['pro.view_all', 'pro.view_department', 'pro.create', 'pro.update', 'pro.assign'] },
@@ -52,7 +56,7 @@ function Bell({ jobHref = (id: string) => `/jobs/${id}` }: { jobHref?: (id: stri
         <div className="dropdown" onMouseLeave={() => setOpen(false)}>
           {n.rows.length === 0 && <div style={{ padding: 12 }} className="muted">You're all caught up.</div>}
           {n.rows.map((r) => (
-            <Link key={r.id} href={r.quotation_id ? `/quotations/${r.quotation_id}` : r.job_file_id ? `/job-files/${r.job_file_id}` : r.pro_id ? `/pro/${r.pro_id}` : r.run_id ? `/runs/${r.run_id}` : r.job_id ? jobHref(r.job_id) : '#'} className={r.read_at ? '' : 'unread'} onClick={() => setOpen(false)}>
+            <Link key={r.id} href={r.case_id ? `/cases/${r.case_id}` : r.quotation_id ? `/quotations/${r.quotation_id}` : r.job_file_id ? `/job-files/${r.job_file_id}` : r.pro_id ? `/pro/${r.pro_id}` : r.run_id ? `/runs/${r.run_id}` : r.job_id ? jobHref(r.job_id) : '#'} className={r.read_at ? '' : 'unread'} onClick={() => setOpen(false)}>
               {r.title}<div className="muted small">{fmtDateTime(r.created_at)}</div>
             </Link>
           ))}

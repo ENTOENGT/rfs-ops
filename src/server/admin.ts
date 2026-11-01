@@ -48,6 +48,7 @@ export async function lookups(actor: Actor) {
     currency: await getSetting('currency', 'AED'),
     timezone: await getSetting('timezone', 'Asia/Dubai'),
     money_screens: (await getSetting('money_screens', true)) !== false,
+    vendors: await q(`select id, name, vendor_type from vendors where deleted_at is null and is_active order by name`),
   };
   if (actor.fin.buyingView || actor.has('rentals.approve') || actor.has('vehicles.manage'))
     out.rental_rates = await q(`select r.id, r.subcontractor_id, r.vehicle_type_id, r.from_place, r.to_place, r.standard_cost
@@ -65,7 +66,8 @@ export async function listNotifications(actor: Actor) {
   try { const { runPodReminders } = await import('./documents'); await runPodReminders(); } catch (e) { console.error('POD reminders', e); }
   try { const { maybeRunDocumentCleanup } = await import('./documents'); await maybeRunDocumentCleanup(); } catch (e) { console.error('Document clean-up', e); }
   try { const { runProReminders } = await import('./pro'); await runProReminders(); } catch (e) { console.error('PRO reminders', e); }
-  const rows = await q(`select id, type, title, job_id, run_id, pro_id, job_file_id, quotation_id, read_at, created_at from notifications
+  try { const { runCaseEscalations } = await import('./cases'); await runCaseEscalations(); } catch (e) { console.error('Case escalations', e); }
+  const rows = await q(`select id, type, title, job_id, run_id, pro_id, job_file_id, quotation_id, case_id, read_at, created_at from notifications
     where user_id = $1 order by created_at desc limit 50`, [actor.id]);
   return { unread: rows.filter((r) => !r.read_at).length, rows };
 }

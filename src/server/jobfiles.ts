@@ -16,7 +16,7 @@
  */
 import { PoolClient } from 'pg';
 import { Actor } from './auth';
-import { ApiError, bad, Db, forbidden, notFound, one, q, tx } from './db';
+import { ApiError, bad, Db, forbidden, getSetting, notFound, one, q, tx } from './db';
 import { jobNoProblem } from '../lib/requestRules';
 import { DIRECTIONS, MODES, JF_STATUSES, INCOTERMS, jfStatusName, jfStatusColor, label, milestonePlan } from '../lib/jobfileRules';
 import { normContainer } from './pro';
@@ -45,7 +45,7 @@ export function jfScope(actor: Actor, params: unknown[], alias = 'f'): string {
   return ` and ${alias}.created_by = ${me}`;
 }
 
-async function loadFile(actor: Actor, id: string, db?: Db, lock = false) {
+export async function loadFile(actor: Actor, id: string, db?: Db, lock = false) {
   if (!canSeeJobFiles(actor)) throw forbidden();
   if (!isUuid(id)) throw notFound('Job File');
   const p: unknown[] = [id];
@@ -54,7 +54,7 @@ async function loadFile(actor: Actor, id: string, db?: Db, lock = false) {
   return f;
 }
 const isOpen = (f: any) => ACTIVE.includes(f.status);
-function canEdit(actor: Actor, f: any) {
+export function canEdit(actor: Actor, f: any) {
   if (actor.isSuperAdmin) return true;
   if (!isOpen(f)) return false;
   return actor.has('jobfiles.edit') || (actor.has('jobfiles.create') && f.created_by === actor.id);
@@ -133,6 +133,34 @@ const FIELDS: Record<string, { label: string; parse: (v: unknown) => unknown }> 
   remarks: { label: 'Remarks', parse: (v) => txt(v, 2000) },
 };
 
+// ------------------------------------------------------------ documents checklist (migration 016)
+const modeGroup = (mode: string) => (mode.startsWith('sea') ? 'sea' : mode);
+/** SQL: does Job File `f` still lack a required document (none uploaded and not waived)? Same rule as checklist(). */
+export const MISSING_DOCS_SQL = `exists (select 1 from doc_requirements r where r.is_active
+  and (r.direction is null or r.direction = f.direction)
+  and (r.mode_group is null or r.mode_group = case when f.mode like 'sea%' then 'sea' else f.mode end)
+  and (r.needs is null or (r.needs = 'clearance' and f.needs_clearance) or (r.needs = 'transport' and f.needs_transport) or (r.needs = 'warehouse' and f.needs_warehouse))
+  and not exists (select 1 from jf_documents d where d.job_file_id = f.id and d.doc_type = r.doc_type and d.deleted_at is null and d.replaced_at is null and d.status <> 'rejected')
+  and not exists (select 1 from jf_doc_waivers w where w.job_file_id = f.id and w.doc_type = r.doc_type))`;
+/** Which documents this Job File needs, and where each one stands: missing, pending, approved, rejected or waived. */
+export async function checklist(f: any, db?: Db) {
+  const [reqs, docs, waivers] = await Promise.all([
+    q(`select distinct on (doc_type) doc_type, name, sort_order from doc_requirements where is_active
+       and (direction is null or direction = $1) and (mode_group is null or mode_group = $2)
+       and (needs is null or (needs = 'clearance' and $3) or (needs = 'transport' and $4) or (needs = 'warehouse' and $5))
+       order by doc_type, sort_order`, [f.direction, modeGroup(f.mode), f.needs_clearance, f.needs_transport, f.needs_warehouse], db),
+    q(`select doc_type, status from jf_documents where job_file_id = $1 and deleted_at is null and replaced_at is null`, [f.id], db),
+    q(`select w.doc_type, w.reason, w.waived_at, u.full_name waived_by_name from jf_doc_waivers w left join users u on u.id = w.waived_by where w.job_file_id = $1`, [f.id], db),
+  ]);
+  return reqs.sort((a, b) => a.sort_order - b.sort_order).map((r) => {
+    const w = waivers.find((x) => x.doc_type === r.doc_type);
+    const mine = docs.filter((d) => d.doc_type === r.doc_type);
+    const status = w ? 'waived' : mine.some((d) => d.status === 'approved') ? 'approved' : mine.some((d) => d.status === 'pending') ? 'pending'
+      : mine.some((d) => d.status === 'rejected') ? 'rejected' : 'missing';
+    return { doc_type: r.doc_type, name: r.name, status, waiver: w ?? null };
+  });
+}
+
 // ------------------------------------------------------------ create
 /** Create a Job File. `c` lets a quotation create it inside its own transaction. */
 export async function createJobFile(actor: Actor, b: any, c?: PoolClient, from?: { quotation_id: string }): Promise<{ id: string; job_no: string }> {
@@ -190,6 +218,7 @@ export const VIEWS: Record<string, { label: string; sql: string }> = {
     and not exists (select 1 from pro_requests r where r.job_file_id = f.id and r.deleted_at is null and r.status_code <> 'cancelled')` },
   needs_transport: { label: 'Transport not requested', sql: `f.status in ('open','booked','in_transit','arrived','delivering') and f.needs_transport
     and not exists (select 1 from transport_requests t where t.job_file_id = f.id and t.deleted_at is null and t.status_code <> 'cancelled')` },
+  missing_docs: { label: 'Documents missing', sql: `f.status in ('open','booked','in_transit','arrived','delivering') and ${MISSING_DOCS_SQL}` },
   closed: { label: 'Closed', sql: `f.status = 'closed'` },
 };
 function filterSql(actor: Actor, p: Record<string, string>, params: unknown[]) {
@@ -252,8 +281,10 @@ async function linkedWork(id: string, db?: Db) {
   return { trips, pro, runs };
 }
 /** What still stops this Job File from closing (empty = it can close). */
-export function closureBlockers(f: any, w: { trips: any[]; pro: any[]; runs: any[] }): string[] {
+export function closureBlockers(f: any, w: { trips: any[]; pro: any[]; runs: any[] }, docs: { name: string; status: string }[] = []): string[] {
   const out: string[] = [];
+  for (const d of docs) if (!['approved', 'waived'].includes(d.status))
+    out.push(`Document "${d.name}" is ${d.status === 'pending' ? 'waiting for approval' : d.status}`);
   for (const t of w.trips) if (!['closed', 'cancelled'].includes(t.stage)) out.push(`Truck trip ${t.job_number} is still "${t.status_name}"`);
   for (const r of w.pro) if (!['done', 'cancelled'].includes(r.stage)) out.push(`PRO request ${r.request_no} is still "${r.status_name}"`);
   for (const m of w.runs) if (!['delivered', 'cancelled'].includes(m.status)) out.push(`Messenger run ${m.run_number} is not finished (${m.status})`);
@@ -277,15 +308,22 @@ export async function getJobFile(actor: Actor, id: string) {
   // The quotation (and its rates) only for people who may see quotations
   const quotation = f.quotation_id && actor.has('quotes.view')
     ? await one('select id, quote_no, status from quotations where id = $1', [f.quotation_id]) : null;
-  const blockers = closureBlockers(f, work);
+  const docsRequired = (await getSetting('jobfile_docs_required_to_close', true)) !== false;
+  const docList = await checklist(f);
+  const documents = await q(`select d.id, d.doc_type, d.file_name, d.mime_type, d.size_bytes, d.version, d.replaced_at, d.issue_date, d.expiry_date,
+      d.description, d.status, d.review_note, d.reviewed_at, d.created_at, u.full_name uploaded_by_name, r.full_name reviewed_by_name
+    from jf_documents d left join users u on u.id = d.uploaded_by left join users r on r.id = d.reviewed_by
+    where d.job_file_id = $1 and d.deleted_at is null order by d.doc_type, d.created_at`, [id]);
+  const blockers = closureBlockers(f, work, docsRequired ? docList : []);
   const edit = canEdit(actor, f);
   return {
     ...shape({ ...f, ...extra }), search_text: undefined, quotation_id: quotation ? f.quotation_id : undefined, quotation,
-    containers, milestones, events, ...work,
+    containers, milestones, events, ...work, checklist: docList, documents, docs_required_to_close: docsRequired,
     closure: { can_close: blockers.length === 0, blockers,
       warnings: milestones.filter((m) => !m.actual_at).map((m) => `Milestone "${m.name}" has no actual date`) },
     can: { edit, status: edit, close: (actor.isSuperAdmin || actor.has('jobfiles.close')) && f.status !== 'cancelled',
-      request_transport: actor.has('jobs.create') && isOpen(f), request_pro: actor.has('pro.create') && isOpen(f) },
+      request_transport: actor.has('jobs.create') && isOpen(f), request_pro: actor.has('pro.create') && isOpen(f),
+      upload: edit, approve_docs: (actor.isSuperAdmin || actor.has('documents.approve')) && f.status !== 'cancelled' },
   };
 }
 
@@ -332,7 +370,8 @@ export async function setJobFileStatus(actor: Actor, id: string, b: any) {
     else if (!canEdit(actor, f)) throw forbidden('You cannot change this Job File');
     let note: string | null = null;
     if (to === 'closed') {
-      const blockers = closureBlockers(f, await linkedWork(id, c));
+      const docsRequired = (await getSetting('jobfile_docs_required_to_close', true, c)) !== false;
+      const blockers = closureBlockers(f, await linkedWork(id, c), docsRequired ? await checklist(f, c) : []);
       if (blockers.length) throw new ApiError(409, 'JOB_FILE_NOT_READY', 'This Job File cannot close yet: ' + blockers.join('; '), { blockers });
       await c.query(`update job_files set status = 'closed', closed_at = now(), closed_by = $2, updated_at = now() where id = $1`, [id, actor.id]);
     } else if (to === 'cancelled') {

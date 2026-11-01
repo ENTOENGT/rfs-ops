@@ -13,7 +13,7 @@ Design, schema, permission matrix, workflow and financial logic: see `docs/ARCHI
 ## Set up (no command line needed)
 
 1. **Database** — create a NEW Supabase project for RFS Ops (never the live TMS one). Open *SQL Editor* and run each file in
-   `db/migrations/` once, in number order: `001_schema.sql`, `002_seed.sql`, `003_masters_assignment.sql`, `004_pod_documents.sql`, `005_departments_managers.sql`, `006_messenger_runs.sql`, `007_phone_app.sql`, `008_request_docs_jobno.sql`, `009_pro_clearance.sql`, `010_rental_trucks.sql`, `011_rental_rates.sql`, `012_safety.sql`, `013_jobfiles_quotations.sql`, `014_quote_margin_print.sql`, `015_warehouse.sql`.
+   `db/migrations/` once, in number order: `001_schema.sql`, `002_seed.sql`, `003_masters_assignment.sql`, `004_pod_documents.sql`, `005_departments_managers.sql`, `006_messenger_runs.sql`, `007_phone_app.sql`, `008_request_docs_jobno.sql`, `009_pro_clearance.sql`, `010_rental_trucks.sql`, `011_rental_rates.sql`, `012_safety.sql`, `013_jobfiles_quotations.sql`, `014_quote_margin_print.sql`, `015_warehouse.sql`, `016_docs_cases_vendors_erp.sql`.
    To see which ones have already run (from 012 on): `select * from schema_migrations order by name;`
 2. **Code** — create a NEW private GitHub repo (e.g. `rfs-ops`) and upload this folder through the GitHub website
    (don't upload `node_modules` or `.next`).

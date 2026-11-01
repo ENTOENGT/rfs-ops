@@ -24,7 +24,28 @@ export interface MasterDef {
 const EMIRATES = ['Dubai', 'Abu Dhabi', 'Sharjah', 'Ajman', 'Umm Al Quwain', 'Ras Al Khaimah', 'Fujairah']
   .map((e) => ({ value: e, label: e }));
 
+export const VENDOR_TYPES = [['shipping_line', 'Shipping line'], ['airline', 'Airline'], ['freight_agent', 'Freight agent'],
+  ['customs_broker', 'Customs broker'], ['transporter', 'Transporter'], ['warehouse', 'Warehouse'], ['courier', 'Courier'], ['other', 'Other']]
+  .map(([value, label]) => ({ value, label }));
+
 export const MASTERS: Record<string, MasterDef> = {
+  vendors: {
+    key: 'vendors', table: 'vendors', title: 'Vendors', singular: 'vendor', perm: 'vendors.manage',
+    softDelete: true, activeField: 'is_active', orderBy: 'e.name',
+    search: ['e.name', 'e.contact_person', 'e.contact_number', 'e.email', 'e.trn'],
+    blurb: 'Shipping lines, airlines, overseas agents, customs brokers, transporters and other service providers. Used on vendor service requests.',
+    fields: [
+      { key: 'name', label: 'Vendor name', type: 'text', required: true, list: true, max: 200 },
+      { key: 'vendor_type', label: 'Type', type: 'select', required: true, list: true, half: true, options: VENDOR_TYPES },
+      { key: 'trn', label: 'TRN', type: 'text', max: 30, half: true },
+      { key: 'contact_person', label: 'Contact person', type: 'text', list: true, max: 120, half: true },
+      { key: 'contact_number', label: 'Contact number', type: 'phone', list: true, max: 30, half: true },
+      { key: 'email', label: 'Email', type: 'email', list: true, max: 120, half: true },
+      { key: 'is_active', label: 'Active', type: 'bool', list: true, half: true },
+      { key: 'address', label: 'Address', type: 'longtext', max: 500 },
+      { key: 'remarks', label: 'Remarks', type: 'longtext', max: 1000 },
+    ],
+  },
   drivers: {
     key: 'drivers', table: 'drivers', title: 'Drivers', singular: 'driver', perm: 'drivers.manage',
     softDelete: true, activeField: 'status', orderBy: 'e.full_name',

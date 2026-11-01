@@ -24,7 +24,7 @@ Full audit (30 Oct 2026): "RFS TMS — Audit and Roadmap for Freight + 3PL" (Cla
 | 3 | Where it lives | New private repo, new Supabase project, new Netlify site; each step delivered as a zip until Claude has write access |
 | 4 | Maps | Decide before Phase 5 |
 | 5 | Warehouse details | Decide before Phase 6 |
-| 6 | ERP | Excel export until the ERP and its API are known |
+| 6 | ERP | CSV / Excel export with a send-once log (Part C); a direct API link once the ERP and its API are known |
 | 7 | Email / WhatsApp | Decide before Phase 9 |
 | 8 | Quotation approval | Below a minimum margin (Settings, default 10%) a manager with "approve quotations" must approve |
 
@@ -34,7 +34,8 @@ Full audit (30 Oct 2026): "RFS TMS — Audit and Roadmap for Freight + 3PL" (Cla
 - [x] Phase 2, step 1 — safety: migration record, sign-in limit per connection, test guard (migration 012)
 - [x] Part A (deploy 1, migration 013) — money-screens switch; new roles (Sales, Customer Service, Freight Ops, Dispatcher, Warehouse Manager/Operator, ERP admin); customer contacts; Job Files with containers, milestones, closure rules; quotations with approval; accepted quotation → Job File; trips/PRO/runs linked by Job No.; Job File register report
 - [ ] Still from Phases 2–3: number series settings, branches/warehouse locations, partner types (shipping lines, airlines, agents, brokers), Excel import of customers
-- [ ] Phase 4 — shared documents (checklists, approve/reject, expiry, packs); messenger signature + link to PRO activity
+- [x] Part C (deploy 3, migration 016) — Job File documents with checklists, versions, approve/reject, waivers, closing rule; customer service cases with SLA and escalation; vendors and vendor requests with performance report; ERP export (CSV/Excel, no duplicates, confirm/reject log)
+- [ ] Still from Phase 4: printable document packs, messenger signature, link a messenger run to a PRO activity
 - [ ] Phase 5 — multi-stop, partial/failed/returned delivery, fleet maintenance/fuel/incidents, zones and map
 - [x] Part B (deploy 2, migrations 014–015) — quotation margin per line (% or amount) and customer copy (print / PDF / Excel, no cost); warehouse core: bins, customer SKUs, GRN, put-away and moves, stock ledger, batch/expiry, FEFO reserve → pick → pack → dispatch, cancel, counts, condition changes, 5 warehouse reports
 - [ ] Still from Phase 6: transfers between warehouses, customer returns, barcode scanning screens

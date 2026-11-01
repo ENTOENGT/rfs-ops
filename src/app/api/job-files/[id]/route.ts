@@ -1,6 +1,7 @@
 import { requireActor } from '@/server/auth';
 import { addJobFileNote, getJobFile, saveJobFileContainer, saveMilestone, setJobFileStatus, updateJobFile } from '@/server/jobfiles';
 import { bad } from '@/server/db';
+import { confirmJfUpload, jfDocAction, requestJfUpload } from '@/server/jfdocs';
 import { route, body } from '@/server/http';
 export const dynamic = 'force-dynamic';
 export const fetchCache = 'force-no-store';
@@ -9,6 +10,7 @@ export const PATCH = route(async (req, { params }) => updateJobFile(await requir
 // One door for every change; each action checks its own permission.
 const ACTIONS: Record<string, (a: any, id: string, b: any) => Promise<unknown>> = {
   status: setJobFileStatus, container: saveJobFileContainer, milestone: saveMilestone, note: addJobFileNote,
+  'upload-url': requestJfUpload, 'upload-confirm': confirmJfUpload, document: jfDocAction,
 };
 export const POST = route(async (req, { params }) => {
   const a = await requireActor(req);

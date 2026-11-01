@@ -117,6 +117,11 @@ test('Closing: refused while linked work is open; allowed once trips, PRO and ru
   await q(`update pro_requests set status_code = 'completed' where job_file_id = $1`, [fileId]);
   await rejects(jf.setJobFileStatus(freight, fileId, { status: 'closed' }), 'JOB_FILE_NOT_READY', /Messenger run/);
   await q(`update messenger_runs set status = 'delivered' where job_file_id = $1`, [fileId]);
+  // required documents (migration 016) must be approved or marked not needed before closing
+  await rejects(jf.setJobFileStatus(freight, fileId, { status: 'closed' }), 'JOB_FILE_NOT_READY', /Document "Commercial invoice" is missing/);
+  const { jfDocAction } = await import('../src/server/jfdocs');
+  for (const d of (await jf.getJobFile(freight, fileId)).checklist)
+    await jfDocAction(freight, fileId, { what: 'waive', doc_type: d.doc_type, reason: 'Test: held by the customer' });
   const closed = await jf.setJobFileStatus(freight, fileId, { status: 'closed' });
   assert.equal(closed.status, 'closed'); assert.ok(closed.closed_at);
   // a closed file is locked, but keeps its history and linked records
@@ -131,7 +136,8 @@ test('A service the file needs must have finished work behind it', async () => {
   const f = await jf.createJobFile(freight, base({ job_no: 'SI-NEEDS', containers: [] }));
   const e: any = await jf.setJobFileStatus(freight, f.id, { status: 'closed' }).catch((x) => x);
   assert.equal(e.code, 'JOB_FILE_NOT_READY');
-  assert.deepEqual(e.details.blockers, ['Transport is needed, but no truck trip is completed', 'Customs clearance is needed, but no PRO request is completed']);
+  for (const b of ['Transport is needed, but no truck trip is completed', 'Customs clearance is needed, but no PRO request is completed'])
+    assert.ok(e.details.blockers.includes(b), b);
 });
 
 test('Cancelling: needs a reason and no open work; frees the Job No. and lets linked records go', async () => {

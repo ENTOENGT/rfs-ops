@@ -131,6 +131,12 @@ function Reports() {
               <option value="open">Not delivered yet</option><option value="delivered">Delivered</option>
               <option value="failed">Could not complete (runs)</option><option value="cancelled">Cancelled</option></select></label>
           </>}
+          {def?.kind === 'cases' && <>
+            <label className="f"><span>Customer</span><select value={f.customer_id ?? ''} onChange={set('customer_id')}><option value="">All</option>
+              {lk.customers.map((c: any) => <option key={c.id} value={c.id}>{c.name}</option>)}</select></label>
+            <label className="f"><span>Status</span><select value={f.status ?? ''} onChange={set('status')}><option value="">All</option>
+              {[['open', 'Open'], ['in_progress', 'In progress'], ['waiting_customer', 'Waiting for customer'], ['resolved', 'Resolved'], ['closed', 'Closed']].map(([c, n]) => <option key={c} value={c}>{n}</option>)}</select></label>
+          </>}
           {def?.kind === 'warehouse' && <>
             <label className="f"><span>Customer</span><select value={f.customer_id ?? ''} onChange={set('customer_id')}><option value="">All</option>
               {lk.customers.map((c: any) => <option key={c.id} value={c.id}>{c.name}</option>)}</select></label>

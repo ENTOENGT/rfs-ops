@@ -18,6 +18,7 @@ const FIELDS: [string, string, string, string?][] = [
   ['company_email', 'Company email (on quotations)', 'text'],
   ['company_trn', 'Company TRN (on quotations)', 'text'],
   ['quote_vat_note', 'VAT note on quotations', 'text', 'Printed under the total on every quotation'],
+  ['jobfile_docs_required_to_close', 'Job Files need their documents to close', 'onoff', 'On: every required document must be approved or marked not needed before a Job File closes'],
   ['quote_min_margin_pct', 'Quotations: minimum margin (%)', 'number', 'Below this, a quotation needs approval by a manager before it goes out'],
   ['quote_validity_days', 'Quotations: rates valid for (days)', 'number', 'Default validity of a new quotation'],
 ];
@@ -59,6 +60,36 @@ function Departments() {
           <div className="actions"><button className="btn" onClick={() => setEdit(null)}>Cancel</button>
             <button className="btn primary" disabled={!edit.name.trim()} onClick={() => save(edit)}>Save</button></div>
         </div></div>}
+    </div>
+  );
+}
+
+const DIRS: [string, string][] = [['', 'Any direction'], ['import', 'Import'], ['export', 'Export'], ['cross_trade', 'Cross-trade'], ['domestic', 'Domestic']];
+const MODEG: [string, string][] = [['', 'Any mode'], ['sea', 'Sea'], ['air', 'Air'], ['road', 'Road']];
+const NEEDS: [string, string][] = [['', 'Always'], ['clearance', 'When clearance is needed'], ['transport', 'When transport is needed'], ['warehouse', 'When it goes to the warehouse']];
+/** Which documents each kind of Job File needs (Freight + 3PL, migration 016). */
+function DocRequirements() {
+  const [rows, setRows] = useState<any[]>([]);
+  const [f, setF] = useState<any>({ name: '', direction: '', mode_group: '', needs: '' });
+  const [err, setErr] = useState('');
+  const load = () => api('/api/settings/doc-requirements').then(setRows).catch((e) => setErr(e.message));
+  useEffect(() => { load(); }, []);
+  const save = async (body: any) => { setErr(''); try { setRows(await api('/api/settings/doc-requirements', { body })); return true; } catch (e: any) { setErr(e.message); return false; } };
+  const lbl = (list: [string, string][], v: string | null) => list.find(([c]) => c === (v ?? ''))?.[1];
+  return (
+    <div className="panel"><h2>Required documents on Job Files</h2>
+      <p className="muted small" style={{ marginTop: 0 }}>Each Job File gets a checklist from the rules that match its direction, mode and services.</p>
+      {err && <div className="msg err">{err}</div>}
+      <div className="table-wrap"><table className="t"><thead><tr><th>Document</th><th>Direction</th><th>Mode</th><th>When</th><th /></tr></thead>
+        <tbody>{rows.map((r) => <tr key={r.id} style={r.is_active ? undefined : { opacity: 0.5 }}><td><b>{r.name}</b></td><td>{lbl(DIRS, r.direction)}</td>
+          <td>{lbl(MODEG, r.mode_group)}</td><td>{lbl(NEEDS, r.needs)}</td>
+          <td style={{ textAlign: 'right' }}><button className="btn small" onClick={() => save({ id: r.id, is_active: !r.is_active })}>{r.is_active ? 'Switch off' : 'Switch on'}</button></td></tr>)}</tbody></table></div>
+      <div style={{ display: 'flex', gap: 8, marginTop: 10, flexWrap: 'wrap' }}>
+        <input style={{ flex: 2, minWidth: 180 }} value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} placeholder="New document, e.g. Phytosanitary certificate" />
+        {([['direction', DIRS], ['mode_group', MODEG], ['needs', NEEDS]] as const).map(([k, list]) =>
+          <select key={k} style={{ flex: 1, minWidth: 130 }} value={f[k]} onChange={(e) => setF({ ...f, [k]: e.target.value })}>{list.map(([c, n]) => <option key={c} value={c}>{n}</option>)}</select>)}
+        <button className="btn" disabled={!f.name.trim()} onClick={async () => { if (await save(f)) setF({ ...f, name: '' }); }}>Add</button>
+      </div>
     </div>
   );
 }
@@ -169,6 +200,7 @@ export default function Settings() {
 
       <Departments />
 
+      <DocRequirements />
       <StorageCheck />
       <DocumentCleanup />
 

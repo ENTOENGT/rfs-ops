@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { api, fmtDate, fmtDateTime } from '@/components/api';
 import { useMe } from '@/components/Shell';
 import { JobFileFields } from '@/components/JobFileForm';
+import JobFileDocs from '@/components/JobFileDocs';
 import { CONTAINER_TYPES, JF_STATUSES, label, DIRECTIONS, MODES } from '@/lib/jobfileRules';
 
 const RUN_STATUS: Record<string, string> = { pending: 'Waiting', assigned: 'Assigned', collected: 'Collected', delivered: 'Delivered', failed: 'Could not complete', cancelled: 'Cancelled' };
@@ -103,6 +104,7 @@ export default function JobFile({ params }: { params: { id: string } }) {
             {kv('Department', d.department_name)}{kv('Created', `${fmtDateTime(d.created_at)} by ${d.created_by_name}`)}
             {d.quotation && kv('Quotation', <Link href={`/quotations/${d.quotation.id}`}>{d.quotation.quote_no}</Link>)}
           </dl></div>
+          <JobFileDocs d={d} onChange={(v) => { setD(v); setErr(''); }} onError={(m) => { setErr(m); window.scrollTo(0, 0); }} />
           <Milestones d={d} act={act} />
           <div className="panel"><h2>Containers</h2>
             {d.containers.length === 0 && <p className="muted small">No containers.</p>}

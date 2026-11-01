@@ -1,7 +1,7 @@
 'use client';
 import MasterPage from '@/components/MasterPage';
 
-const MASTER_PAGES = ['drivers', 'vehicles', 'customers', 'locations', 'subcontractors', 'rental_rates'];
+const MASTER_PAGES = ['drivers', 'vehicles', 'customers', 'locations', 'subcontractors', 'rental_rates', 'vendors'];
 const PLAN: Record<string, [string, number, string]> = {
 };
 export default function Section({ params }: { params: { section: string } }) {

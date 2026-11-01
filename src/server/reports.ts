@@ -17,7 +17,7 @@ import { jobScope } from './scope';
 type ColType = 'text' | 'date' | 'datetime' | 'money' | 'int' | 'pct' | 'qty';
 type Need = 'cost' | 'revenue' | 'profit';
 interface Col { key: string; label: string; type: ColType; needs?: Need; width?: number; sort?: string }
-interface ReportDef { key: string; title: string; description: string; costDescription?: string; kind: 'jobs' | 'group' | 'messenger' | 'pro' | 'rental' | 'jobfile' | 'warehouse'; noPeriod?: boolean; proCharges?: boolean; cols: Col[]; group?: 'by_driver' | 'by_vehicle' | 'by_customer' | 'by_department'; podPending?: boolean; needsAny?: Need[] }
+interface ReportDef { key: string; title: string; description: string; costDescription?: string; kind: 'jobs' | 'group' | 'messenger' | 'pro' | 'rental' | 'jobfile' | 'warehouse' | 'cases' | 'vendors'; noPeriod?: boolean; proCharges?: boolean; cols: Col[]; group?: 'by_driver' | 'by_vehicle' | 'by_customer' | 'by_department'; podPending?: boolean; needsAny?: Need[] }
 
 const JOB_BASE: Col[] = [
   { key: 'job_no', label: 'Job No.', type: 'text', width: 14, sort: 'upper(t.job_no)' },
@@ -42,6 +42,22 @@ export const REPORTS: Record<string, ReportDef> = {
       { key: 'pod_status_name', label: 'POD', type: 'text', width: 12 },
       { key: 'actual_delivery_at', label: 'Delivered at', type: 'datetime', width: 17, sort: 'a.actual_delivery_at' }],
   },
+  // Part C (migration 016)
+  cs_cases: { key: 'cs_cases', title: 'Customer service cases', kind: 'cases',
+    description: 'Every case with first response and resolution time, and whether it missed its SLA. Period = date opened.',
+    cols: [{ key: 'case_no', label: 'Case', type: 'text', width: 10 }, { key: 'created_at', label: 'Opened', type: 'datetime', width: 17 },
+      { key: 'customer_name', label: 'Customer', type: 'text', width: 22 }, { key: 'job_no', label: 'Job No.', type: 'text', width: 14 },
+      { key: 'kind', label: 'Type', type: 'text', width: 12 }, { key: 'priority', label: 'Priority', type: 'text', width: 9 },
+      { key: 'subject', label: 'Subject', type: 'text', width: 30 }, { key: 'owner_name', label: 'Owner', type: 'text', width: 16 },
+      { key: 'status', label: 'Status', type: 'text', width: 14 }, { key: 'response_hours', label: 'First response (h)', type: 'qty', width: 12 },
+      { key: 'resolution_hours', label: 'Resolved in (h)', type: 'qty', width: 12 }, { key: 'sla_breached', label: 'SLA missed', type: 'text', width: 10 }] },
+  vendor_performance: { key: 'vendor_performance', title: 'Vendor performance', kind: 'vendors',
+    description: 'Per vendor: requests, completed, on time against the needed-by date, disputes, cancellations, average days. Period = date requested.',
+    cols: [{ key: 'vendor_name', label: 'Vendor', type: 'text', width: 26 }, { key: 'vendor_type', label: 'Type', type: 'text', width: 14 },
+      { key: 'requests', label: 'Requests', type: 'int', width: 9 }, { key: 'completed', label: 'Completed', type: 'int', width: 10 },
+      { key: 'on_time', label: 'On time', type: 'int', width: 9 }, { key: 'late', label: 'Late', type: 'int', width: 7 },
+      { key: 'on_time_pct', label: 'On time %', type: 'pct', width: 10 }, { key: 'disputes', label: 'Disputes', type: 'int', width: 9 },
+      { key: 'cancelled', label: 'Cancelled', type: 'int', width: 10 }, { key: 'avg_days', label: 'Avg days', type: 'qty', width: 9 }] },
   // Warehouse (migration 015) — quantities only
   wh_stock: { key: 'wh_stock', title: 'Stock on hand', kind: 'warehouse', noPeriod: true,
     description: 'Stock now, by customer, warehouse, bin, SKU, batch and expiry: on hand, reserved and available.',
@@ -272,6 +288,8 @@ export async function reportList(realActor: Actor) {
   return Object.values(REPORTS)
     .filter((r) => !r.needsAny || r.needsAny.some((n) => can(actor, n)))
     .filter((r) => r.kind !== 'pro' || (proVisible(actor) && (!r.proCharges || actor.has('pro.charges.view'))))
+    .filter((r) => r.kind !== 'cases' || actor.isSuperAdmin || actor.has('cases.view_all') || actor.has('cases.manage'))
+    .filter((r) => r.kind !== 'vendors' || actor.isSuperAdmin || actor.has('vendors.requests') || actor.has('vendors.manage'))
     .filter((r) => r.kind !== 'warehouse' || ['warehouse.view', 'warehouse.receive', 'warehouse.dispatch', 'warehouse.configure', 'warehouse.orders.create'].some((x) => actor.has(x as any)))
     .filter((r) => r.kind !== 'jobfile' || ['jobfiles.view_all', 'jobfiles.view_department', 'jobfiles.create', 'jobfiles.edit'].some((x) => actor.has(x as any)))
     .map((r) => ({ key: r.key, title: r.title, kind: r.kind,
@@ -306,6 +324,16 @@ export async function runReport(realActor: Actor, key: string, p: Record<string,
   if (def.kind === 'rental') {
     const { rentalReport } = await import('./rentals');
     return rentalReport(actor, def, cols, colsOut, p, opts) as any;
+  }
+  if (def.kind === 'cases') {
+    const { casesReport, canSeeCases } = await import('./cases');
+    if (!canSeeCases(actor)) throw forbidden();
+    return casesReport(actor, def, cols, colsOut, p, opts) as any;
+  }
+  if (def.kind === 'vendors') {
+    const { vendorReport, canSeeVendorRequests } = await import('./vendorreqs');
+    if (!canSeeVendorRequests(actor)) throw forbidden();
+    return vendorReport(actor, def, cols, colsOut, p, opts) as any;
   }
   if (def.kind === 'warehouse') {
     const { warehouseReport, canSeeWarehouse } = await import('./warehouse');

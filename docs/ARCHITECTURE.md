@@ -446,6 +446,28 @@ quotations within validity; every print / download is written to the quotation h
 - Reports: Stock on hand, Batch and expiry, Inventory ledger, GRN register, Dispatch register.
 - Quantities only — valuation and accounting entries stay in the ERP.
 
+## 15e. Freight + 3PL Part C (migration 016) — documents, customer service, vendors, ERP export
+
+- **Job File documents** (`jf_documents`, `src/server/jfdocs.ts`, panel on the Job File): checklist from `doc_requirements`
+  (by direction, mode group sea/air/road, and needed service; editable in Settings). Upload (PDF, JPG, PNG, Excel, Word,
+  10 MB) with versions; approve / reject with a reason (`documents.approve`, uploader notified); "not needed for this file"
+  waivers with a reason; removal is a soft delete recorded in the history. Files open through `/api/jf-files/{id}` with the
+  Job File's own visibility. Setting `jobfile_docs_required_to_close` (default on): closing needs every required document
+  approved or waived. Job File tile/filter "Documents missing".
+- **Customer service cases** (`cs_cases`, `src/server/cases.ts`, `/cases`): customer + optional Job File, type, channel,
+  priority, owner. SLA hours per priority (Settings `cs_sla_hours`: urgent 4, high 8, normal 24, low 72); the clock pauses
+  while waiting for the customer (due time moves on). Resolve needs a resolution; close only after resolve. Overdue cases
+  escalate once to `cases.escalations`. Visibility: `cases.view_all` (Customer Service, Finance) or own department / own.
+  Report: Customer service cases (response and resolution hours, SLA missed).
+- **Vendors** (`vendors` master, `/vendors`) and **vendor requests** (`vendor_requests`, `src/server/vendorreqs.ts`,
+  `/vendor-requests`): requested → quoted → confirmed → in progress → completed (proof note) / disputed / cancelled.
+  The vendor price is cost: only buying-cost viewers see or enter it. Report: Vendor performance (on time vs needed-by).
+- **ERP export** (`erp_batches`, `erp_items`, `src/server/erp.ts`, `/erp`): finished work — completed trips (selling ex
+  VAT + cost), completed PRO requests (charges), received GRNs, dispatched orders, completed vendor requests (cost) —
+  as CSV / Excel in one fixed layout with stable references (RFSOPS-…). A record can be in only one live export (unique
+  index); the ERP result is typed back (confirm with the ERP reference; reject single lines with a reason → ready again).
+  `erp.*` permissions are commercial. No ERP API is assumed; storage billing waits for rate cards.
+
 ## 16. Phase status
 
 | Phase | Status |
@@ -465,5 +487,6 @@ quotations within validity; every print / download is written to the quotation h
 | Freight + 3PL — Phase 2, step 1: safety foundations (migration record, sign-in limit, test guard) | Done |
 | Freight + 3PL — Part A: Job Files, quotations, new roles, contacts, money switch (migration 013) | Done |
 | Freight + 3PL — Part B: quotation margin + customer copy, warehouse core (migrations 014–015) | Done |
+| Freight + 3PL — Part C: documents + checklists, customer service, vendors, ERP export (migration 016) | Done |
 | Freight + 3PL — remaining phases: see `docs/FREIGHT_3PL_PLAN.md` | Planned |
 | 7 Email notifications · 8 Saved views, column prefs, live ops table, performance | Planned |

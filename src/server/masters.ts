@@ -94,6 +94,7 @@ const dupMessages: Record<string, string> = {
   customers_code_key: 'A customer with this code already exists',
   customers_name_uq: 'A customer with this name already exists',
   subcontractors_name_uq: 'A rental company with this name already exists',
+  vendors_name_uq: 'A vendor with this name already exists',
   rental_rates_uq: 'This company already has a rate for this truck type and route',
   vehicle_types_name_key: 'A vehicle type with this name already exists',
 };
