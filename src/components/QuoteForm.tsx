@@ -4,7 +4,16 @@ import { fmtMoney } from './api';
 import { SERVICE_TYPES, DIRECTIONS, CHARGE_UNITS } from '@/lib/jobfileRules';
 
 const Err = ({ m }: { m?: string }) => (m ? <small className="ferr">{m}</small> : null);
-export const emptyLine = () => ({ description: '', charge_unit: 'shipment', quantity: '1', cost_rate: '', sell_rate: '' });
+export const emptyLine = () => ({ description: '', charge_unit: 'shipment', quantity: '1', cost_rate: '', sell_rate: '', margin_type: '', margin_value: '' });
+
+/** Same rule as the server: % → selling = cost ÷ (1 − %), so the margin is that % of the selling price; amount → cost + amount. */
+export function sellFromMargin(cost: string, type: string, value: string): string {
+  const c = Math.round(Number(cost || 0) * 100);
+  const v = Number(value || 0);
+  if (type === 'amount') return ((c + Math.round(v * 100)) / 100).toFixed(2);
+  if (type === 'percent' && v < 100) return (Math.round(c / (1 - v / 100)) / 100).toFixed(2);
+  return '';
+}
 
 /** Same sums as the server (to the fils), so what you see while typing is what gets saved. */
 function totals(lines: any[]) {
@@ -23,7 +32,14 @@ export function QuoteFields({ f, setF, fe = {}, minMargin }: { f: any; setF: (v:
   const { buyingView, sellingView, profitView } = me.financial_access;
   const set = (k: string) => (e: any) => setF({ ...f, [k]: e.target.value });
   const lines: any[] = f.lines ?? [];
-  const setLine = (i: number, k: string, v: string) => setF({ ...f, lines: lines.map((l, j) => (j === i ? { ...l, [k]: v } : l)) });
+  const canMargin = buyingView && sellingView;
+  // when a line uses a margin, its selling rate follows the cost and margin as you type
+  const setLine = (i: number, k: string, v: string) => setF({ ...f, lines: lines.map((l, j) => {
+    if (j !== i) return l;
+    const n = { ...l, [k]: v };
+    if (n.margin_type && ['cost_rate', 'margin_type', 'margin_value'].includes(k)) n.sell_rate = sellFromMargin(n.cost_rate, n.margin_type, n.margin_value);
+    return n;
+  }) });
   const t = totals(lines);
   const cur = lk.currency ?? 'AED';
   return <>
@@ -49,7 +65,7 @@ export function QuoteFields({ f, setF, fe = {}, minMargin }: { f: any; setF: (v:
     <div className="panel"><h2>Charges ({cur}, excluding VAT)</h2>
       <div className="table-wrap"><table className="t">
         <thead><tr><th style={{ width: '32%' }}>Charge</th><th>Charged</th><th className="num">Qty</th>
-          {buyingView && <th className="num">Cost rate</th>}{sellingView && <th className="num">Selling rate</th>}
+          {buyingView && <th className="num">Cost rate</th>}{canMargin && <th>Margin</th>}{sellingView && <th className="num">Selling rate</th>}
           {sellingView && <th className="num">Amount</th>}<th /></tr></thead>
         <tbody>{lines.map((l, i) => <tr key={i}>
           <td><input value={l.description} onChange={(e) => setLine(i, 'description', e.target.value)} placeholder="e.g. Ocean freight, THC, DO fee" /></td>
@@ -57,12 +73,20 @@ export function QuoteFields({ f, setF, fe = {}, minMargin }: { f: any; setF: (v:
             {CHARGE_UNITS.map(([c, n]) => <option key={c} value={c}>{n}</option>)}</select></td>
           <td className="num"><input style={{ width: 80, textAlign: 'right' }} value={l.quantity} onChange={(e) => setLine(i, 'quantity', e.target.value)} inputMode="decimal" /></td>
           {buyingView && <td className="num"><input style={{ width: 110, textAlign: 'right' }} value={l.cost_rate ?? ''} onChange={(e) => setLine(i, 'cost_rate', e.target.value)} inputMode="decimal" /></td>}
-          {sellingView && <td className="num"><input style={{ width: 110, textAlign: 'right' }} value={l.sell_rate ?? ''} onChange={(e) => setLine(i, 'sell_rate', e.target.value)} inputMode="decimal" /></td>}
+          {canMargin && <td style={{ whiteSpace: 'nowrap' }}>
+            <select style={{ width: 92 }} value={l.margin_type ?? ''} onChange={(e) => setLine(i, 'margin_type', e.target.value)} aria-label="Margin type">
+              <option value="">Type rate</option><option value="percent">Margin %</option><option value="amount">Margin {cur}</option></select>
+            {l.margin_type && <input style={{ width: 80, textAlign: 'right', marginLeft: 4 }} value={l.margin_value ?? ''}
+              onChange={(e) => setLine(i, 'margin_value', e.target.value)} inputMode="decimal" placeholder={l.margin_type === 'percent' ? '%' : cur} aria-label="Margin" />}</td>}
+          {sellingView && <td className="num"><input style={{ width: 110, textAlign: 'right', background: l.margin_type ? 'var(--line-soft)' : undefined }}
+            value={l.sell_rate ?? ''} readOnly={!!l.margin_type} title={l.margin_type ? 'Worked out from cost + margin' : ''}
+            onChange={(e) => setLine(i, 'sell_rate', e.target.value)} inputMode="decimal" /></td>}
           {sellingView && <td className="num">{fmtMoney((Math.round(Number(l.quantity || 0) * Math.round(Number(l.sell_rate || 0) * 100)) / 100).toFixed(2), '')}</td>}
           <td><button className="btn small" type="button" disabled={lines.length === 1} onClick={() => setF({ ...f, lines: lines.filter((_, j) => j !== i) })}>✕</button></td>
         </tr>)}</tbody>
       </table></div>
       <button className="btn small" type="button" style={{ marginTop: 8 }} onClick={() => setF({ ...f, lines: [...lines, emptyLine()] })}>+ Add charge</button>
+      {canMargin && <p className="muted small" style={{ margin: '8px 0 0' }}>Margin %: the margin is that share of the selling price (cost 1,000 at 20% → selling 1,250). Margin {cur}: added to the cost per unit. The customer copy never shows cost or margin.</p>}
       <dl className="kv" style={{ marginTop: 12 }}>
         {buyingView && <><dt>Total cost</dt><dd>{fmtMoney(t.cost, cur)}</dd></>}
         {sellingView && <><dt>Total to customer</dt><dd><b>{fmtMoney(t.sell, cur)}</b></dd></>}

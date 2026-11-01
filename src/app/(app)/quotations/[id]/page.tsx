@@ -37,7 +37,7 @@ export default function Quotation({ params }: { params: { id: string } }) {
     } catch (e: any) { setErr(e.message); window.scrollTo(0, 0); }
   };
   if (!d) return <div className="page">{err ? <div className="msg err">{err}</div> : <p className="muted">Loading…</p>}</div>;
-  const { buyingView, sellingView } = me.financial_access;
+  const { buyingView, sellingView, profitView } = me.financial_access;
   const cur = d.currency;
   const kv = (k: string, v: any) => <><dt>{k}</dt><dd>{v || v === 0 ? v : '—'}</dd></>;
   return (
@@ -52,6 +52,8 @@ export default function Quotation({ params }: { params: { id: string } }) {
         {d.can.send && <button className="btn" onClick={() => act({ action: 'send' }, 'Marked as sent.')}>Mark as sent</button>}
         {d.can.accept && <button className="btn primary" onClick={() => setAccept({ job_no: '', mode: MODES.some(([c]) => c === d.service_type) ? d.service_type : 'sea_fcl' })}>Customer accepted</button>}
         {d.can.decline && <button className="btn" onClick={() => ask('decline', 'Why did the customer not accept?', 'Recorded.')}>Customer declined</button>}
+        {d.can.customer_copy && <><Link className="btn" href={`/quotations/${d.id}/print`}>Print / PDF</Link>
+          <a className="btn" href={`/api/quotations/${d.id}?format=xlsx`}>Excel</a></>}
         {d.can.copy && <button className="btn" onClick={() => act({ action: 'copy' }, '')}>Copy</button>}
         {d.can.cancel && <button className="btn danger" onClick={() => ask('cancel', 'Cancel this quotation? Give a reason:', 'Cancelled.')}>Cancel</button>}
       </div>
@@ -60,6 +62,8 @@ export default function Quotation({ params }: { params: { id: string } }) {
       {d.status === 'pending_approval' && <div className="msg warn">The margin is below the {d.min_margin_pct}% minimum, so a manager must approve it before it goes to the customer.</div>}
       {d.status === 'expired' && <div className="msg warn">The rates expired on {fmtDate(d.valid_until)}. Edit the validity date (it then needs approval again) or make a copy.</div>}
       {d.decline_reason && ['draft', 'rejected', 'cancelled'].includes(d.status) && <div className="msg">Note: {d.decline_reason}</div>}
+      {!d.can.customer_copy && ['draft', 'pending_approval'].includes(d.status) && sellingView &&
+        <p className="muted small">Print / PDF and Excel for the customer appear once the quotation is approved.</p>}
       {d.job_file_id && <div className="msg ok">Job File: <Link href={`/job-files/${d.job_file_id}`}><b>{d.job_no}</b></Link></div>}
 
       {accept && <div className="modal-bg" onClick={(e) => e.target === e.currentTarget && setAccept(null)}>
@@ -90,10 +94,11 @@ export default function Quotation({ params }: { params: { id: string } }) {
           <div className="panel"><h2>Charges ({cur}, excluding VAT)</h2>
             <div className="table-wrap"><table className="t">
               <thead><tr><th>Charge</th><th>Charged</th><th className="num">Qty</th>
-                {buyingView && <th className="num">Cost rate</th>}{buyingView && <th className="num">Cost</th>}
+                {buyingView && <th className="num">Cost rate</th>}{buyingView && <th className="num">Cost</th>}{profitView && <th>Margin</th>}
                 {sellingView && <th className="num">Selling rate</th>}{sellingView && <th className="num">Amount</th>}</tr></thead>
               <tbody>{d.lines.map((l: any) => <tr key={l.id}><td>{l.description}</td><td className="small">{l.unit_name}</td><td className="num">{Number(l.quantity)}</td>
                 {buyingView && <td className="num">{fmtMoney(l.cost_rate, '')}</td>}{buyingView && <td className="num">{fmtMoney(l.cost_amount, '')}</td>}
+                {profitView && <td className="small">{l.margin_type === 'percent' ? `${Number(l.margin_value)}%` : l.margin_type === 'amount' ? `+${fmtMoney(l.margin_value, '')}` : <span className="muted">typed</span>}</td>}
                 {sellingView && <td className="num">{fmtMoney(l.sell_rate, '')}</td>}{sellingView && <td className="num">{fmtMoney(l.sell_amount, '')}</td>}</tr>)}</tbody>
             </table></div>
             <dl className="kv" style={{ marginTop: 12 }}>

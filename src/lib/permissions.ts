@@ -15,7 +15,8 @@ export type Perm =
   | 'rentals.approve'
   | 'pro.view_all' | 'pro.view_department' | 'pro.create' | 'pro.assign' | 'pro.update' | 'pro.charges.view' | 'pro.charges.edit' | 'pro.configure'
   | 'jobfiles.view_all' | 'jobfiles.view_department' | 'jobfiles.create' | 'jobfiles.edit' | 'jobfiles.close'
-  | 'quotes.view' | 'quotes.create' | 'quotes.approve';
+  | 'quotes.view' | 'quotes.create' | 'quotes.approve'
+  | 'warehouse.view' | 'warehouse.receive' | 'warehouse.move' | 'warehouse.dispatch' | 'warehouse.adjust' | 'warehouse.configure' | 'warehouse.orders.create';
 
 export type Side = 'admin' | 'operations' | 'transport' | 'messenger' | 'finance' | 'pro' | 'warehouse';
 /** Sides that can never see selling price, revenue, profit or quotations (database rule user_has_perm). */

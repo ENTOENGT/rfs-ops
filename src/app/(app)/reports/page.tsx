@@ -42,6 +42,7 @@ function Reports() {
     switch (c.type) {
       case 'money': return Number(v).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
       case 'pct': return `${v}%`;
+      case 'qty': return Number(v).toLocaleString('en-US', { maximumFractionDigits: 3 });
       case 'date': return fmtDate(v);
       case 'datetime': return fmtDateTime(v);
       default: return String(v);
@@ -129,6 +130,12 @@ function Reports() {
             <label className="f"><span>Status</span><select value={f.status ?? ''} onChange={set('status')}><option value="">All</option>
               <option value="open">Not delivered yet</option><option value="delivered">Delivered</option>
               <option value="failed">Could not complete (runs)</option><option value="cancelled">Cancelled</option></select></label>
+          </>}
+          {def?.kind === 'warehouse' && <>
+            <label className="f"><span>Customer</span><select value={f.customer_id ?? ''} onChange={set('customer_id')}><option value="">All</option>
+              {lk.customers.map((c: any) => <option key={c.id} value={c.id}>{c.name}</option>)}</select></label>
+            {def.key === 'wh_expiry' && <label className="f"><span>Expiring within (days)</span><input type="number" min={0} value={f.days ?? '90'} onChange={set('days')} /></label>}
+            {['wh_stock', 'wh_expiry'].includes(def.key) && <p className="muted small" style={{ alignSelf: 'end' }}>Shows stock as it is now; the period is not used.</p>}
           </>}
           {def?.kind === 'jobfile' && <>
             <label className="f"><span>Customer</span><select value={f.customer_id ?? ''} onChange={set('customer_id')}><option value="">All</option>

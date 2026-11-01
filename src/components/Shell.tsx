@@ -17,6 +17,7 @@ const NAV: { href: string; label: string; perm?: string | string[]; phase?: numb
   { href: '/dashboard', label: 'Dashboard' },
   { href: '/job-files', label: 'Job Files', perm: ['jobfiles.view_all', 'jobfiles.view_department', 'jobfiles.create', 'jobfiles.edit'] },
   { href: '/quotations', label: 'Quotations', perm: 'quotes.view' },
+  { href: '/warehouse', label: 'Warehouse', perm: ['warehouse.view', 'warehouse.receive', 'warehouse.dispatch', 'warehouse.configure', 'warehouse.orders.create'] },
   { href: '/requests', label: 'Transport requests', perm: 'jobs.view' },
   { href: '/jobs', label: 'Jobs', perm: 'jobs.view' },
   { href: '/drivers', label: 'Drivers', perm: 'jobs.view' },

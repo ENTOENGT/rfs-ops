@@ -155,3 +155,58 @@ test('Money screens switch: off hides the Financials page and money columns; on 
   assert.ok((await runReport(mgr, 'financial', P)).columns.some((c) => c.key === 'net_revenue'));
   assert.equal((await one(`select value from settings where key = 'money_screens'`)).value, true);
 });
+
+test('Margin per line: % gives selling = cost ÷ (1 − %); amount adds to cost; selling follows a cost change', async () => {
+  const qs = await import('../src/server/quotations');
+  assert.equal(qs.sellFromMargin('1000', 'percent', '20'), '1250.00');
+  assert.equal(qs.sellFromMargin('350.50', 'amount', '49.50'), '400.00');
+  assert.equal(qs.sellFromMargin('100', 'percent', '33.33'), '149.99');
+  await rejects(qt.createQuotation(sales, quote({ lines: [{ description: 'x', charge_unit: 'shipment', quantity: '1', cost_rate: '100', margin_type: 'percent', margin_value: '100' }] })), 'VALIDATION', /below 100/);
+  const x = await qt.createQuotation(sales, quote({ lines: [
+    { description: 'Freight', charge_unit: 'container', quantity: '2', cost_rate: '1000', sell_rate: '1', margin_type: 'percent', margin_value: '20' },
+    { description: 'THC', charge_unit: 'container', quantity: '2', cost_rate: '350.50', margin_type: 'amount', margin_value: '49.50' },
+    { description: 'Docs', charge_unit: 'shipment', quantity: '1', cost_rate: '0', sell_rate: '150' }] }));
+  let g = await qt.getQuotation(sales, x.id);
+  assert.deepEqual(g.lines.map((l: any) => [l.sell_rate, l.margin_type]), [['1250.00', 'percent'], ['400.00', 'amount'], ['150.00', null]]);
+  // change the cost: the selling rate follows the margin
+  g = await qt.updateQuotation(sales, x.id, { lines: g.lines.map((l: any, i: number) => i === 0 ? { ...l, cost_rate: '1200' } : l) });
+  assert.equal(g.lines[0].sell_rate, '1500.00');
+  // someone who sees selling but not cost can't see the margin, and typing a new rate ends the margin on that line
+  await updateUser(admin, opsSub.id, { overrides: [{ code: 'quotes.view', granted: true }, { code: 'quotes.create', granted: true },
+    { code: 'finance.selling.view', granted: true }, { code: 'finance.buying.view', granted: false }] });
+  const s = (await loadActor(opsSub.id))!;
+  const gs = await qt.getQuotation(s, x.id);
+  assert.equal(gs.lines[0].margin_type, undefined);
+  await qt.updateQuotation(s, x.id, { lines: gs.lines.map((l: any, i: number) => i === 1 ? { ...l, sell_rate: '420' } : l) });
+  g = await qt.getQuotation(sales, x.id);
+  assert.deepEqual(g.lines.map((l: any) => [l.cost_rate, l.sell_rate, l.margin_type]),
+    [['1200.00', '1500.00', 'percent'], ['350.50', '420.00', null], ['0.00', '150.00', null]]);
+  await updateUser(admin, opsSub.id, { overrides: [] });
+});
+
+test('Customer copy (print / Excel): only once approved, selling only — never cost or margin', async () => {
+  const x = await qt.createQuotation(sales, quote({ scope: 'Port to door', exclusions: 'Duty and VAT' }));
+  await rejects(qt.customerCopy(sales, x.id), 'QUOTE_NOT_READY');
+  await qt.quotationAction(sales, x.id, { action: 'submit' });
+  await saveSettings(admin, { company_address: 'Al Quoz, Dubai', company_trn: '100000000000003' });
+  const c = await qt.customerCopy(sales, x.id);
+  assert.equal(c.total, '3350.00');
+  assert.deepEqual(c.lines.map((l: any) => l.amount), ['2400.00', '800.00', '150.00']);
+  assert.equal(c.company.company_trn, '100000000000003');
+  assert.match(c.company.quote_vat_note, /exclusive of VAT/);
+  const json = JSON.stringify(c);
+  for (const leak of ['cost', 'margin', '1000.00', '350.50', '2701']) assert.ok(!json.includes(leak), `customer copy leaked "${leak}"`);
+  const xl = await qt.customerExcel(sales, x.id);
+  const ExcelJS = (await import('exceljs')).default;
+  const wb = new ExcelJS.Workbook(); await wb.xlsx.load(xl.body as any);
+  const cells: string[] = [];
+  wb.worksheets[0].eachRow((r) => r.eachCell((cell) => cells.push(String(cell.value))));
+  assert.ok(cells.includes('3350') && cells.includes('Port to door'));
+  assert.ok(!cells.some((v) => /cost|margin/i.test(v) || v === '1000' || v === '350.5'), 'Excel has no cost or margin');
+  const ev = (await qt.getQuotation(sales, x.id)).events.map((e: any) => e.title);
+  assert.ok(ev.includes('Customer copy opened for print / PDF') && ev.includes('Customer copy downloaded (Excel)'));
+  // nobody without selling view gets a copy, and expired rates can't go out
+  await rejects(qt.customerCopy(cs, x.id), 'FORBIDDEN');
+  await q('update quotations set valid_until = $2 where id = $1', [x.id, D(-1)]);
+  await rejects(qt.customerCopy(sales, x.id), 'QUOTE_EXPIRED');
+});

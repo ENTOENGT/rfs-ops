@@ -39,7 +39,7 @@ before(async () => {
 });
 
 test('Report list follows permissions', async () => {
-  assert.deepEqual((await reportList(ops)).map((r) => r.key), ['operational', 'jobfiles', 'financial', 'department', 'driver', 'vehicle', 'customer', 'messenger',
+  assert.deepEqual((await reportList(ops)).map((r) => r.key), ['operational', 'wh_stock', 'wh_expiry', 'wh_ledger', 'wh_grn', 'wh_dispatch', 'jobfiles', 'financial', 'department', 'driver', 'vehicle', 'customer', 'messenger',
     'pro_register', 'pro_containers', 'pro_officers', 'pro_authority_pending', 'pro_charges', 'rentals', 'pod_pending']);
   assert.equal((await reportList(tr)).length, 10, 'Transport keeps cost-only versions (+ the Job File register, no prices)');
   await updateUser(admin, tr.id, { overrides: [{ code: 'finance.buying.view', granted: false }] });

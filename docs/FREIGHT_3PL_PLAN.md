@@ -36,7 +36,8 @@ Full audit (30 Oct 2026): "RFS TMS — Audit and Roadmap for Freight + 3PL" (Cla
 - [ ] Still from Phases 2–3: number series settings, branches/warehouse locations, partner types (shipping lines, airlines, agents, brokers), Excel import of customers
 - [ ] Phase 4 — shared documents (checklists, approve/reject, expiry, packs); messenger signature + link to PRO activity
 - [ ] Phase 5 — multi-stop, partial/failed/returned delivery, fleet maintenance/fuel/incidents, zones and map
-- [ ] Phase 6 — warehouse: bins, SKUs, GRN, put-away, stock ledger, batch/expiry, reserve/pick/pack/dispatch, transfers, counts, returns
+- [x] Part B (deploy 2, migrations 014–015) — quotation margin per line (% or amount) and customer copy (print / PDF / Excel, no cost); warehouse core: bins, customer SKUs, GRN, put-away and moves, stock ledger, batch/expiry, FEFO reserve → pick → pack → dispatch, cancel, counts, condition changes, 5 warehouse reports
+- [ ] Still from Phase 6: transfers between warehouses, customer returns, barcode scanning screens
 - [ ] Phase 7 — customer orders, vendor coordination, customer service cases
 - [ ] Phase 8 — ERP export, sync log, retry, duplicate guard
 - [ ] Phase 9 — customer portal, email/WhatsApp, new reports, role dashboards

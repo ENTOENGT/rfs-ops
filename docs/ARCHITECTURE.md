@@ -420,6 +420,32 @@ When own vehicles are not available, Transport hires a truck from a rental compa
   Financials page and makes every report drop revenue, VAT and profit. Nothing is deleted; turning it on restores it.
 - **Report**: Job File register (`jobfiles`), same filters / Excel / CSV / print as the others.
 
+## 15d. Freight + 3PL Part B (migrations 014–015) — quotation margin + customer copy, warehouse core
+
+**Quotations (014):** each charge line can take its selling rate from cost + margin — `percent` (selling = cost ÷ (1 − %),
+so the margin is that share of the selling price) or `amount` (cost + amount) — or a typed rate. Only people who see both
+cost and selling can set or see the margin; someone with selling view only who types a new rate ends that line's margin.
+**Customer copy** (`customerCopy`, `/quotations/[id]/print`, `?format=xlsx`): selling rates, total, VAT note, scope /
+exclusions / terms, company details from Settings — never cost or margin, whoever opens it. Only approved, sent or accepted
+quotations within validity; every print / download is written to the quotation history.
+
+**Warehouse (015, `src/server/warehouse.ts`, screens `/warehouse`):**
+- Warehouses → bins (`warehouse_locations`: receiving / storage / dispatch / quarantine / damaged; added by list or range).
+- SKUs belong to one customer (customer-owned stock); optional batch and expiry tracking.
+- `stock_balances` (on hand + reserved per bin / SKU / batch / expiry / condition) change only through `post()`, which writes
+  the `inventory_transactions` ledger row in the same transaction with the balance row locked. The database refuses negative
+  stock and more reserved than on hand; the ledger is append-only (trigger). Tests check ledger = balances after every step.
+- GRN: expected → received (good into a chosen bin, damaged into the DAMAGED area; batch / expiry required when tracked;
+  differences from expected allowed and reported); optional link to a Job File by Job No.
+- Moves / put-away between bins; reserved stock can't move; condition change (damaged / quarantine) needs `warehouse.adjust`
+  and a reason. Stock count adjustment: manager only, reason, never below reserved.
+- Outbound orders: reserve (FEFO: earliest expiry, then oldest; good and unexpired only; short → refused unless partial) →
+  pick (pick list by bin) → pack (packages, weight) → dispatch (stock leaves, ledger written) or cancel (reservations released).
+- Permissions: warehouse.view / receive / move / dispatch / adjust / configure / orders.create. Warehouse Manager has all;
+  Operator view, receive, move, dispatch; operations roles view + create orders.
+- Reports: Stock on hand, Batch and expiry, Inventory ledger, GRN register, Dispatch register.
+- Quantities only — valuation and accounting entries stay in the ERP.
+
 ## 16. Phase status
 
 | Phase | Status |
@@ -438,5 +464,6 @@ When own vehicles are not available, Transport hires a truck from a rental compa
 | Structure stage 3 — phone app (from a link) for drivers and messengers | Done |
 | Freight + 3PL — Phase 2, step 1: safety foundations (migration record, sign-in limit, test guard) | Done |
 | Freight + 3PL — Part A: Job Files, quotations, new roles, contacts, money switch (migration 013) | Done |
+| Freight + 3PL — Part B: quotation margin + customer copy, warehouse core (migrations 014–015) | Done |
 | Freight + 3PL — remaining phases: see `docs/FREIGHT_3PL_PLAN.md` | Planned |
 | 7 Email notifications · 8 Saved views, column prefs, live ops table, performance | Planned |

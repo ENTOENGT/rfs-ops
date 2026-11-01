@@ -14,10 +14,10 @@ import { financials } from './financials';
 import { fromFils, toFils } from '../lib/finance';
 import { jobScope } from './scope';
 
-type ColType = 'text' | 'date' | 'datetime' | 'money' | 'int' | 'pct';
+type ColType = 'text' | 'date' | 'datetime' | 'money' | 'int' | 'pct' | 'qty';
 type Need = 'cost' | 'revenue' | 'profit';
 interface Col { key: string; label: string; type: ColType; needs?: Need; width?: number; sort?: string }
-interface ReportDef { key: string; title: string; description: string; costDescription?: string; kind: 'jobs' | 'group' | 'messenger' | 'pro' | 'rental' | 'jobfile'; proCharges?: boolean; cols: Col[]; group?: 'by_driver' | 'by_vehicle' | 'by_customer' | 'by_department'; podPending?: boolean; needsAny?: Need[] }
+interface ReportDef { key: string; title: string; description: string; costDescription?: string; kind: 'jobs' | 'group' | 'messenger' | 'pro' | 'rental' | 'jobfile' | 'warehouse'; noPeriod?: boolean; proCharges?: boolean; cols: Col[]; group?: 'by_driver' | 'by_vehicle' | 'by_customer' | 'by_department'; podPending?: boolean; needsAny?: Need[] }
 
 const JOB_BASE: Col[] = [
   { key: 'job_no', label: 'Job No.', type: 'text', width: 14, sort: 'upper(t.job_no)' },
@@ -42,6 +42,47 @@ export const REPORTS: Record<string, ReportDef> = {
       { key: 'pod_status_name', label: 'POD', type: 'text', width: 12 },
       { key: 'actual_delivery_at', label: 'Delivered at', type: 'datetime', width: 17, sort: 'a.actual_delivery_at' }],
   },
+  // Warehouse (migration 015) — quantities only
+  wh_stock: { key: 'wh_stock', title: 'Stock on hand', kind: 'warehouse', noPeriod: true,
+    description: 'Stock now, by customer, warehouse, bin, SKU, batch and expiry: on hand, reserved and available.',
+    cols: [{ key: 'customer_name', label: 'Customer', type: 'text', width: 22 }, { key: 'warehouse_code', label: 'Warehouse', type: 'text', width: 10 },
+      { key: 'location_code', label: 'Bin', type: 'text', width: 12 }, { key: 'sku_code', label: 'SKU', type: 'text', width: 14 },
+      { key: 'sku_name', label: 'Product', type: 'text', width: 28 }, { key: 'uom', label: 'Unit', type: 'text', width: 8 },
+      { key: 'batch_no', label: 'Batch', type: 'text', width: 12 }, { key: 'expiry_date', label: 'Expiry', type: 'date', width: 12 },
+      { key: 'condition', label: 'Condition', type: 'text', width: 11 }, { key: 'qty_on_hand', label: 'On hand', type: 'qty', width: 11 },
+      { key: 'qty_reserved', label: 'Reserved', type: 'qty', width: 11 }, { key: 'qty_available', label: 'Available', type: 'qty', width: 11 }] },
+  wh_expiry: { key: 'wh_expiry', title: 'Batch and expiry', kind: 'warehouse', noPeriod: true,
+    description: 'Stock expiring in the next 90 days (or already expired), earliest first.',
+    cols: [{ key: 'expiry_date', label: 'Expiry', type: 'date', width: 12 }, { key: 'days_left', label: 'Days left', type: 'int', width: 9 },
+      { key: 'customer_name', label: 'Customer', type: 'text', width: 22 }, { key: 'sku_code', label: 'SKU', type: 'text', width: 14 },
+      { key: 'sku_name', label: 'Product', type: 'text', width: 28 }, { key: 'batch_no', label: 'Batch', type: 'text', width: 12 },
+      { key: 'warehouse_code', label: 'Warehouse', type: 'text', width: 10 }, { key: 'location_code', label: 'Bin', type: 'text', width: 12 },
+      { key: 'qty_on_hand', label: 'On hand', type: 'qty', width: 11 }] },
+  wh_ledger: { key: 'wh_ledger', title: 'Inventory ledger', kind: 'warehouse',
+    description: 'Every stock movement: received, moved, adjusted, condition changed, dispatched — with who and why.',
+    cols: [{ key: 'at', label: 'When', type: 'datetime', width: 17 }, { key: 'customer_name', label: 'Customer', type: 'text', width: 20 },
+      { key: 'sku_code', label: 'SKU', type: 'text', width: 14 }, { key: 'sku_name', label: 'Product', type: 'text', width: 24 },
+      { key: 'warehouse_code', label: 'Warehouse', type: 'text', width: 10 }, { key: 'location_code', label: 'Bin', type: 'text', width: 12 },
+      { key: 'batch_no', label: 'Batch', type: 'text', width: 12 }, { key: 'condition', label: 'Condition', type: 'text', width: 10 },
+      { key: 'kind', label: 'Movement', type: 'text', width: 18 }, { key: 'qty_change', label: 'Qty', type: 'qty', width: 10 },
+      { key: 'balance_after', label: 'Balance after', type: 'qty', width: 12 }, { key: 'reference', label: 'Reference', type: 'text', width: 16 },
+      { key: 'reason', label: 'Reason', type: 'text', width: 24 }, { key: 'user_name', label: 'By', type: 'text', width: 16 }] },
+  wh_grn: { key: 'wh_grn', title: 'Goods received (GRN register)', kind: 'warehouse',
+    description: 'Every received line with expected, received and damaged quantities and the difference. Period = date received.',
+    cols: [{ key: 'grn_no', label: 'GRN', type: 'text', width: 11 }, { key: 'received_at', label: 'Received', type: 'datetime', width: 17 },
+      { key: 'customer_name', label: 'Customer', type: 'text', width: 20 }, { key: 'job_no', label: 'Job No.', type: 'text', width: 14 },
+      { key: 'reference', label: 'Reference', type: 'text', width: 16 }, { key: 'sku_code', label: 'SKU', type: 'text', width: 14 },
+      { key: 'sku_name', label: 'Product', type: 'text', width: 24 }, { key: 'expected_qty', label: 'Expected', type: 'qty', width: 10 },
+      { key: 'received_qty', label: 'Received good', type: 'qty', width: 12 }, { key: 'damaged_qty', label: 'Damaged', type: 'qty', width: 10 },
+      { key: 'difference', label: 'Difference', type: 'qty', width: 11 }, { key: 'batch_no', label: 'Batch', type: 'text', width: 12 },
+      { key: 'expiry_date', label: 'Expiry', type: 'date', width: 12 }] },
+  wh_dispatch: { key: 'wh_dispatch', title: 'Dispatch register', kind: 'warehouse',
+    description: 'Every dispatched order line. Period = date dispatched.',
+    cols: [{ key: 'order_no', label: 'Order', type: 'text', width: 11 }, { key: 'dispatched_at', label: 'Dispatched', type: 'datetime', width: 17 },
+      { key: 'customer_name', label: 'Customer', type: 'text', width: 20 }, { key: 'customer_reference', label: 'Customer ref.', type: 'text', width: 14 },
+      { key: 'ship_to_name', label: 'Ship to', type: 'text', width: 22 }, { key: 'sku_code', label: 'SKU', type: 'text', width: 14 },
+      { key: 'sku_name', label: 'Product', type: 'text', width: 24 }, { key: 'qty', label: 'Qty', type: 'qty', width: 10 },
+      { key: 'packages', label: 'Packages', type: 'int', width: 9 }, { key: 'dispatch_reference', label: 'Vehicle / AWB', type: 'text', width: 18 }] },
   // Freight + 3PL (migration 013): one row per Job File, no prices
   jobfiles: { key: 'jobfiles', title: 'Job File register', kind: 'jobfile',
     description: 'Every Job File (shipment): direction, mode, route, BL/AWB, ETD/ETA, services and status. Period = date created.',
@@ -231,6 +272,7 @@ export async function reportList(realActor: Actor) {
   return Object.values(REPORTS)
     .filter((r) => !r.needsAny || r.needsAny.some((n) => can(actor, n)))
     .filter((r) => r.kind !== 'pro' || (proVisible(actor) && (!r.proCharges || actor.has('pro.charges.view'))))
+    .filter((r) => r.kind !== 'warehouse' || ['warehouse.view', 'warehouse.receive', 'warehouse.dispatch', 'warehouse.configure', 'warehouse.orders.create'].some((x) => actor.has(x as any)))
     .filter((r) => r.kind !== 'jobfile' || ['jobfiles.view_all', 'jobfiles.view_department', 'jobfiles.create', 'jobfiles.edit'].some((x) => actor.has(x as any)))
     .map((r) => ({ key: r.key, title: r.title, kind: r.kind,
       // Describe only what this person will actually see
@@ -253,17 +295,22 @@ export async function runReport(realActor: Actor, key: string, p: Record<string,
   const cols = def.cols.filter((c) => can(actor, c.needs));
   const colsOut = cols.map((c) => ({ key: c.key, label: c.label, type: c.type, sortable: !!c.sort }));
 
-  if (!def.podPending && (!DATE.test(p.from ?? '') || !DATE.test(p.to ?? ''))) throw bad('Choose a period');
+  if (!def.podPending && !def.noPeriod && (!DATE.test(p.from ?? '') || !DATE.test(p.to ?? ''))) throw bad('Choose a period');
   if (p.from && p.to && p.to < p.from) throw bad('The end date is before the start date');
   const FILTER_KEYS = ['from', 'to', 'q', 'department_id', 'customer_id', 'driver_id', 'vehicle_id', 'status',
     'type', 'job_no', 'request_no', 'requested_by', 'assigned_by', 'messenger_id', 'delivery',
-    'container', 'authority_id', 'assigned_to', 'port', 'priority', 'payment_status', 'subcontractor_id', 'direction', 'mode'];
+    'container', 'authority_id', 'assigned_to', 'port', 'priority', 'payment_status', 'subcontractor_id', 'direction', 'mode', 'warehouse_id', 'days'];
   const filters = Object.fromEntries(Object.entries(p).filter(([k, v]) => v && FILTER_KEYS.includes(k)));
 
   if (def.kind === 'messenger') return messengerReport(actor, def, cols, colsOut, p, opts);
   if (def.kind === 'rental') {
     const { rentalReport } = await import('./rentals');
     return rentalReport(actor, def, cols, colsOut, p, opts) as any;
+  }
+  if (def.kind === 'warehouse') {
+    const { warehouseReport, canSeeWarehouse } = await import('./warehouse');
+    if (!canSeeWarehouse(actor)) throw forbidden();
+    return warehouseReport(actor, def, cols, colsOut, p, opts) as any;
   }
   if (def.kind === 'jobfile') {
     const { jobFileReport, canSeeJobFiles } = await import('./jobfiles');
@@ -386,7 +433,7 @@ export async function exportReport(actor: Actor, key: string, p: Record<string, 
       if (text && /^[=+\-@\t\r]/.test(s)) s = "'" + s;
       return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
     };
-    const isText = (c: ReportResult['columns'][number]) => !['money', 'pct', 'int'].includes(c.type);
+    const isText = (c: ReportResult['columns'][number]) => !['money', 'pct', 'int', 'qty'].includes(c.type);
     const lines = [r.columns.map((c) => esc(c.label + (c.type === 'money' ? ` (${currency})` : ''))).join(','),
       ...r.rows.map((row) => r.columns.map((c) => esc(cell(c, row[c.key]), isText(c))).join(','))];
     if (r.totals) lines.push(r.columns.map((c) => esc(r.totals![c.key] ?? '', isText(c))).join(','));
@@ -408,11 +455,12 @@ export async function exportReport(actor: Actor, key: string, p: Record<string, 
     col.width = defCols.find((d) => d.key === c.key)?.width ?? 14;
     if (c.type === 'money') col.numFmt = '#,##0.00';
     if (c.type === 'pct') col.numFmt = '0.00"%"';
+    if (c.type === 'qty') col.numFmt = '#,##0.###';
     if (c.type === 'date') col.numFmt = 'dd-mmm-yyyy';
   });
   const val = (c: ReportResult['columns'][number], v: unknown) => {
     if (v == null) return null;
-    if (c.type === 'money' || c.type === 'pct' || c.type === 'int') return Number(v);
+    if (c.type === 'money' || c.type === 'pct' || c.type === 'int' || c.type === 'qty') return Number(v);
     if (c.type === 'date') return new Date(String(v) + 'T00:00:00Z');
     return cell(c, v);
   };

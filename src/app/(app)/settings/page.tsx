@@ -13,6 +13,11 @@ const FIELDS: [string, string, string, string?][] = [
   ['expiry_warning_days', 'Warn about expiring documents (days)', 'number', 'Licence, visa, registration, insurance'],
   ['pod_reminder_hours', 'POD reminder after (hours)', 'number', 'Used when reminders arrive in Phase 7'],
   ['money_screens', 'Financials page and money reports', 'onoff', 'Off: the Financials page is hidden and reports drop revenue, VAT and profit (accounting stays in the ERP). Nothing is deleted.'],
+  ['company_address', 'Company address (on quotations)', 'text'],
+  ['company_phone', 'Company phone (on quotations)', 'text'],
+  ['company_email', 'Company email (on quotations)', 'text'],
+  ['company_trn', 'Company TRN (on quotations)', 'text'],
+  ['quote_vat_note', 'VAT note on quotations', 'text', 'Printed under the total on every quotation'],
   ['quote_min_margin_pct', 'Quotations: minimum margin (%)', 'number', 'Below this, a quotation needs approval by a manager before it goes out'],
   ['quote_validity_days', 'Quotations: rates valid for (days)', 'number', 'Default validity of a new quotation'],
 ];

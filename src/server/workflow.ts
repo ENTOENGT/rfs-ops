@@ -371,6 +371,11 @@ const SETTINGS: Record<string, (v: any) => unknown> = {
   // Freight + 3PL (migration 013)
   money_screens: (v) => { if (![true, false, 'true', 'false'].includes(v)) throw bad('Choose on or off for the money screens'); return v === true || v === 'true'; },
   quote_min_margin_pct: (v) => { const n = Number(v); if (!Number.isFinite(n) || n < 0 || n > 100) throw bad('Minimum quotation margin must be 0–100%'); return n; },
+  company_address: (v) => { const s = String(v ?? '').trim(); if (s.length > 300) throw bad('Company address: up to 300 characters'); return s; },
+  company_phone: (v) => { const s = String(v ?? '').trim(); if (s.length > 60) throw bad('Company phone: up to 60 characters'); return s; },
+  company_email: (v) => { const s = String(v ?? '').trim(); if (s && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s)) throw bad('Company email is not valid'); return s; },
+  company_trn: (v) => { const s = String(v ?? '').trim(); if (s.length > 30) throw bad('TRN: up to 30 characters'); return s; },
+  quote_vat_note: (v) => { const s = String(v ?? '').trim(); if (s.length > 300) throw bad('VAT note: up to 300 characters'); return s; },
   quote_validity_days: (v) => { const n = Number(v); if (!Number.isInteger(n) || n < 1 || n > 365) throw bad('Quotation validity must be 1–365 days'); return n; },
 };
 export async function getSettings(actor: Actor) {

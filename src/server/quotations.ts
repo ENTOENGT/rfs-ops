@@ -94,6 +94,7 @@ function present(actor: Actor, x: any, lines: any[]) {
       id: l.id, description: l.description, charge_unit: l.charge_unit, unit_name: label(CHARGE_UNITS, l.charge_unit), quantity: l.quantity,
       ...(buyingView ? { cost_rate: l.cost_rate, cost_amount: t.each[i].cost } : {}),
       ...(sellingView ? { sell_rate: l.sell_rate, sell_amount: t.each[i].sell } : {}),
+      ...(profitView ? { margin_type: l.margin_type, margin_value: l.margin_value } : {}),
     })),
     totals: {
       ...(buyingView ? { cost_total: t.cost_total } : {}),
@@ -144,7 +145,8 @@ export async function getQuotation(actor: Actor, id: string) {
       accept: ['approved', 'sent'].includes(x.status) && v.status !== 'expired' && actor.has('quotes.create') && actor.has('jobfiles.create'),
       decline: ['approved', 'sent'].includes(x.status) && actor.has('quotes.create'),
       cancel: ['draft', 'pending_approval', 'approved', 'sent'].includes(x.status) && actor.has('quotes.create'),
-      copy: actor.has('quotes.create') } };
+      copy: actor.has('quotes.create'),
+      customer_copy: ['approved', 'sent', 'accepted'].includes(x.status) && (x.status === 'accepted' || v.status !== 'expired') && actor.fin.sellingView } };
 }
 
 // ------------------------------------------------------------ create / edit
@@ -158,21 +160,50 @@ const HEAD: Record<string, (v: unknown) => unknown> = {
   valid_until: (v) => { if (!DATE.test(String(v ?? ''))) throw bad('Choose the date the rates are valid until'); return v; },
   scope: (v) => txt(v, 3000), exclusions: (v) => txt(v, 3000), terms: (v) => txt(v, 3000),
 };
+/**
+ * Selling rate from cost + margin, to the fils.
+ *   percent: selling = cost ÷ (1 − margin%)  → the margin is that % of the selling price (cost 1000, 20% → 1250)
+ *   amount : selling = cost + margin         (cost 1000, 250 → 1250)
+ */
+export function sellFromMargin(cost: string, type: 'percent' | 'amount', value: string): string {
+  const c = toFils(cost);
+  if (type === 'amount') return fromFils(c + toFils(value));
+  const pct = Number(value);
+  return fromFils(Math.round(c / (1 - pct / 100)));
+}
 function parseLines(actor: Actor, raw: unknown, old: any[]) {
   if (!Array.isArray(raw)) return null;
   if (raw.length === 0) throw bad('Add at least one charge line');
   if (raw.length > 60) throw bad('Up to 60 lines per quotation');
   return raw.map((l: any, i) => {
+    const n = `Line ${i + 1}`;
     const description = txt(l?.description, 200);
-    if (!description) throw bad(`Line ${i + 1}: describe the charge`);
-    if (!CHARGE_UNITS.some((u) => u[0] === l.charge_unit)) throw bad(`Line ${i + 1}: choose how it is charged`);
+    if (!description) throw bad(`${n}: describe the charge`);
+    if (!CHARGE_UNITS.some((u) => u[0] === l.charge_unit)) throw bad(`${n}: choose how it is charged`);
     const qty = Number(l.quantity);
-    if (!Number.isFinite(qty) || qty <= 0 || !/^\d+(\.\d{1,3})?$/.test(String(l.quantity).trim())) throw bad(`Line ${i + 1}: quantity must be more than 0 (up to 3 decimals)`);
+    if (!Number.isFinite(qty) || qty <= 0 || !/^\d+(\.\d{1,3})?$/.test(String(l.quantity).trim())) throw bad(`${n}: quantity must be more than 0 (up to 3 decimals)`);
     // People who can't see a side keep what is already there (matched by line id) — never overwrite blind.
     const prev = old.find((o) => o.id === l.id);
-    const cost = actor.fin.buyingView ? money(l.cost_rate, `Line ${i + 1} cost rate`) : prev?.cost_rate ?? '0';
-    const sell = actor.fin.sellingView ? money(l.sell_rate, `Line ${i + 1} selling rate`) : prev?.sell_rate ?? '0';
-    return { description, charge_unit: l.charge_unit, quantity: String(l.quantity).trim(), cost_rate: cost, sell_rate: sell };
+    const cost = actor.fin.buyingView ? money(l.cost_rate, `${n} cost rate`) : prev?.cost_rate ?? '0';
+    let sell = actor.fin.sellingView ? money(l.sell_rate, `${n} selling rate`) : prev?.sell_rate ?? '0';
+    // Margin: only someone who sees both cost and selling can use it (it reveals one from the other)
+    let margin_type: string | null = prev?.margin_type ?? null, margin_value: string | null = prev?.margin_value ?? null;
+    const canMargin = actor.fin.buyingView && actor.fin.sellingView;
+    if (canMargin && l.margin_type !== undefined) {
+      if (!l.margin_type) { margin_type = null; margin_value = null; }
+      else {
+        if (!['percent', 'amount'].includes(l.margin_type)) throw bad(`${n}: margin is a % or an amount`);
+        const v = String(l.margin_value ?? '').trim();
+        if (!/^\d+(\.\d{1,2})?$/.test(v)) throw bad(`${n}: enter the margin, e.g. 15 or 250.50`);
+        if (l.margin_type === 'percent' && Number(v) >= 100) throw bad(`${n}: margin % must be below 100`);
+        margin_type = l.margin_type; margin_value = v;
+      }
+    } else if (!canMargin && margin_type && actor.fin.sellingView && prev && money(l.sell_rate, `${n} selling rate`) !== prev.sell_rate) {
+      // someone without cost view typed a new selling rate: it is no longer "cost + margin"
+      margin_type = null; margin_value = null;
+    }
+    if (margin_type) sell = sellFromMargin(cost, margin_type as any, margin_value!);
+    return { description, charge_unit: l.charge_unit, quantity: String(l.quantity).trim(), cost_rate: cost, sell_rate: sell, margin_type, margin_value };
   });
 }
 
@@ -195,8 +226,8 @@ export async function createQuotation(actor: Actor, b: any) {
       values ('Q-' || nextval('quote_no_seq'), $1, $2, $3${cols.map((_, i) => `, $${i + 4}`).join('')}) returning id, quote_no`,
       [dept, actor.id, await getSetting('currency', 'AED', c), ...cols.map((k) => vals[k])], c);
     for (const [i, l] of lines.entries())
-      await c.query('insert into quotation_lines (quotation_id, sort_order, description, charge_unit, quantity, cost_rate, sell_rate) values ($1,$2,$3,$4,$5,$6,$7)',
-        [x.id, i, l.description, l.charge_unit, l.quantity, l.cost_rate, l.sell_rate]);
+      await c.query(`insert into quotation_lines (quotation_id, sort_order, description, charge_unit, quantity, cost_rate, sell_rate, margin_type, margin_value)
+        values ($1,$2,$3,$4,$5,$6,$7,$8,$9)`, [x.id, i, l.description, l.charge_unit, l.quantity, l.cost_rate, l.sell_rate, l.margin_type, l.margin_value]);
     await evt(c, actor, x.id, 'Quotation created', `${lines.length} line(s)`);
     await refreshSearch(c, x.id);
     return { id: x.id, quote_no: x.quote_no };
@@ -218,8 +249,8 @@ export async function updateQuotation(actor: Actor, id: string, b: any) {
     if (lines) {
       await c.query('delete from quotation_lines where quotation_id = $1', [id]);
       for (const [i, l] of lines.entries())
-        await c.query('insert into quotation_lines (quotation_id, sort_order, description, charge_unit, quantity, cost_rate, sell_rate) values ($1,$2,$3,$4,$5,$6,$7)',
-          [id, i, l.description, l.charge_unit, l.quantity, l.cost_rate, l.sell_rate]);
+        await c.query(`insert into quotation_lines (quotation_id, sort_order, description, charge_unit, quantity, cost_rate, sell_rate, margin_type, margin_value)
+          values ($1,$2,$3,$4,$5,$6,$7,$8,$9)`, [id, i, l.description, l.charge_unit, l.quantity, l.cost_rate, l.sell_rate, l.margin_type, l.margin_value]);
     }
     // a changed quotation must be checked again before it goes out
     if (x.status !== 'draft') {
@@ -346,3 +377,79 @@ export async function copyQuotation(actor: Actor, id: string) {
 }
 
 export { Q_STATUSES };
+
+// ------------------------------------------------------------ customer copy (print / PDF / Excel)
+const CUSTOMER_READY = ['approved', 'sent', 'accepted'];
+/**
+ * What the customer receives: selling rates and totals only — never cost, margin or internal notes, whoever asks.
+ * Only an approved (or sent / accepted) quotation that has not expired can go out, so a low-margin draft can't be sent by mistake.
+ */
+export async function customerCopy(actor: Actor, id: string, how: 'print' | 'excel' = 'print') {
+  if (!actor.fin.sellingView) throw forbidden('You need to see selling prices to print a quotation');
+  const x = await load(actor, id);
+  if (!CUSTOMER_READY.includes(x.status))
+    throw new ApiError(409, 'QUOTE_NOT_READY', `Only an approved quotation can go to the customer. This one is "${qStatusName(x.status)}".`);
+  if (x.status !== 'accepted' && x.valid_until < today())
+    throw new ApiError(409, 'QUOTE_EXPIRED', 'The rates have expired. Change the validity date and approve again before sending.');
+  const [extra, lines] = await Promise.all([
+    one(`select c.name customer_name, c.address customer_address, c.trn customer_trn, c.contact_person customer_contact, u.full_name prepared_by, u.email prepared_by_email
+       from quotations x join customers c on c.id = x.customer_id join users u on u.id = x.created_by where x.id = $1`, [id]),
+    q('select description, charge_unit, quantity, sell_rate from quotation_lines where quotation_id = $1 order by sort_order', [id]),
+  ]);
+  const company: Record<string, string> = {};
+  for (const k of ['company_name', 'company_address', 'company_phone', 'company_email', 'company_trn', 'quote_vat_note'])
+    company[k] = String(await getSetting(k, ''));
+  const t = quoteTotals(lines.map((l) => ({ ...l, cost_rate: '0' })));
+  await tx(async (c) => evt(c, actor, id, how === 'excel' ? 'Customer copy downloaded (Excel)' : 'Customer copy opened for print / PDF'));
+  return {
+    company, quote_no: x.quote_no, date: new Date(x.approved_at ?? x.created_at).toLocaleDateString('en-CA', { timeZone: 'Asia/Dubai' }),
+    valid_until: x.valid_until, currency: x.currency, status: x.status,
+    customer: { name: extra.customer_name, address: extra.customer_address, trn: extra.customer_trn, contact: extra.customer_contact },
+    enquiry_reference: x.enquiry_reference, service_name: label(SERVICE_TYPES, x.service_type), direction_name: label(DIRECTIONS, x.direction),
+    origin: x.origin, destination: x.destination, cargo_description: x.cargo_description, packages: x.packages,
+    gross_weight_kg: x.gross_weight_kg, volume_cbm: x.volume_cbm, chargeable_weight_kg: x.chargeable_weight_kg,
+    lines: lines.map((l, i) => ({ description: l.description, unit_name: label(CHARGE_UNITS, l.charge_unit), quantity: l.quantity,
+      rate: l.sell_rate, amount: t.each[i].sell })),
+    total: t.sell_total, scope: x.scope, exclusions: x.exclusions, terms: x.terms,
+    prepared_by: extra.prepared_by, prepared_by_email: extra.prepared_by_email,
+  };
+}
+
+/** The same customer copy as an Excel file (selling only). */
+export async function customerExcel(actor: Actor, id: string) {
+  const d = await customerCopy(actor, id, 'excel');
+  const ExcelJS = (await import('exceljs')).default;
+  const wb = new ExcelJS.Workbook();
+  wb.creator = d.company.company_name || 'Quotation';
+  const ws = wb.addWorksheet('Quotation', { pageSetup: { paperSize: 9, orientation: 'portrait', fitToPage: true, fitToWidth: 1, fitToHeight: 0 } });
+  ws.columns = [{ width: 46 }, { width: 16 }, { width: 10 }, { width: 16 }, { width: 18 }];
+  const bold = { bold: true };
+  const add = (vals: unknown[], font?: any) => { const r = ws.addRow(vals); if (font) r.font = font; return r; };
+  add([d.company.company_name], { bold: true, size: 16 });
+  for (const k of ['company_address', 'company_phone', 'company_email']) if (d.company[k]) add([d.company[k]]);
+  if (d.company.company_trn) add([`TRN: ${d.company.company_trn}`]);
+  add([]);
+  add(['QUOTATION'], { bold: true, size: 14 });
+  const kv = (k: string, v: unknown) => { if (v !== null && v !== undefined && v !== '') { const r = add([k, v]); r.getCell(1).font = bold; } };
+  kv('Quotation no.', d.quote_no); kv('Date', d.date); kv('Valid until', d.valid_until);
+  kv('Customer', d.customer.name); kv('Attention', d.customer.contact); kv('Customer TRN', d.customer.trn); kv('Your reference', d.enquiry_reference);
+  kv('Service', `${d.service_name} (${d.direction_name})`); kv('Route', [d.origin, d.destination].filter(Boolean).join(' → '));
+  kv('Cargo', [d.cargo_description, d.packages && `${d.packages} packages`, d.gross_weight_kg && `${Number(d.gross_weight_kg)} kg`,
+    d.volume_cbm && `${Number(d.volume_cbm)} CBM`, d.chargeable_weight_kg && `chargeable ${Number(d.chargeable_weight_kg)} kg`].filter(Boolean).join(', '));
+  add([]);
+  const head = add(['Description', 'Charged', 'Qty', `Rate (${d.currency})`, `Amount (${d.currency})`], bold);
+  head.eachCell((c) => { c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF3E7C7' } }; c.border = { bottom: { style: 'thin' } }; });
+  for (const l of d.lines) {
+    const r = add([l.description, l.unit_name, Number(l.quantity), Number(l.rate), Number(l.amount)]);
+    r.getCell(3).numFmt = '#,##0.###'; r.getCell(4).numFmt = '#,##0.00'; r.getCell(5).numFmt = '#,##0.00';
+  }
+  const tot = add(['', '', '', 'Total', Number(d.total)], bold);
+  tot.getCell(5).numFmt = '#,##0.00'; tot.getCell(5).border = { top: { style: 'thin' }, bottom: { style: 'double' } };
+  add([]);
+  if (d.company.quote_vat_note) add([d.company.quote_vat_note], { italic: true });
+  for (const [k, v] of [['Scope of service', d.scope], ['Exclusions', d.exclusions], ['Terms and conditions', d.terms]] as const)
+    if (v) { add([]); add([k], bold); for (const line of String(v).split('\n')) add([line]); }
+  add([]); add([`Prepared by ${d.prepared_by}${d.prepared_by_email && !d.prepared_by_email.endsWith('.local') ? ` (${d.prepared_by_email})` : ''}`]);
+  ws.getColumn(1).alignment = { wrapText: true, vertical: 'top' };
+  return { body: Buffer.from(await wb.xlsx.writeBuffer()), name: `${d.quote_no}.xlsx` };
+}
