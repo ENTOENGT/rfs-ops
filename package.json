@@ -1,0 +1,36 @@
+{
+  "name": "rfs-ops",
+  "version": "1.0.0",
+  "directories": {
+    "doc": "docs",
+    "test": "tests"
+  },
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "test": "tsx --test --test-concurrency=1 tests/*.test.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@supabase/storage-js": "^2.117.2",
+    "bcryptjs": "^2.4.3",
+    "exceljs": "^4.4.0",
+    "jose": "^5.10.0",
+    "next": "^14.2.35",
+    "pdfjs-dist": "3.11.174",
+    "pg": "^8.23.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@types/bcryptjs": "^2.4.6",
+    "@types/node": "^22.20.4",
+    "@types/pg": "^8.23.1",
+    "@types/react": "^18.3.31",
+    "@types/react-dom": "^18.3.7",
+    "tsx": "^4.23.15",
+    "typescript": "^5.9.3"
+  },
+  "private": true
+}
