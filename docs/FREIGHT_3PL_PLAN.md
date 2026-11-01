@@ -19,21 +19,21 @@ Full audit (30 Oct 2026): "RFS TMS — Audit and Roadmap for Freight + 3PL" (Cla
 ## Working assumptions (change any of them at any time)
 | # | Question | Assumption used for now |
 |---|---|---|
-| 1 | Money features already in the TMS (selling price, VAT, profit, Financials) | Kept. A Settings switch to hide them will be added; it starts ON, so nothing changes until you turn it off |
+| 1 | Money features already in the TMS (selling price, VAT, profit, Financials) | Kept. Settings switch "Financials page and money reports" (On by default) hides them |
 | 2 | Job File per Job No. | One Job File per Job No. across the company; existing clashes listed for you, never merged automatically |
 | 3 | Where it lives | New private repo, new Supabase project, new Netlify site; each step delivered as a zip until Claude has write access |
 | 4 | Maps | Decide before Phase 5 |
 | 5 | Warehouse details | Decide before Phase 6 |
 | 6 | ERP | Excel export until the ERP and its API are known |
 | 7 | Email / WhatsApp | Decide before Phase 9 |
-| 8 | Quotation approval | Decide before quotations are built |
+| 8 | Quotation approval | Below a minimum margin (Settings, default 10%) a manager with "approve quotations" must approve |
 
 ## Checklist
 - [x] Phase 1 — audit and roadmap
 - [x] New separate system created from TMS V9 (name: RFS Ops)
 - [x] Phase 2, step 1 — safety: migration record, sign-in limit per connection, test guard (migration 012)
-- [ ] Phase 2, step 2 — Settings switch for money screens; new roles; number series; branches and warehouses as locations; approval rules
-- [ ] Phase 3 — customer contacts/addresses, partner types, Excel import, Job File, containers, milestones, quotations; link existing trips/PRO/runs by Job No.
+- [x] Part A (deploy 1, migration 013) — money-screens switch; new roles (Sales, Customer Service, Freight Ops, Dispatcher, Warehouse Manager/Operator, ERP admin); customer contacts; Job Files with containers, milestones, closure rules; quotations with approval; accepted quotation → Job File; trips/PRO/runs linked by Job No.; Job File register report
+- [ ] Still from Phases 2–3: number series settings, branches/warehouse locations, partner types (shipping lines, airlines, agents, brokers), Excel import of customers
 - [ ] Phase 4 — shared documents (checklists, approve/reject, expiry, packs); messenger signature + link to PRO activity
 - [ ] Phase 5 — multi-stop, partial/failed/returned delivery, fleet maintenance/fuel/incidents, zones and map
 - [ ] Phase 6 — warehouse: bins, SKUs, GRN, put-away, stock ledger, batch/expiry, reserve/pick/pack/dispatch, transfers, counts, returns

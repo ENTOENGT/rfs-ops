@@ -17,7 +17,7 @@ import { jobScope } from './scope';
 type ColType = 'text' | 'date' | 'datetime' | 'money' | 'int' | 'pct';
 type Need = 'cost' | 'revenue' | 'profit';
 interface Col { key: string; label: string; type: ColType; needs?: Need; width?: number; sort?: string }
-interface ReportDef { key: string; title: string; description: string; costDescription?: string; kind: 'jobs' | 'group' | 'messenger' | 'pro' | 'rental'; proCharges?: boolean; cols: Col[]; group?: 'by_driver' | 'by_vehicle' | 'by_customer' | 'by_department'; podPending?: boolean; needsAny?: Need[] }
+interface ReportDef { key: string; title: string; description: string; costDescription?: string; kind: 'jobs' | 'group' | 'messenger' | 'pro' | 'rental' | 'jobfile'; proCharges?: boolean; cols: Col[]; group?: 'by_driver' | 'by_vehicle' | 'by_customer' | 'by_department'; podPending?: boolean; needsAny?: Need[] }
 
 const JOB_BASE: Col[] = [
   { key: 'job_no', label: 'Job No.', type: 'text', width: 14, sort: 'upper(t.job_no)' },
@@ -41,6 +41,29 @@ export const REPORTS: Record<string, ReportDef> = {
       { key: 'status_name', label: 'Status', type: 'text', width: 16, sort: 's.sort_order' },
       { key: 'pod_status_name', label: 'POD', type: 'text', width: 12 },
       { key: 'actual_delivery_at', label: 'Delivered at', type: 'datetime', width: 17, sort: 'a.actual_delivery_at' }],
+  },
+  // Freight + 3PL (migration 013): one row per Job File, no prices
+  jobfiles: { key: 'jobfiles', title: 'Job File register', kind: 'jobfile',
+    description: 'Every Job File (shipment): direction, mode, route, BL/AWB, ETD/ETA, services and status. Period = date created.',
+    cols: [
+      { key: 'job_no', label: 'Job No.', type: 'text', width: 14, sort: 'x' },
+      { key: 'created_at', label: 'Created', type: 'datetime', width: 17, sort: 'x' },
+      { key: 'customer_name', label: 'Customer', type: 'text', width: 24, sort: 'x' },
+      { key: 'direction_name', label: 'Direction', type: 'text', width: 11 },
+      { key: 'mode_name', label: 'Mode', type: 'text', width: 10 },
+      { key: 'route', label: 'Route', type: 'text', width: 26 },
+      { key: 'carrier', label: 'Carrier', type: 'text', width: 16 },
+      { key: 'mbl_mawb', label: 'MBL / MAWB', type: 'text', width: 16 },
+      { key: 'hbl_hawb', label: 'HBL / HAWB', type: 'text', width: 16 },
+      { key: 'container_list', label: 'Containers', type: 'text', width: 24 },
+      { key: 'etd', label: 'ETD', type: 'date', width: 12, sort: 'x' },
+      { key: 'eta', label: 'ETA', type: 'date', width: 12, sort: 'x' },
+      { key: 'ata', label: 'Arrived', type: 'date', width: 12 },
+      { key: 'services', label: 'Services', type: 'text', width: 22 },
+      { key: 'trips', label: 'Trips', type: 'int', width: 7 },
+      { key: 'pro_requests', label: 'PRO', type: 'int', width: 7 },
+      { key: 'department_name', label: 'Department', type: 'text', width: 14 },
+      { key: 'status_name', label: 'Status', type: 'text', width: 14 }],
   },
   financial: {
     key: 'financial', title: 'Financial report', kind: 'jobs', needsAny: ['cost', 'revenue'],
@@ -195,11 +218,20 @@ const proVisible = (a: Actor) => ['pro.view_all', 'pro.view_department', 'pro.cr
 const can = (a: Actor, n?: Need) => !n || (n === 'cost' ? a.fin.buyingView : n === 'revenue' ? a.fin.sellingView : a.fin.profitView);
 const DATE = /^\d{4}-\d{2}-\d{2}$/, UUID = /^[0-9a-f-]{36}$/i;
 
-export function reportList(actor: Actor) {
-  if (!actor.has('reports.view')) throw forbidden();
+/** With the money screens switched off, reports behave as if nobody can see revenue, VAT or profit. */
+async function reportActor(actor: Actor): Promise<Actor> {
+  const { moneyScreensOn } = await import('./financials');
+  if (await moneyScreensOn()) return actor;
+  return { ...actor, fin: { ...actor.fin, sellingView: false, sellingEdit: false, profitView: false } };
+}
+
+export async function reportList(realActor: Actor) {
+  if (!realActor.has('reports.view')) throw forbidden();
+  const actor = await reportActor(realActor);
   return Object.values(REPORTS)
     .filter((r) => !r.needsAny || r.needsAny.some((n) => can(actor, n)))
     .filter((r) => r.kind !== 'pro' || (proVisible(actor) && (!r.proCharges || actor.has('pro.charges.view'))))
+    .filter((r) => r.kind !== 'jobfile' || ['jobfiles.view_all', 'jobfiles.view_department', 'jobfiles.create', 'jobfiles.edit'].some((x) => actor.has(x as any)))
     .map((r) => ({ key: r.key, title: r.title, kind: r.kind,
       // Describe only what this person will actually see
       description: r.needsAny && !actor.fin.sellingView && r.costDescription ? r.costDescription : r.description }));
@@ -212,8 +244,9 @@ export interface ReportResult {
   total: number; page: number; page_size: number; filters: Record<string, string>;
 }
 
-export async function runReport(actor: Actor, key: string, p: Record<string, string>, opts: { all?: boolean } = {}): Promise<ReportResult> {
-  if (!actor.has('reports.view')) throw forbidden();
+export async function runReport(realActor: Actor, key: string, p: Record<string, string>, opts: { all?: boolean } = {}): Promise<ReportResult> {
+  if (!realActor.has('reports.view')) throw forbidden();
+  const actor = await reportActor(realActor);
   const def = REPORTS[key];
   if (!def) throw new ApiError(404, 'NOT_FOUND', 'Report not found');
   if (def.needsAny && !def.needsAny.some((n) => can(actor, n))) throw forbidden();
@@ -224,13 +257,18 @@ export async function runReport(actor: Actor, key: string, p: Record<string, str
   if (p.from && p.to && p.to < p.from) throw bad('The end date is before the start date');
   const FILTER_KEYS = ['from', 'to', 'q', 'department_id', 'customer_id', 'driver_id', 'vehicle_id', 'status',
     'type', 'job_no', 'request_no', 'requested_by', 'assigned_by', 'messenger_id', 'delivery',
-    'container', 'authority_id', 'assigned_to', 'port', 'priority', 'payment_status', 'subcontractor_id'];
+    'container', 'authority_id', 'assigned_to', 'port', 'priority', 'payment_status', 'subcontractor_id', 'direction', 'mode'];
   const filters = Object.fromEntries(Object.entries(p).filter(([k, v]) => v && FILTER_KEYS.includes(k)));
 
   if (def.kind === 'messenger') return messengerReport(actor, def, cols, colsOut, p, opts);
   if (def.kind === 'rental') {
     const { rentalReport } = await import('./rentals');
     return rentalReport(actor, def, cols, colsOut, p, opts) as any;
+  }
+  if (def.kind === 'jobfile') {
+    const { jobFileReport, canSeeJobFiles } = await import('./jobfiles');
+    if (!canSeeJobFiles(actor)) throw forbidden();
+    return jobFileReport(actor, def, cols, colsOut, { ...p, from: p.from, to: p.to }, opts) as any;
   }
   if (def.kind === 'pro') {
     if (!proVisible(actor) || (def.proCharges && !actor.has('pro.charges.view'))) throw forbidden();

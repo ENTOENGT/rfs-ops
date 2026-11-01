@@ -13,9 +13,13 @@ export type Perm =
   | 'users.manage_department' | 'roles.manage_department'
   | 'runs.view_all' | 'runs.view_department' | 'runs.create' | 'runs.cancel' | 'runs.assign' | 'runs.update_status'
   | 'rentals.approve'
-  | 'pro.view_all' | 'pro.view_department' | 'pro.create' | 'pro.assign' | 'pro.update' | 'pro.charges.view' | 'pro.charges.edit' | 'pro.configure';
+  | 'pro.view_all' | 'pro.view_department' | 'pro.create' | 'pro.assign' | 'pro.update' | 'pro.charges.view' | 'pro.charges.edit' | 'pro.configure'
+  | 'jobfiles.view_all' | 'jobfiles.view_department' | 'jobfiles.create' | 'jobfiles.edit' | 'jobfiles.close'
+  | 'quotes.view' | 'quotes.create' | 'quotes.approve';
 
-export type Side = 'admin' | 'operations' | 'transport' | 'messenger' | 'finance' | 'pro';
+export type Side = 'admin' | 'operations' | 'transport' | 'messenger' | 'finance' | 'pro' | 'warehouse';
+/** Sides that can never see selling price, revenue, profit or quotations (database rule user_has_perm). */
+export const NO_SELLING_SIDES = ['transport', 'messenger', 'pro', 'warehouse'];
 
 export interface FinancialAccess {
   buyingView: boolean; buyingEdit: boolean;

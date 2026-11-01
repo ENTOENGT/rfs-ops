@@ -388,6 +388,38 @@ When own vehicles are not available, Transport hires a truck from a rental compa
   name contains "test" (or `ALLOW_DB_RESET=yes` is set on purpose). The live Supabase database is named
   `postgres`, so it can't be wiped by a mistaken `npm test`.
 
+## 15c. Freight + 3PL Part A (migration 013) — Job Files, quotations, new roles, money switch
+
+- **Job File** (`job_files`, `src/server/jobfiles.ts`, screens `/job-files`): one per shipment, identified by the typed
+  Job No. — one live Job File per Job No. across the company (`jf_job_no_uq`; a cancelled one frees it). Direction
+  (import / export / cross-trade / domestic), mode (sea FCL / LCL, air, road), parties, route, carrier, MBL/HBL or
+  MAWB/HAWB, ETD/ETA + actuals, cargo, and which services it needs (clearance, transport, warehouse).
+  Containers (`job_file_containers`, ISO 6346 format), a milestone plan made from direction + mode + services
+  (`job_file_milestones`, planned + actual; "departed"/"arrived" fill ATD/ATA), history (`job_file_events`). No prices.
+- **Linking**: trips and PRO requests with the same Job No. link by database trigger (`link_job_file_by_job_no`), both
+  when they are created and when the Job File is created later; messenger runs follow their truck trip.
+- **Closing** (`jobfiles.close`): refused while any linked trip / PRO request / messenger run is open (a failed run
+  counts as open), and when a needed service has no finished work. Cancel needs a reason and no open linked work;
+  it unlinks everything. Reopen needs the close permission.
+- **Visibility** (`jfScope`): `jobfiles.view_all` (Transport, Finance, Customer Service, Warehouse, ERP admin) → all;
+  `jobfiles.view_department` → own department + own; otherwise own.
+- **Quotations** (`quotations`, `quotation_lines`, `src/server/quotations.ts`, screens `/quotations`): lines with charge
+  unit (shipment, container, CBM, kg, trip, pallet, carton, day, lump sum), quantity, cost rate, selling rate; totals
+  in fils. Draft → submit → approved (margin ≥ Settings minimum, default 10%) or waiting for approval (`quotes.approve`)
+  → sent → accepted (creates the Job File with a typed Job No.) / not accepted / cancelled; expired is computed from
+  the validity date. Editing an approved quotation sends it back to draft.
+  Confidentiality: `quotes.*` are commercial; cost rates need buying view, selling rates selling view, margin profit view;
+  someone who can't see a side keeps its values when editing lines. No invoices — billing stays in the ERP.
+- **Hard rule extended** (`user_has_perm`): commercial permissions never reach the Transport, Messenger, PRO or
+  Warehouse sides, nor any phone-app role (drivers, messengers, PRO officers) — even if ticked by the Super Admin.
+- **New roles**: Sales, Customer Service, Freight Operations, Dispatcher, Warehouse Manager, Warehouse Operator,
+  ERP Integration Administrator. New side and department: Warehouse.
+- **Customer contacts** (`customer_contacts`): several per customer, one main; Customers → Contacts. Customers also get
+  "standing instructions for every shipment", shown on each Job File.
+- **Money screens switch** (Settings → "Financials page and money reports", default On): Off hides and refuses the
+  Financials page and makes every report drop revenue, VAT and profit. Nothing is deleted; turning it on restores it.
+- **Report**: Job File register (`jobfiles`), same filters / Excel / CSV / print as the others.
+
 ## 16. Phase status
 
 | Phase | Status |
@@ -405,5 +437,6 @@ When own vehicles are not available, Transport hires a truck from a rental compa
 | PRO & Container Clearance module + file-link fix | Done |
 | Structure stage 3 — phone app (from a link) for drivers and messengers | Done |
 | Freight + 3PL — Phase 2, step 1: safety foundations (migration record, sign-in limit, test guard) | Done |
+| Freight + 3PL — Part A: Job Files, quotations, new roles, contacts, money switch (migration 013) | Done |
 | Freight + 3PL — remaining phases: see `docs/FREIGHT_3PL_PLAN.md` | Planned |
 | 7 Email notifications · 8 Saved views, column prefs, live ops table, performance | Planned |

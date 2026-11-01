@@ -12,10 +12,13 @@ const FIELDS: [string, string, string, string?][] = [
   ['timezone', 'Timezone', 'text', 'Asia/Dubai'],
   ['expiry_warning_days', 'Warn about expiring documents (days)', 'number', 'Licence, visa, registration, insurance'],
   ['pod_reminder_hours', 'POD reminder after (hours)', 'number', 'Used when reminders arrive in Phase 7'],
+  ['money_screens', 'Financials page and money reports', 'onoff', 'Off: the Financials page is hidden and reports drop revenue, VAT and profit (accounting stays in the ERP). Nothing is deleted.'],
+  ['quote_min_margin_pct', 'Quotations: minimum margin (%)', 'number', 'Below this, a quotation needs approval by a manager before it goes out'],
+  ['quote_validity_days', 'Quotations: rates valid for (days)', 'number', 'Default validity of a new quotation'],
 ];
 const STAGE: Record<string, string> = { draft: 'Draft', open: 'Waiting', active: 'In progress', delivered: 'Delivered', closed: 'Closed', cancelled: 'Cancelled' };
 
-const SIDE_NAMES: Record<string, string> = { admin: 'Administration', operations: 'Operations', transport: 'Transport', messenger: 'Messengers', finance: 'Finance', pro: 'PRO' };
+const SIDE_NAMES: Record<string, string> = { admin: 'Administration', operations: 'Operations', transport: 'Transport', messenger: 'Messengers', finance: 'Finance', pro: 'PRO', warehouse: 'Warehouse' };
 function Departments() {
   const { reloadLookups } = useMe();
   const [rows, setRows] = useState<any[]>([]);
@@ -136,7 +139,9 @@ export default function Settings() {
         <div className="grid g3">
           {FIELDS.map(([k, label, type, hint]) => (
             <label className="f" key={k}><span>{label}</span>
-              <input type={type} value={f[k] ?? ''} onChange={(e) => setF({ ...f, [k]: e.target.value })} />
+              {type === 'onoff'
+                ? <select value={String(f[k] ?? true)} onChange={(e) => setF({ ...f, [k]: e.target.value === 'true' })}><option value="true">On</option><option value="false">Off</option></select>
+                : <input type={type} value={f[k] ?? ''} onChange={(e) => setF({ ...f, [k]: e.target.value })} />}
               {hint && <span className="muted small" style={{ fontWeight: 400, marginTop: 3 }}>{hint}</span>}</label>))}
         </div>
         <div className="form-actions"><button className="btn primary" onClick={() => run(() => api('/api/settings', { method: 'PUT', body: f }), 'Settings saved')}>Save settings</button></div>

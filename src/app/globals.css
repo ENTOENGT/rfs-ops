@@ -264,3 +264,6 @@ a.kpi:hover { background: #faf8f4; text-decoration: none; }
 .app-shell .tabs { overflow-x: auto; white-space: nowrap; flex-wrap: nowrap; }
 .app-shell .page-head h1 { font-size: 20px; }
 .app-shell .grid.g3 { grid-template-columns: 1fr; }
+
+/* Freight + 3PL Part A — Job File closure box */
+.panel.warnbox { border-color: var(--attention); background: var(--attention-bg); }

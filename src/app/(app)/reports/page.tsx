@@ -1,4 +1,5 @@
 'use client';
+import { DIRECTIONS, MODES, JF_STATUSES } from '@/lib/jobfileRules';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
 import { Suspense, useEffect, useState } from 'react';
@@ -129,6 +130,16 @@ function Reports() {
               <option value="open">Not delivered yet</option><option value="delivered">Delivered</option>
               <option value="failed">Could not complete (runs)</option><option value="cancelled">Cancelled</option></select></label>
           </>}
+          {def?.kind === 'jobfile' && <>
+            <label className="f"><span>Customer</span><select value={f.customer_id ?? ''} onChange={set('customer_id')}><option value="">All</option>
+              {lk.customers.map((c: any) => <option key={c.id} value={c.id}>{c.name}</option>)}</select></label>
+            <label className="f"><span>Direction</span><select value={f.direction ?? ''} onChange={set('direction')}><option value="">All</option>
+              {DIRECTIONS.map(([c, n]) => <option key={c} value={c}>{n}</option>)}</select></label>
+            <label className="f"><span>Mode</span><select value={f.mode ?? ''} onChange={set('mode')}><option value="">All</option>
+              {MODES.map(([c, n]) => <option key={c} value={c}>{n}</option>)}</select></label>
+            <label className="f"><span>Status</span><select value={f.status ?? ''} onChange={set('status')}><option value="">All</option>
+              {JF_STATUSES.map(([c, n]) => <option key={c} value={c}>{n}</option>)}</select></label>
+          </>}
           {def?.kind === 'jobs' && <>
             {can('jobs.view_all') && <label className="f"><span>Department</span><select value={f.department_id ?? ''} onChange={set('department_id')}><option value="">All</option>
               {lk.departments.filter((d: any) => d.side === 'operations').map((d: any) => <option key={d.id} value={d.id}>{d.name}</option>)}</select></label>}
@@ -163,7 +174,7 @@ function Reports() {
           <tbody>
             {shown.rows.map((r: any, i: number) => <tr key={i}>{shown.columns.map((c: any, k: number) => <td key={c.key} className={numeric(c) ? 'num' : ''}
               style={c.key === 'gross_profit' && Number(r[c.key]) < 0 ? { color: 'var(--danger)' } : undefined}>
-              {(k === 0 && shown.report.kind === 'jobs') || (c.key === 'job_no' && shown.report.kind === 'messenger') ? <b>{r[c.key] ?? '—'}</b> : fmt(c, r[c.key])}</td>)}</tr>)}
+              {(k === 0 && (shown.report.kind === 'jobs' || shown.report.kind === 'jobfile')) || (c.key === 'job_no' && shown.report.kind === 'messenger') ? <b>{r[c.key] ?? '—'}</b> : fmt(c, r[c.key])}</td>)}</tr>)}
             {shown.rows.length === 0 && <tr><td colSpan={shown.columns.length} className="muted" style={{ padding: 24, textAlign: 'center' }}>
               {isPod ? 'No PODs outstanding. 🎉' : 'Nothing matches these filters.'}</td></tr>}
           </tbody>

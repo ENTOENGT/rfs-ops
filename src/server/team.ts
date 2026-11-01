@@ -14,12 +14,13 @@
 import { randomBytes } from 'crypto';
 import { Actor, hashPassword, phoneKey, validatePassword } from './auth';
 import { ApiError, audit, bad, forbidden, notFound, one, pool, q, tx } from './db';
+import { NO_SELLING_SIDES } from '../lib/permissions';
 import type { Side } from '../lib/permissions';
 
 const UUID = /^[0-9a-f-]{36}$/i;
-const SIDES: Side[] = ['admin', 'operations', 'transport', 'messenger', 'finance', 'pro'];
+const SIDES: Side[] = ['admin', 'operations', 'transport', 'messenger', 'finance', 'pro', 'warehouse'];
 export const SIDE_LABEL: Record<Side, string> = {
-  admin: 'Administration', operations: 'Operations', transport: 'Transport', messenger: 'Messengers', finance: 'Finance', pro: 'PRO',
+  admin: 'Administration', operations: 'Operations', transport: 'Transport', messenger: 'Messengers', finance: 'Finance', pro: 'PRO', warehouse: 'Warehouse',
 };
 
 type Scope = { all: true } | { all: false; deptId: string; deptName: string; side: Side };
@@ -264,7 +265,7 @@ export async function setRolePermissions(actor: Actor, roleId: string, codes: un
   const scope = roleScope(actor);
   if (!Array.isArray(codes)) throw bad('permissions must be a list');
   if (!UUID.test(roleId)) throw notFound('Role');
-  const role = await one('select r.id, r.code, r.name, r.side, r.department_id from roles r where r.id = $1', [roleId]);
+  const role = await one('select r.id, r.code, r.name, r.side, r.department_id, r.app_only from roles r where r.id = $1', [roleId]);
   if (!role) throw notFound('Role');
   if (role.code === 'super_admin') throw new ApiError(409, 'LOCKED_ROLE', 'Super Admin always has every permission');
   if (!scope.all && role.department_id !== scope.deptId) throw forbidden('You can only change roles of your own department');
@@ -273,10 +274,10 @@ export async function setRolePermissions(actor: Actor, roleId: string, codes: un
   const asked = [...new Set(codes.filter((x): x is string => typeof x === 'string'))];
   const refused = asked.filter((x) => !mine.has(x));
   if (refused.length) throw forbidden(`You can't give: ${refused.join(', ')}`);
-  if (['transport', 'messenger', 'pro'].includes(role.side)) {
+  if (NO_SELLING_SIDES.includes(role.side) || role.app_only) {
     const commercial = new Set(perms.filter((p) => p.sensitivity === 'commercial').map((p) => p.code));
     if (asked.some((x) => commercial.has(x)))
-      throw bad('Selling price, revenue, profit and customer documents can never be given to a Transport, Messenger or PRO role.');
+      throw bad('Selling price, revenue, profit and customer documents can never be given to a Transport, Messenger, PRO, Warehouse or phone-app role.');
   }
   await tx(async (c) => {
     const before = (await q('select permission_code c from role_permissions where role_id = $1 order by 1', [roleId], c)).map((r) => r.c);

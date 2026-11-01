@@ -237,9 +237,9 @@ test('Reports A–E: data, filters, export, permissions', async () => {
   const ch = await runReport(fin, 'pro_charges', P0);
   assert.equal(ch.totals!.actual, '1250.50'); assert.equal(ch.totals!.estimate, '400.00');
   assert.ok(ch.rows.some((r: any) => r.kind === 'Estimate' && r.estimate === '400.00' && r.actual === null));
-  assert.ok(!reportList(opsSub).some((r) => r.key === 'pro_charges'));
+  assert.ok(!(await reportList(opsSub)).some((r) => r.key === 'pro_charges'));
   await rejects(runReport(opsSub, 'pro_charges', P0), 'FORBIDDEN');
-  assert.ok(!reportList(tm).some((r) => r.key.startsWith('pro_')));
+  assert.ok(!(await reportList(tm)).some((r) => r.key.startsWith('pro_')));
   await rejects(runReport(tm, 'pro_register', P0), 'FORBIDDEN');
   const csv = (await exportReport(pm, 'pro_containers', { ...P0, job_no: 'SI-500' }, 'csv')).body.toString();
   assert.match(csv, /Container,PRO Request No\.,Job No\./); assert.match(csv, /MSCU1234566/);

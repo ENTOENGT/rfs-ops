@@ -15,6 +15,8 @@ export const useMe = () => useContext(MeCtx)!;
 
 const NAV: { href: string; label: string; perm?: string | string[]; phase?: number }[] = [
   { href: '/dashboard', label: 'Dashboard' },
+  { href: '/job-files', label: 'Job Files', perm: ['jobfiles.view_all', 'jobfiles.view_department', 'jobfiles.create', 'jobfiles.edit'] },
+  { href: '/quotations', label: 'Quotations', perm: 'quotes.view' },
   { href: '/requests', label: 'Transport requests', perm: 'jobs.view' },
   { href: '/jobs', label: 'Jobs', perm: 'jobs.view' },
   { href: '/drivers', label: 'Drivers', perm: 'jobs.view' },
@@ -49,7 +51,7 @@ function Bell({ jobHref = (id: string) => `/jobs/${id}` }: { jobHref?: (id: stri
         <div className="dropdown" onMouseLeave={() => setOpen(false)}>
           {n.rows.length === 0 && <div style={{ padding: 12 }} className="muted">You're all caught up.</div>}
           {n.rows.map((r) => (
-            <Link key={r.id} href={r.pro_id ? `/pro/${r.pro_id}` : r.run_id ? `/runs/${r.run_id}` : r.job_id ? jobHref(r.job_id) : '#'} className={r.read_at ? '' : 'unread'} onClick={() => setOpen(false)}>
+            <Link key={r.id} href={r.quotation_id ? `/quotations/${r.quotation_id}` : r.job_file_id ? `/job-files/${r.job_file_id}` : r.pro_id ? `/pro/${r.pro_id}` : r.run_id ? `/runs/${r.run_id}` : r.job_id ? jobHref(r.job_id) : '#'} className={r.read_at ? '' : 'unread'} onClick={() => setOpen(false)}>
               {r.title}<div className="muted small">{fmtDateTime(r.created_at)}</div>
             </Link>
           ))}
@@ -110,7 +112,8 @@ export default function Shell({ children }: { children: React.ReactNode }) {
             <small>Freight &amp; 3PL Operations · {me.department ?? me.role}</small>
           </div>
           <nav className="nav">
-            {NAV.filter((i) => !i.perm || (Array.isArray(i.perm) ? i.perm.some(can) : can(i.perm))).map(link)}
+            {NAV.filter((i) => !i.perm || (Array.isArray(i.perm) ? i.perm.some(can) : can(i.perm)))
+              .filter((i) => i.href !== '/financials' || lk.money_screens !== false).map(link)}
             {adminLinks.length > 0 && <div className="group">Administration</div>}
             {adminLinks.map(link)}
           </nav>

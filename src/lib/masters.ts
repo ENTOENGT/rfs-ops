@@ -119,6 +119,7 @@ export const MASTERS: Record<string, MasterDef> = {
       { key: 'email', label: 'Email', type: 'email', max: 120, half: true },
       { key: 'is_active', label: 'Active', type: 'bool', list: true, half: true },
       { key: 'address', label: 'Address', type: 'longtext', max: 500 },
+      { key: 'service_instructions', label: 'Standing instructions for every shipment', type: 'longtext', max: 2000 },
       { key: 'remarks', label: 'Remarks', type: 'longtext', max: 1000 },
     ],
   },

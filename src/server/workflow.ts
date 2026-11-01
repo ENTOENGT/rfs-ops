@@ -368,6 +368,10 @@ const SETTINGS: Record<string, (v: any) => unknown> = {
   timezone: (v) => { const s = String(v ?? ''); try { new Intl.DateTimeFormat('en', { timeZone: s }); } catch { throw bad('Unknown timezone'); } return s; },
   expiry_warning_days: (v) => { const n = Number(v); if (!Number.isInteger(n) || n < 0 || n > 365) throw bad('Expiry warning must be 0–365 days'); return n; },
   pod_reminder_hours: (v) => { const n = Number(v); if (!Number.isInteger(n) || n < 1 || n > 720) throw bad('POD reminder must be 1–720 hours'); return n; },
+  // Freight + 3PL (migration 013)
+  money_screens: (v) => { if (![true, false, 'true', 'false'].includes(v)) throw bad('Choose on or off for the money screens'); return v === true || v === 'true'; },
+  quote_min_margin_pct: (v) => { const n = Number(v); if (!Number.isFinite(n) || n < 0 || n > 100) throw bad('Minimum quotation margin must be 0–100%'); return n; },
+  quote_validity_days: (v) => { const n = Number(v); if (!Number.isInteger(n) || n < 1 || n > 365) throw bad('Quotation validity must be 1–365 days'); return n; },
 };
 export async function getSettings(actor: Actor) {
   requirePerm(actor, 'settings.manage');

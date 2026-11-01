@@ -8,16 +8,26 @@
  * Jobs counted: everything except drafts and cancelled jobs, by required date.
  */
 import { Actor } from './auth';
-import { bad, forbidden, q } from './db';
+import { ApiError, bad, forbidden, getSetting, q } from './db';
 import { fromFils, toFils } from '../lib/finance';
 import { jobScope } from './scope';
 
 const UUID = /^[0-9a-f-]{36}$/i;
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
 
+/**
+ * Settings → "Financials page and money reports" (migration 013). Off = the Financials page is refused and
+ * reports drop revenue, VAT and profit for everyone. Accounting lives in the ERP; nothing is deleted.
+ */
+export const moneyScreensOn = async () => (await getSetting<boolean>('money_screens', true)) !== false;
+export async function assertMoneyScreensOn() {
+  if (!(await moneyScreensOn())) throw new ApiError(403, 'MONEY_SCREENS_OFF', 'The Financials page is switched off in Settings. Money reporting is done in the ERP.');
+}
+
 export async function financials(actor: Actor, p: Record<string, string>) {
   const { fin } = actor;
   if (!fin.buyingView && !fin.sellingView) throw forbidden();
+  await assertMoneyScreensOn();
   if (!DATE.test(p.from ?? '') || !DATE.test(p.to ?? '')) throw bad('Choose a period');
   if (p.to < p.from) throw bad('The end date is before the start date');
 
