@@ -65,7 +65,8 @@ export async function listMaster(actor: Actor, key: string, p: Record<string, st
     params.push('%' + p.q.trim().replace(/[%_\\]/g, '\\$&') + '%');
     where += ` and concat_ws(' ', ${d.search.join(', ')}) ilike $${params.length}`;
   }
-  if (key === 'drivers' || key === 'vehicles') where += ' and e.subcontractor_id is null';   // hired trucks live on the rental, not the own fleet
+  if (key === 'drivers' || key === 'vehicles') where += ' and e.subcontractor_id is null';
+  if (key === 'customers') { const { customerScopeSql } = await import('./commercial'); where += customerScopeSql(actor, params, 'e'); }   // hired trucks live on the rental, not the own fleet
   if (p.active === '1') where += d.activeField === 'is_active' ? ' and e.is_active' : ` and e.status <> 'inactive'`;
   const size = Math.min(Math.max(Number(p.page_size) || 50, 1), 500);
   const page = Math.max(Number(p.page) || 1, 1);
@@ -131,6 +132,7 @@ export async function createMaster(actor: Actor, key: string, b: any) {
     const r = await c.query(`insert into ${d.table} (${keys.join(', ')}) values (${keys.map((_, i) => `$${i + 1}`).join(', ')}) returning id`,
       keys.map((k) => values[k])).catch(mapDup);
     const id = r.rows[0].id;
+    if (key === 'customers') { const { ownNewCustomer } = await import('./commercial'); await ownNewCustomer(c, actor, id); }
     const label = String(values[d.fields[0].key]);
     await audit(c, actor, { entity_type: d.key, entity_id: id, action: `${cap(d.singular)} created`, new_value: label });
     return { id };

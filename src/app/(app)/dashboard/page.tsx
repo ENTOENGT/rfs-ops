@@ -8,6 +8,10 @@ import { period, PERIODS } from '@/lib/period';
 export default function Dashboard() {
   const { me, lk } = useMe();
   const [rc, setRc] = useState<any>(null);
+  // Part E: Commercials people see their own work first
+  const commercial = ['jobfiles.view_assigned', 'commercial.manage'].some((p) => me.permissions.includes(p)) || me.role_code === 'agent_coordinator';
+  const [co, setCo] = useState<any>(null);
+  useEffect(() => { if (commercial && me.role_code !== 'agent_coordinator') api('/api/commercial/overview').then(setCo).catch(() => {}); }, []);  // eslint-disable-line react-hooks/exhaustive-deps
   const seesAllRuns = me.permissions.includes('runs.view_all') || me.permissions.includes('runs.view_department');
   useEffect(() => { if (me.permissions.some((p) => p.startsWith('runs.'))) api('/api/runs/summary').then(setRc).catch(() => {}); }, []);
   const [key, setKey] = useState('this_month');
@@ -36,6 +40,18 @@ export default function Dashboard() {
           <input type="date" style={{ width: 150 }} value={custom[1]} onChange={(e) => setCustom([custom[0], e.target.value])} aria-label="To" />
         </>}
       </div>
+      {co && <>
+        <h2 style={{ margin: '4px 0 8px' }}>{me.role_code === 'sales' ? 'My customers\' shipments' : me.role_code === 'coordinator' ? 'My enquiries and shipments' : 'Commercials'}</h2>
+        {co.my_approvals > 0 && <div className="msg warn"><b>{co.my_approvals} quotation{co.my_approvals === 1 ? '' : 's'} waiting for your approval.</b>{' '}
+          <Link href="/quotations?status=pending_approval&my_approval=1">Open them</Link></div>}
+        <div className="kpis" style={{ marginBottom: 16 }}>
+          {co.tiles.filter((t: any) => t.key !== 'c_handed_over' || t.count).map((t: any) =>
+            <Kpi key={t.key} n={t.count} label={t.label} href={`/commercials/enquiries?view=${t.key}`} attn={['c_approval', 'c_confirmed', 'c_awaiting_job'].includes(t.key)} />)}
+        </div>
+      </>}
+      {me.role_code === 'agent_coordinator' && <div className="panel"><h2>Rate requests assigned to you</h2>
+        <p className="small" style={{ margin: 0 }}><Link href="/vendor-requests?mine=assigned&status=requested">Waiting for agents' rates</Link> ·{' '}
+          <Link href="/vendor-requests?mine=assigned&status=">Everything assigned to me</Link></p></div>}
       {rc && rc.pending !== undefined && <>
         <h2 style={{ margin: '4px 0 8px' }}>Messenger runs</h2>
         <div className="kpis" style={{ marginBottom: 16 }}>

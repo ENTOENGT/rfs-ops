@@ -36,10 +36,10 @@ function NewQuotationForm() {
   const rates = (file?.vendor_requests ?? []).filter((r: any) => r.quoted_cost);
   return (
     <div className="page">
-      <div className="page-head"><h1>New quotation{file && <> for Job No. {file.job_no}</>}</h1></div>
+      <div className="page-head"><h1>New quotation{file && <> for {file.job_no ? `Job No. ${file.job_no}` : file.enquiry_ref}</>}</h1></div>
       {err && <div className="msg err">{err}</div>}
       {file && rates.length === 0 && file.vendor_requests !== null && <div className="msg">No vendor has given a price on this Job No. yet. You can still type the cost yourself.</div>}
-      <QuoteFields f={f} setF={setF} fe={fe} vendorRates={rates} jobNo={file?.job_no} />
+      <QuoteFields f={f} setF={setF} fe={fe} vendorRates={rates} jobNo={file?.job_no ?? file?.enquiry_ref} />
       <div className="form-actions"><Link className="btn" href={file ? `/job-files/${file.id}` : '/quotations'}>Cancel</Link>
         <button className="btn primary" disabled={busy || (!!jobFileId && !file)} onClick={save}>{busy ? 'Saving…' : 'Save draft'}</button></div>
     </div>

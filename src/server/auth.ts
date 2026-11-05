@@ -39,13 +39,14 @@ export interface Actor {
   role_code: string; role_name: string; role_is_manager: boolean; app_only: boolean;
   department_id: string | null; department_code: string | null; department_name: string | null; department_side: Side | null;
   must_change_password: boolean; isSuperAdmin: boolean;
+  division: string | null;            // Commercials division: imports | exports | cross_trade
   perms: Set<Perm>; fin: FinancialAccess;
   has(p: Perm): boolean;
 }
 
 export async function loadActor(userId: string, version?: number): Promise<Actor | null> {
   const u = await one(
-    `select u.id, u.full_name, u.email, u.token_version, u.must_change_password, u.is_active,
+    `select u.id, u.full_name, u.email, u.token_version, u.must_change_password, u.is_active, u.division,
             r.code role_code, r.name role_name, r.is_manager role_is_manager, r.app_only,
             d.id department_id, d.code department_code, d.name department_name, d.side department_side
        from users u join roles r on r.id = u.role_id left join departments d on d.id = u.department_id
@@ -62,7 +63,7 @@ export async function loadActor(userId: string, version?: number): Promise<Actor
     id: u.id, full_name: u.full_name, email: u.email, role_code: u.role_code, role_name: u.role_name,
     role_is_manager: u.role_is_manager, app_only: !!u.app_only, department_id: u.department_id, department_code: u.department_code,
     department_name: u.department_name, department_side: u.department_side,
-    must_change_password: u.must_change_password, isSuperAdmin: u.role_code === 'super_admin', perms, has, fin: financialAccess(has),
+    must_change_password: u.must_change_password, division: u.division ?? null, isSuperAdmin: u.role_code === 'super_admin', perms, has, fin: financialAccess(has),
   };
 }
 

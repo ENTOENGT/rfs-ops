@@ -18,6 +18,11 @@ export async function resetDb() {
   await pool().query('drop schema public cascade; create schema public;');
   for (const f of readdirSync('db/migrations').filter((f) => f.endsWith('.sql')).sort())
     await pool().query(readFileSync(`db/migrations/${f}`, 'utf8'));
+  // Migration 018 retires Sea-Import / Sea-Export / Air-Import / Air-Export. The older tests use them only as
+  // examples of "two different operations departments" (department isolation still applies to any department),
+  // so they are switched back on in the test database. tests/commercials.test.ts checks the retirement itself.
+  if (!process.env.KEEP_RETIRED_DEPARTMENTS)
+    await pool().query("update departments set is_active = true where code in ('sea_import','sea_export','air_import','air_export')");
 }
 
 import { q as dbq, one as dbone } from '../src/server/db';
@@ -29,12 +34,14 @@ const HOME: Record<string, string> = {
   documentation_manager: 'documentations', pro_officer: 'documentations',
   sales: 'commercial', customer_service: 'operations', freight_ops: 'sea_import', dispatcher: 'transport',
   warehouse_manager: 'warehouse', warehouse_operator: 'warehouse', erp_admin: 'finance',
+  commercials_manager: 'commercial', coordinator: 'commercial', agent_coordinator: 'commercial',
 };
 /** Create a ready-to-use user (password already changed) with a role and department. */
-export async function mkUser(by: Actor, name: string, roleCode: string, deptCode = HOME[roleCode]): Promise<Actor> {
+export async function mkUser(by: Actor, name: string, roleCode: string, deptCode = HOME[roleCode], more: Record<string, unknown> = {}): Promise<Actor> {
   const role = (await dbone('select id from roles where code = $1', [roleCode])).id;
   const dept = (await dbone('select id from departments where code = $1', [deptCode])).id;
-  const u = await createUser(by, { full_name: name, email: `${name.toLowerCase().replace(/\W/g, '')}@x.ae`, role_id: role, department_id: dept });
+  const extra = ['sales', 'coordinator'].includes(roleCode) ? { division: 'imports' } : {};
+  const u = await createUser(by, { full_name: name, email: `${name.toLowerCase().replace(/\W/g, '')}@x.ae`, role_id: role, department_id: dept, ...extra, ...more });
   await dbq('update users set must_change_password = false where id = $1', [u.id]);
   return (await loadActor(u.id))!;
 }

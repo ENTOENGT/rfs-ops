@@ -10,8 +10,8 @@ export const VR_SERVICES: [string, string][] = [['rate', 'Rate request (for a qu
  * New vendor request. For a rate request you can tick several vendors: the same request goes to each of them and their
  * prices are compared side by side. `sameAs` = add one more vendor to an existing rate request.
  */
-export function NewVendorRequest({ jobNo, service = 'rate', sameAs, description, onClose, onDone }: {
-  jobNo?: string; service?: string; sameAs?: { id: string; asked: string[] }; description?: string;
+export function NewVendorRequest({ jobNo, jobFileId, service = 'rate', sameAs, description, onClose, onDone }: {
+  jobNo?: string; jobFileId?: string; service?: string; sameAs?: { id: string; asked: string[] }; description?: string;
   onClose: () => void; onDone: (r: { id: string; ids: string[]; request_nos: string[] }) => void;
 }) {
   const { me, lk } = useMe();
@@ -26,7 +26,7 @@ export function NewVendorRequest({ jobNo, service = 'rate', sameAs, description,
     setErr(''); setBusy(true);
     try {
       const body = sameAs ? { same_as: sameAs.id, vendor_ids: nw.vendor_ids, needed_by: nw.needed_by || undefined }
-        : { ...nw, vendor_ids: multi ? nw.vendor_ids : undefined, vendor_id: multi ? undefined : nw.vendor_id, quoted_cost: !multi || nw.vendor_ids.length === 1 ? nw.quoted_cost : undefined };
+        : { ...nw, job_file_id: jobFileId, job_no: jobFileId ? undefined : nw.job_no, vendor_ids: multi ? nw.vendor_ids : undefined, vendor_id: multi ? undefined : nw.vendor_id, quoted_cost: !multi || nw.vendor_ids.length === 1 ? nw.quoted_cost : undefined };
       onDone(await api('/api/vendor-requests', { body }));
     } catch (e: any) { setErr(e.message); } finally { setBusy(false); }
   };
@@ -38,7 +38,11 @@ export function NewVendorRequest({ jobNo, service = 'rate', sameAs, description,
       <div className="grid g2">
         {!sameAs && <label className="f"><span>Service <em>*</em></span><select value={nw.service} onChange={(e) => setNw({ ...nw, service: e.target.value })}>
           {VR_SERVICES.map(([c, n]) => <option key={c} value={c}>{n}</option>)}</select></label>}
-        {!sameAs && <label className="f"><span>Job No.</span><input value={nw.job_no} onChange={(e) => setNw({ ...nw, job_no: e.target.value })} readOnly={!!jobNo} /></label>}
+        {!sameAs && <label className="f"><span>Job No. / Enquiry Ref</span><input value={nw.job_no} onChange={(e) => setNw({ ...nw, job_no: e.target.value })} readOnly={!!jobNo} /></label>}
+        {!sameAs && multi && (lk.agent_coordinators?.length ?? 0) > 0 && <label className="f"><span>Collect through</span>
+          <select value={nw.assigned_to ?? ''} onChange={(e) => setNw({ ...nw, assigned_to: e.target.value || undefined })}>
+            <option value="">I contact the agents / carriers myself</option>
+            {lk.agent_coordinators.map((u: any) => <option key={u.id} value={u.id}>Agent Coordinator: {u.name}</option>)}</select></label>}
         {multi || sameAs ? <div className="f span2"><span>Vendors <em>*</em> <span className="muted small">— tick all the vendors you want to ask; the same request goes to each one</span></span>
           <div className="checks">{vendors.map((v: any) => <label key={v.id} className="check"><input type="checkbox" checked={nw.vendor_ids.includes(v.id)} onChange={() => pick(v.id)} /> {v.name}</label>)}</div>
           {nw.vendor_ids.length > 0 && <div className="muted small">{nw.vendor_ids.length} vendor(s) chosen</div>}</div>

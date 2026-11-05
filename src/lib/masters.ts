@@ -24,7 +24,7 @@ export interface MasterDef {
 const EMIRATES = ['Dubai', 'Abu Dhabi', 'Sharjah', 'Ajman', 'Umm Al Quwain', 'Ras Al Khaimah', 'Fujairah']
   .map((e) => ({ value: e, label: e }));
 
-export const VENDOR_TYPES = [['shipping_line', 'Shipping line'], ['airline', 'Airline'], ['freight_agent', 'Freight agent'],
+export const VENDOR_TYPES = [['shipping_line', 'Shipping line'], ['airline', 'Airline'], ['freight_agent', 'Freight agent'], ['overseas_agent', 'Overseas agent'],
   ['customs_broker', 'Customs broker'], ['transporter', 'Transporter'], ['warehouse', 'Warehouse'], ['courier', 'Courier'], ['other', 'Other']]
   .map(([value, label]) => ({ value, label }));
 

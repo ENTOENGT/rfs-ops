@@ -2,6 +2,36 @@
 import { useEffect, useState } from 'react';
 import { api } from './api';
 
+/** Which Salesmen own the customer (Part E). The Commercials Manager changes it; everyone else sees it. */
+function Owners({ customerId }: { customerId: string }) {
+  const [o, setO] = useState<any>(null);
+  const [edit, setEdit] = useState<any[] | null>(null);
+  const [err, setErr] = useState('');
+  useEffect(() => { api(`/api/customers/${customerId}/owners`).then(setO).catch((e) => setErr(e.message)); }, [customerId]);
+  const save = async () => {
+    setErr('');
+    try { setO(await api(`/api/customers/${customerId}/owners`, { method: 'PUT', body: { owners: edit } })); setEdit(null); } catch (e: any) { setErr(e.message); }
+  };
+  if (!o) return err ? <div className="msg err">{err}</div> : null;
+  return <div style={{ marginTop: 14 }}>
+    <h3 className="small" style={{ margin: '0 0 6px' }}>Salesmen</h3>
+    {err && <div className="msg err">{err}</div>}
+    {!edit && <p className="small" style={{ margin: 0 }}>{o.owners.length ? o.owners.map((x: any) => `${x.full_name}${x.is_main ? ' (main)' : ''}`).join(', ')
+      : 'Nobody yet — the first Salesman to open an enquiry for this customer becomes the main owner.'}
+      {o.can_manage && <> <button className="linkish" onClick={() => setEdit(o.owners.map((x: any) => ({ user_id: x.user_id, is_main: x.is_main })))}>Change</button></>}</p>}
+    {edit && <>
+      {edit.map((x, i) => <div key={i} style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 6 }}>
+        <select value={x.user_id} onChange={(e) => setEdit(edit.map((y, j) => j === i ? { ...y, user_id: e.target.value } : y))} style={{ flex: 1 }}>
+          <option value="">Choose Salesman</option>{o.salesmen.map((u: any) => <option key={u.id} value={u.id}>{u.full_name}</option>)}</select>
+        <label className="check"><input type="radio" name="main_owner" checked={x.is_main} onChange={() => setEdit(edit.map((y, j) => ({ ...y, is_main: j === i })))} /> Main</label>
+        <button className="btn small" onClick={() => setEdit(edit.filter((_, j) => j !== i))}>✕</button></div>)}
+      <div style={{ display: 'flex', gap: 6 }}><button className="btn small" onClick={() => setEdit([...edit, { user_id: '', is_main: edit.length === 0 }])}>+ Add Salesman</button>
+        <span className="spacer" /><button className="btn small" onClick={() => setEdit(null)}>Cancel</button>
+        <button className="btn small primary" disabled={edit.some((x) => !x.user_id)} onClick={save}>Save Salesmen</button></div>
+    </>}
+  </div>;
+}
+
 /** Several contacts per customer (operations, accounts, escalation…). Opened from the Customers list. */
 export default function CustomerContacts({ customerId, onClose }: { customerId: string; onClose: () => void }) {
   const [d, setD] = useState<any>(null);
@@ -35,6 +65,7 @@ export default function CustomerContacts({ customerId, onClose }: { customerId: 
           <label className="f span2"><span>Remarks</span><input value={f.remarks ?? ''} onChange={set('remarks')} /></label>
           <label className="small" style={{ display: 'flex', gap: 8, alignItems: 'center' }}><input type="checkbox" style={{ width: 'auto' }} checked={!!f.is_primary} onChange={set('is_primary')} />Main contact</label>
         </div>}
+        <Owners customerId={customerId} />
         <div className="actions">
           {d?.can_edit && !f && <button className="btn" onClick={() => setF({})}>Add contact</button>}
           {f && <><button className="btn" onClick={() => setF(null)}>Cancel</button><button className="btn primary" onClick={() => save(f)}>Save contact</button></>}

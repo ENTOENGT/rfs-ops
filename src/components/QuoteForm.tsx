@@ -65,7 +65,7 @@ export function QuoteFields({ f, setF, fe = {}, minMargin, vendorRates = [], job
       <label className={`f span2${fe.customer_id ? ' bad' : ''}`}><span>Customer <em>*</em></span>
         <select value={f.customer_id ?? ''} onChange={set('customer_id')} disabled={!!f.job_file_id} title={f.job_file_id ? "The Job File's customer" : ''}><option value="">Choose customer</option>
           {lk.customers.map((c: any) => <option key={c.id} value={c.id}>{c.name}</option>)}</select><Err m={fe.customer_id} /></label>
-      {jobNo && <label className="f"><span>Job No.</span><input value={jobNo} readOnly /></label>}
+      {jobNo && <label className="f"><span>Shipment</span><input value={jobNo} readOnly /></label>}
       <label className="f"><span>Enquiry / customer ref.</span><input value={f.enquiry_reference ?? ''} onChange={set('enquiry_reference')} /></label>
       <label className={`f${fe.service_type ? ' bad' : ''}`}><span>Service <em>*</em></span>
         <select value={f.service_type ?? ''} onChange={set('service_type')}><option value="">Choose</option>
@@ -81,7 +81,7 @@ export function QuoteFields({ f, setF, fe = {}, minMargin, vendorRates = [], job
       <label className="f"><span>Chargeable weight (kg)</span><input type="number" min={0} value={f.chargeable_weight_kg ?? ''} onChange={set('chargeable_weight_kg')} /></label>
       <label className="f span2"><span>Cargo</span><input value={f.cargo_description ?? ''} onChange={set('cargo_description')} /></label>
     </div></div>
-    {buyingView && rates.length > 0 && <div className="panel"><h2>Vendor rates on Job No. {jobNo}</h2>
+    {buyingView && rates.length > 0 && <div className="panel"><h2>Rates received for {jobNo}</h2>
       <p className="muted small" style={{ marginTop: 0 }}>Press "Use" to add a vendor's rate as a cost line, then put your margin on it.</p>
       <div className="table-wrap"><table className="t"><thead><tr><th>Request</th><th>Vendor</th><th className="num">Rate</th><th>Valid until</th><th /></tr></thead>
         <tbody>{rates.map((r) => { const used = lines.some((l) => l.vendor_request_id === r.id); return <tr key={r.id} className={r.lowest ? 'is-lowest' : ''}>
@@ -121,7 +121,8 @@ export function QuoteFields({ f, setF, fe = {}, minMargin, vendorRates = [], job
         {buyingView && <><dt>Total cost</dt><dd>{fmtMoney(t.cost, cur)}</dd></>}
         {sellingView && <><dt>Total to customer</dt><dd><b>{fmtMoney(t.sell, cur)}</b></dd></>}
         {profitView && <><dt>Margin</dt><dd>{fmtMoney(t.margin, cur)}{t.pct !== null && ` (${t.pct}%)`}
-          {minMargin !== undefined && t.pct !== null && Number(t.pct) < minMargin && <span className="flag" style={{ marginLeft: 8 }}>Below {minMargin}% — needs approval</span>}</dd></>}
+          {Number(t.margin) < 0 ? <span className="loss-tag">LOSS — selling below cost</span>
+            : minMargin !== undefined && t.pct !== null && Number(t.pct) < minMargin && <span className="flag" style={{ marginLeft: 8 }}>Below {minMargin}% — needs approval</span>}</dd></>}
       </dl>
     </div>
     <div className="panel"><h2>Terms</h2><div className="grid g3">

@@ -129,7 +129,7 @@ export default function MasterPage({ entity, embedded }: { entity: string; embed
               {canSendApp && <td>{APP_STATE[r.app ?? 'none']}</td>}
               {(canEdit || canSendApp || hasContacts) && <td style={{ whiteSpace: 'nowrap', textAlign: 'right' }}>
                 {canSendApp && <><button className="btn small" onClick={() => setAppFor(r)}>Send app link</button>{' '}</>}
-                {hasContacts && <><button className="btn small" onClick={() => setContactsFor(r.id)}>Contacts</button>{' '}</>}
+                {hasContacts && <><button className="btn small" onClick={() => setContactsFor(r.id)}>Contacts &amp; Salesmen</button>{' '}</>}
                 {canEdit && <><button className="btn small" onClick={() => setEdit(r)}>Edit</button>{' '}
                 <button className="btn small danger" onClick={() => remove(r)}>Remove</button></>}</td>}
             </tr>))}

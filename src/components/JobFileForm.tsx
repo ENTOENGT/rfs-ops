@@ -1,12 +1,20 @@
 'use client';
 import { useMe } from './Shell';
+import { DIVISIONS } from '@/lib/commercialRules';
 import { DIRECTIONS, MODES, INCOTERMS } from '@/lib/jobfileRules';
 
 const Err = ({ m }: { m?: string }) => (m ? <small className="ferr">{m}</small> : null);
 
 /** The Job File fields, shared by "New Job File" and "Edit" so both check and look the same. */
 export function JobFileFields({ f, setF, fe = {}, isNew }: { f: any; setF: (v: any) => void; fe?: Record<string, string>; isNew?: boolean }) {
-  const { lk } = useMe();
+  const { lk, me, can } = useMe();
+  const enquiry = isNew && f.status === 'enquiry';
+  // Part E: the Coordinator comes from the Salesman's mapping
+  const salesmanId = me.role_code === 'sales' ? me.id : f.salesman_id;
+  const salesman = lk.salesmen?.find((s: any) => s.id === salesmanId);
+  const coordId = me.role_code === 'sales' ? lk.me_coordinator_id : salesman?.coordinator_id ?? (me.role_code === 'coordinator' ? me.id : null);
+  const coordName = lk.coordinators?.find((c: any) => c.id === (f.coordinator_id || coordId))?.name;
+  const manager = can('commercial.manage');
   const set = (k: string) => (e: any) => setF({ ...f, [k]: e.target.type === 'checkbox' ? e.target.checked : e.target.value });
   const air = f.mode === 'air', road = f.mode === 'road';
   const own = lk.my_department?.side === 'operations';
@@ -15,15 +23,27 @@ export function JobFileFields({ f, setF, fe = {}, isNew }: { f: any; setF: (v: a
       <input type="checkbox" style={{ width: 'auto' }} checked={!!f[k]} onChange={set(k)} />{text}</label>);
   return <>
     <div className="panel"><h2>Shipment</h2>
-      {isNew && !own && <label className="f" style={{ maxWidth: 320, marginBottom: 12 }}><span>Department</span>
+      {isNew && !own && !enquiry && <label className="f" style={{ maxWidth: 320, marginBottom: 12 }}><span>Department</span>
         <select value={f.department_id ?? ''} onChange={set('department_id')}><option value="">None</option>
           {lk.departments.filter((d: any) => d.side === 'operations').map((d: any) => <option key={d.id} value={d.id}>{d.name}</option>)}</select></label>}
       <div className="grid g3">
-        {isNew && <label className={`f${fe.job_no ? ' bad' : ''}`}><span>Job No. <em>*</em></span>
+        {isNew && !enquiry && <label className={`f${fe.job_no ? ' bad' : ''}`}><span>Job No. (from the ERP) <em>*</em></span>
           <input value={f.job_no ?? ''} onChange={set('job_no')} autoFocus maxLength={40} /><Err m={fe.job_no} /></label>}
-        <label className={`f ${isNew ? 'span2' : ''}${fe.customer_id ? ' bad' : ''}`}><span>Customer <em>*</em></span>
+        <label className={`f ${isNew && !enquiry ? 'span2' : ''}${fe.customer_id ? ' bad' : ''}`}><span>Customer <em>*</em></span>
           <select value={f.customer_id ?? ''} onChange={set('customer_id')}><option value="">Choose customer</option>
             {lk.customers.map((c: any) => <option key={c.id} value={c.id}>{c.name}</option>)}</select><Err m={fe.customer_id} /></label>
+        {enquiry && me.role_code !== 'sales' && <label className={`f${fe.salesman_id ? ' bad' : ''}`}><span>Responsible Salesman {me.role_code === 'coordinator' && <em>*</em>}</span>
+          <select value={f.salesman_id ?? ''} onChange={(e) => setF({ ...f, salesman_id: e.target.value, division: f.division || lk.salesmen?.find((s: any) => s.id === e.target.value)?.division || '' })}>
+            <option value="">{me.role_code === 'coordinator' ? 'Choose the Salesman' : 'None'}</option>
+            {lk.salesmen?.map((s: any) => <option key={s.id} value={s.id}>{s.name}</option>)}</select><Err m={fe.salesman_id} /></label>}
+        {enquiry && <div className="f"><span>Coordinator</span>
+          {manager ? <select value={f.coordinator_id ?? ''} onChange={set('coordinator_id')}><option value="">{coordName ? `${coordName} (from the mapping)` : 'From the Salesman\'s mapping'}</option>
+            {lk.coordinators?.map((c: any) => <option key={c.id} value={c.id}>{c.name}</option>)}</select>
+            : <input readOnly value={coordName ?? (me.role_code === 'sales' ? 'None mapped — ask the Commercials Manager' : 'Comes from the Salesman')} />}</div>}
+        {enquiry && <label className="f"><span>Division</span><select value={f.division ?? ''} onChange={set('division')}
+          disabled={!manager && !!(me.role_code === 'sales' ? true : salesman?.division)}>
+          <option value="">{salesman?.division || me.role_code === 'sales' ? 'The Salesman\'s division' : 'From the direction'}</option>
+          {DIVISIONS.map(([c, n]) => <option key={c} value={c}>{n}</option>)}</select></label>}
         <label className={`f${fe.direction ? ' bad' : ''}`}><span>Direction <em>*</em></span>
           <select value={f.direction ?? ''} onChange={set('direction')}><option value="">Choose</option>
             {DIRECTIONS.map(([c, n]) => <option key={c} value={c}>{n}</option>)}</select><Err m={fe.direction} /></label>

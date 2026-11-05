@@ -486,6 +486,50 @@ quotations within validity; every print / download is written to the quotation h
   quotations on it are cancelled ("Qx was accepted instead"). No new Job No.
 - Rate requests are never sent to the ERP (nothing to pay).
 
+## 15g. Email drafts (Part D, no migration)
+
+- An **Email** button (`EmailButton`, `/api/email-draft`, `src/server/emails.ts`) on vendor requests (and each vendor
+  row on the Job File), approved quotations, Job Files (shipment update: booking confirmed, departed, arrived, customs
+  cleared, delivered, documents needed, general) and customer service cases.
+- The system writes recipients (vendor email; customer contacts with the primary ticked, the case contact first),
+  subject and text with the Job No., references and shipment details. The user checks it and presses "Open in my
+  email" (a `mailto:` link to their own Outlook / Gmail) or "Copy text". Nothing is sent from the server and no email
+  account is stored. The quotation PDF is attached by the user.
+- A customer quotation email shows selling prices only (never cost or margin), and only for an approved, unexpired
+  quotation. Each draft uses the same permission as its screen.
+- "Email prepared" is written in that record's history; a case reply also counts as the first response.
+
+## 15h. Commercials Department (Part E, migration 018)
+
+- **Structure**: department "Commercials" with divisions Imports / Exports / Cross Trade (`users.division`). Roles
+  Commercials Manager, Salesman (`sales`), Coordinator, Agent Coordinator. A Salesman has a dedicated Coordinator
+  (`users.coordinator_id`); one Coordinator serves many Salesmen; every change is kept in `user_assignments` (with reason).
+  Sea-Import / Sea-Export / Air-Import / Air-Export are retired (`is_active = false`, history kept).
+- **Customers**: `customer_salesmen` (one main owner). A Salesman sees own + unowned customers (the first enquiry
+  claims an unowned one); a Coordinator sees their mapped Salesmen's; `customers.view_all` = everyone else.
+- **One shipment record, three numbers** (`job_files`): Enquiry Ref (ENQ-YY-NNNNN, at creation), Shipping Ref
+  (SR-YY-NNNNN, at customer confirmation), Job No. (typed from the ERP at handover; empty until then, unique).
+  `stage` follows the work: enquiry → rates_requested → rates_received → quotation_draft → pending_approval →
+  sent_to_customer → customer_confirmed → booking_requested → prealert_awaited → prealert_received →
+  prealert_verified → handed_over (or lost / cancelled). `status` stays `enquiry` until handover, then `open` and
+  the existing Operations workflow (documents, PRO, messenger, warehouse, transport, closing) continues unchanged.
+- **Visibility**: `jobfiles.view_assigned` (Salesman / Coordinator / creator), `jobfiles.view_handed_over`
+  (Operations), `jobfiles.view_all` (Commercials Manager, admins). Rate requests: Agent Coordinators see only
+  those assigned to them. Selling price / margin still blocked for Transport, Messenger, PRO, Warehouse in the DB.
+- **Rates**: source (direct line / airline / overseas agent / Agent Coordinator), charges per freight / origin /
+  destination with currency and exchange rate (`vendor_rate_charges`), transit, routing, free days, inclusions,
+  exclusions, validity, ETD; revised rates keep the old version (`vendor_rate_versions`).
+- **Quotation approval**: a Coordinator's quotation goes to the responsible Salesman (approve / reject / return
+  for revision); below the minimum margin a manager must also approve; a loss (selling below cost) is shown in red.
+  Versions kept at approval, revision and confirmation (`quotation_versions`); customer responses with evidence
+  (`quotation_responses`). Customer confirmation needs evidence (a document or a written note).
+- **Booking → pre-alert → handover** (`src/server/commercial.ts`): booking request from the chosen rate, booking
+  confirmation, pre-alert (received / correction / verified against the booking, details copied onto the record),
+  then "Create the operational job" with the ERP Job No. A Commercials Manager can do it before verification, with a reason.
+- **History**: all history tables are append-only (DB trigger); `job_file_events.remarks`.
+- **Screens**: grouped role-based menu, Commercials overview, Enquiry register on the standard table
+  (`DataTable`: sort, pages, columns, CSV / Excel), quotations list on the same table, role tiles on the dashboard.
+
 ## 16. Phase status
 
 | Phase | Status |
@@ -507,5 +551,7 @@ quotations within validity; every print / download is written to the quotation h
 | Freight + 3PL — Part B: quotation margin + customer copy, warehouse core (migrations 014–015) | Done |
 | Freight + 3PL — Part C: documents + checklists, customer service, vendors, ERP export (migration 016) | Done |
 | Enquiry flow — one Job No. from enquiry; rate requests to several vendors with lowest-price warning (migration 017) | Done |
+| Part D — Email button with ready-written drafts (vendors, quotations, shipment updates, case replies) | Done |
+| Part E — Commercials Department: divisions, Salesman ↔ Coordinator, three numbers, rates, approvals, booking, pre-alert, handover (migration 018) | Done |
 | Freight + 3PL — remaining phases: see `docs/FREIGHT_3PL_PLAN.md` | Planned |
 | 7 Email notifications · 8 Saved views, column prefs, live ops table, performance | Planned |

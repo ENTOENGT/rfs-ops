@@ -16,7 +16,7 @@ export default function NewJobFile() {
   const [err, setErr] = useState<{ m: string; id?: string } | null>(null);
   const [busy, setBusy] = useState(false);
   if (!can('jobfiles.create')) return <div className="page"><div className="msg err">You can't create Job Files.</div></div>;
-  const containersNeeded = f.mode === 'sea_fcl';
+  const containersNeeded = f.mode === 'sea_fcl' && f.status !== 'enquiry';
   const save = async () => {
     setErr(null); setFe({}); setBusy(true);
     try {
@@ -31,12 +31,13 @@ export default function NewJobFile() {
   };
   return (
     <div className="page">
-      <div className="page-head"><h1>New Job File</h1></div>
+      <div className="page-head"><h1>{f.status === 'enquiry' ? 'New enquiry' : 'New Job File'}</h1></div>
       {err && <div className="msg err">{err.m} {err.id && <Link href={`/job-files/${err.id}`}>Open it</Link>}</div>}
       <div className="panel"><h2>What is it?</h2><div style={{ display: 'flex', gap: 22, flexWrap: 'wrap' }}>
-        {[['enquiry', 'Customer enquiry — ask vendors for rates and quote first'], ['open', 'Confirmed shipment — no quotation needed']].map(([v, t]) =>
+        {[['enquiry', 'Customer enquiry — rates, quotation and booking first'], ['open', 'Operational job — Job No. from the ERP already given, no quotation needed']].map(([v, t]) =>
           <label key={v} className="check"><input type="radio" name="jf_kind" checked={f.status === v} onChange={() => setF({ ...f, status: v })} /> {t}</label>)}</div>
-        {f.status === 'enquiry' && <p className="muted small" style={{ marginBottom: 0 }}>The Job No. is kept from now to the end: vendor rates, quotation, and — when the customer accepts — the shipment itself.</p>}</div>
+        {f.status === 'enquiry' && <p className="muted small" style={{ marginBottom: 0 }}>The system gives it an Enquiry Ref now. The Shipping Ref comes when the customer confirms,
+          and the Job No. from the ERP when the pre-alert is verified and the job is handed over to Operations — all on this one record.</p>}</div>
       <JobFileFields f={f} setF={(v) => { setF(v); setFe({}); }} fe={fe} isNew />
       {containersNeeded && <div className="panel"><h2>Containers</h2>
         <p className="muted small" style={{ marginTop: 0 }}>Optional now — they can be added later on the Job File.</p>

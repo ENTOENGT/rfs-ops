@@ -72,6 +72,49 @@ async function activeSuperAdmins(excluding: string) {
     where r.code = 'super_admin' and u.is_active and u.deleted_at is null and u.id <> $1`, [excluding]))!.n);
 }
 
+// ---------------------------------------------------------------- Commercials: division + Salesman → Coordinator
+export const DIVISIONS: [string, string][] = [['imports', 'Imports'], ['exports', 'Exports'], ['cross_trade', 'Cross Trade']];
+const NEEDS_DIVISION = ['sales', 'coordinator'];
+
+/**
+ * Division (Imports / Exports / Cross Trade) and, for a Salesman, the dedicated Coordinator.
+ * Every change is kept in user_assignments with who, when and why.
+ */
+async function setCommercialFields(c: any, actor: Actor, userId: string, cur: any, b: any, roleCode: string) {
+  const div = b.division !== undefined ? (b.division || null) : (cur?.division ?? null);
+  if (div !== null && !DIVISIONS.some(([d]) => d === div)) throw bad('Choose the division: Imports, Exports or Cross Trade');
+  if (!div && NEEDS_DIVISION.includes(roleCode)) throw bad('Choose the division (Imports, Exports or Cross Trade)');
+  let coord = b.coordinator_id !== undefined ? (b.coordinator_id || null) : (cur?.coordinator_id ?? null);
+  if (roleCode !== 'sales') coord = null;                       // only Salesmen have a dedicated Coordinator
+  if (coord) {
+    if (!UUID.test(coord) || coord === userId) throw bad('Choose the Coordinator');
+    const k = await one(`select u.id from users u join roles r on r.id = u.role_id where u.id = $1 and r.code = 'coordinator' and u.is_active and u.deleted_at is null`, [coord], c);
+    if (!k) throw bad('The Coordinator must be an active user with the Coordinator role');
+  }
+  const reason = String(b.assignment_reason ?? '').trim().slice(0, 500) || null;
+  const name = async (id: string | null) => id ? (await one('select full_name from users where id = $1', [id], c))?.full_name ?? null : null;
+  const label = (d: string | null) => DIVISIONS.find(([x]) => x === d)?.[1] ?? null;
+  if (div !== (cur?.division ?? null)) {
+    await c.query('update users set division = $2 where id = $1', [userId, div]);
+    await c.query(`insert into user_assignments (user_id, field, old_value, new_value, old_label, new_label, reason, changed_by, changed_by_name)
+      values ($1,'division',$2,$3,$4,$5,$6,$7,$8)`, [userId, cur?.division ?? null, div, label(cur?.division ?? null), label(div), reason, actor.id, actor.full_name]);
+  }
+  if (coord !== (cur?.coordinator_id ?? null)) {
+    if (cur && cur.coordinator_id && !reason && b.coordinator_id !== undefined && roleCode === 'sales')
+      throw bad('Give a reason for changing the Coordinator');
+    await c.query('update users set coordinator_id = $2 where id = $1', [userId, coord]);
+    await c.query(`insert into user_assignments (user_id, field, old_value, new_value, old_label, new_label, reason, changed_by, changed_by_name)
+      values ($1,'coordinator',$2,$3,$4,$5,$6,$7,$8)`, [userId, cur?.coordinator_id ?? null, coord, await name(cur?.coordinator_id ?? null), await name(coord), reason, actor.id, actor.full_name]);
+  }
+}
+
+/** History of a user's division and Coordinator changes. */
+export async function userAssignments(actor: Actor, id: string) {
+  const scope = userScope(actor);
+  if (!scope.all) await editableUser(actor, scope, id);
+  return q(`select field, old_label, new_label, reason, changed_by_name, at from user_assignments where user_id = $1 order by at desc, id desc`, [id]);
+}
+
 // ---------------------------------------------------------------- users
 export async function listUsers(actor: Actor) {
   const scope = userScope(actor);
@@ -79,6 +122,9 @@ export async function listUsers(actor: Actor) {
   let where = 'where u.deleted_at is null';
   if (!scope.all) { params.push(scope.deptId); where += ' and u.department_id = $1'; }
   const users = await q(`select u.id, u.full_name, u.email, u.mobile, u.is_active, u.must_change_password, u.last_login_at, u.created_at,
+      u.division, u.coordinator_id, (select k.full_name from users k where k.id = u.coordinator_id) coordinator_name,
+      (select count(*)::int from users s where s.coordinator_id = u.id and s.deleted_at is null and s.is_active) salesmen_count,
+      d.is_active department_active,
       r.id role_id, r.code role_code, r.name role_name, r.is_manager, r.app_only, d.id department_id, d.name department_name, d.side department_side
     from users u join roles r on r.id = u.role_id left join departments d on d.id = u.department_id
     ${where} order by d.name nulls first, r.is_manager desc, u.full_name`, params);
@@ -97,6 +143,9 @@ export async function listUsers(actor: Actor) {
     departments: scope.all ? await q('select id, name, side from departments where is_active order by side, name')
       : [{ id: scope.deptId, name: scope.deptName, side: scope.side }],
     permissions: perms,
+    divisions: DIVISIONS,
+    coordinators: await q(`select u.id, u.full_name, u.division from users u join roles r on r.id = u.role_id
+      where r.code = 'coordinator' and u.is_active and u.deleted_at is null order by u.full_name`),
   };
 }
 
@@ -123,6 +172,7 @@ export async function createUser(actor: Actor, b: any) {
     const u = await one(`insert into users (full_name, email, mobile, password_hash, role_id, department_id, must_change_password)
         values ($1,$2,$3,$4,$5,$6,true) returning id`,
       [name, email, b.mobile || null, await hashPassword(password), role.id, dept?.id ?? (b.department_id || null)], c);
+    await setCommercialFields(c, actor, u.id, null, b, role.code);
     await audit(c, actor, { entity_type: 'user', entity_id: u.id, action: 'User created',
       new_value: `${name} <${email}>, ${role.name}${dept ? ', ' + dept.name : ''}`, sensitivity: 'admin' });
     return { id: u.id, temporary_password: password };          // shown once, never logged
@@ -174,6 +224,10 @@ export async function updateUser(actor: Actor, id: string, b: any) {
     }
     for (const [field, , val] of changes)
       await c.query(`update users set ${field} = $2, updated_at = now() where id = $1`, [id, val]);
+    if (b.division !== undefined || b.coordinator_id !== undefined || newRole !== cur.role_id) {
+      const rc = (await one('select code from roles where id = $1', [newRole], c)).code;
+      await setCommercialFields(c, actor, id, cur, b, rc);
+    }
 
     if (Array.isArray(b.overrides)) {
       // A manager only touches the permissions they can hand out; anything else stays as it was.

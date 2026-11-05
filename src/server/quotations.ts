@@ -29,8 +29,13 @@ function qScope(actor: Actor, params: unknown[], alias = 'x'): string {
   if (actor.has('jobfiles.view_all') || actor.isSuperAdmin) return '';
   params.push(actor.id);
   const me = `$${params.length}`;
-  if (actor.department_id) { params.push(actor.department_id); return ` and (${alias}.department_id = $${params.length} or ${alias}.created_by = ${me})`; }
-  return ` and ${alias}.created_by = ${me}`;
+  const c = [`${alias}.created_by = ${me}`];
+  // Part E: Salesman / Coordinator see the quotations of their shipments (not the whole department)
+  const own = actor.has('jobfiles.view_assigned') && !actor.has('jobfiles.view_department');
+  if (actor.department_id && !own) { params.push(actor.department_id); c.push(`${alias}.department_id = $${params.length}`); }
+  if (actor.has('jobfiles.view_assigned'))
+    c.push(`${alias}.salesman_id = ${me}`, `exists (select 1 from job_files jf where jf.id = ${alias}.job_file_id and (jf.salesman_id = ${me} or jf.coordinator_id = ${me}))`);
+  return ` and (${c.join(' or ')})`;
 }
 async function load(actor: Actor, id: string, db?: Db, lock = false) {
   if (!canSeeQuotes(actor)) throw forbidden();
@@ -89,6 +94,8 @@ function present(actor: Actor, x: any, lines: any[]) {
   const status = expired ? 'expired' : x.status;
   return {
     ...x, search_text: undefined, status, status_name: qStatusName(status), status_color: qStatusColor(status),
+    // a loss quotation (selling below cost) is shown in red — only to people who see the margin
+    loss: profitView || (buyingView && sellingView) ? Number(t.margin) < 0 : undefined,
     service_name: label(SERVICE_TYPES, x.service_type), direction_name: label(DIRECTIONS, x.direction),
     lines: lines.map((l, i) => ({
       id: l.id, description: l.description, charge_unit: l.charge_unit, unit_name: label(CHARGE_UNITS, l.charge_unit), quantity: l.quantity,
@@ -137,11 +144,16 @@ export async function listQuotations(actor: Actor, p: Record<string, string>) {
   if (p.customer_id) { if (!isUuid(p.customer_id)) throw bad('Invalid filter'); w += ` and x.customer_id = ${add(p.customer_id)}`; }
   if (p.status === 'expired') w += ` and x.status in ('approved','sent') and x.valid_until < ${add(today())}`;
   else if (p.status === 'open') w += ` and x.status in ('draft','pending_approval','approved','sent')`;
-  else if (p.status) w += ` and x.status = ${add(p.status)}`;
+  else if (p.status && !['confirmed', 'closed_out'].includes(p.status)) w += ` and x.status = ${add(p.status)}`;
   if (p.service_type) w += ` and x.service_type = ${add(p.service_type)}`;
+  if (p.my_approval === '1') w += ` and x.status = 'pending_approval' and x.salesman_decision is null and x.salesman_id = ${add(actor.id)}`;
+  if (p.job_file_id) { if (!isUuid(p.job_file_id)) throw bad('Invalid filter'); w += ` and x.job_file_id = ${add(p.job_file_id)}`; }
+  if (p.status === 'confirmed') w += ` and x.status = 'accepted'`;
+  if (p.status === 'closed_out') w += ` and (x.status in ('rejected','cancelled') or (x.status in ('approved','sent') and x.valid_until < ${add(today())}))`;
   const size = Math.min(Math.max(Number(p.page_size) || 50, 1), 200), page = Math.max(Number(p.page) || 1, 1);
-  const rows = await q(`select x.*, c.name customer_name, u.full_name created_by_name, f.job_no, count(*) over() _total
+  const rows = await q(`select x.*, c.name customer_name, u.full_name created_by_name, f.job_no, f.enquiry_ref, f.shipping_ref, sm.full_name salesman_name, count(*) over() _total
     from quotations x join customers c on c.id = x.customer_id join users u on u.id = x.created_by left join job_files f on f.id = x.job_file_id
+    left join users sm on sm.id = x.salesman_id
     ${w} order by x.created_at desc limit ${size} offset ${(page - 1) * size}`, params);
   const lines = rows.length ? await q('select * from quotation_lines where quotation_id = any($1) order by sort_order', [rows.map((r) => r.id)]) : [];
   return { total: Number(rows[0]?._total ?? 0), page, page_size: size,
@@ -152,9 +164,11 @@ export async function listQuotations(actor: Actor, p: Record<string, string>) {
 export async function getQuotation(actor: Actor, id: string) {
   const x = await load(actor, id);
   const [extra, lines, events] = await Promise.all([
-    one(`select c.name customer_name, u.full_name created_by_name, a.full_name approved_by_name, dep.name department_name, f.job_no
+    one(`select c.name customer_name, u.full_name created_by_name, a.full_name approved_by_name, dep.name department_name, f.job_no, f.enquiry_ref, f.shipping_ref, f.stage file_stage,
+       sm.full_name salesman_name, sd.full_name salesman_decided_by_name
        from quotations x join customers c on c.id = x.customer_id join users u on u.id = x.created_by left join users a on a.id = x.approved_by
-       left join departments dep on dep.id = x.department_id left join job_files f on f.id = x.job_file_id where x.id = $1`, [id]),
+       left join departments dep on dep.id = x.department_id left join job_files f on f.id = x.job_file_id
+       left join users sm on sm.id = x.salesman_id left join users sd on sd.id = x.salesman_decided_by where x.id = $1`, [id]),
     q('select * from quotation_lines where quotation_id = $1 order by sort_order', [id]),
     q('select title, details, user_name, at from quotation_events where quotation_id = $1 order by at, id', [id]),
   ]);
@@ -163,9 +177,18 @@ export async function getQuotation(actor: Actor, id: string) {
   const vendorRates = x.job_file_id && actor.fin.buyingView ? await vendorRatesFor(x.job_file_id) : [];
   const editable = ['draft', 'pending_approval', 'approved'].includes(x.status) && actor.has('quotes.create');
   const rateWarnings = actor.fin.buyingView ? await cheaperWarnings(lines) : [];
-  return { ...v, events, min_margin_pct: minMargin, vendor_rates: vendorRates, rate_warnings: rateWarnings,
+  const versions = await q('select version_no, reason, made_by_name, at from quotation_versions where quotation_id = $1 order by version_no desc, id desc', [id]);
+  const responses = await q('select version_no, response, note, document_id, user_name, at from quotation_responses where quotation_id = $1 order by at desc, id desc', [id]);
+  const pending = x.status === 'pending_approval';
+  const salesmanTurn = pending && !!x.salesman_id && !x.salesman_decision;
+  return { ...v, events, versions, responses, min_margin_pct: minMargin, vendor_rates: vendorRates, rate_warnings: rateWarnings,
+    approvals: { salesman: x.salesman_id ? (x.salesman_decision ?? (pending ? 'waiting' : null)) : null,
+      manager: x.needs_manager ? (x.approved_by && pending ? 'approved' : pending ? 'waiting' : null) : null },
     can: { edit: editable, submit: x.status === 'draft' && actor.has('quotes.create'),
-      approve: x.status === 'pending_approval' && actor.has('quotes.approve'),
+      salesman_approve: salesmanTurn && actor.has('quotes.salesman_approve') && (x.salesman_id === actor.id || actor.has('commercial.manage') || actor.isSuperAdmin),
+      approve: pending && actor.has('quotes.approve') && (x.needs_manager || !x.salesman_id) && !(x.needs_manager && x.approved_by),
+      revise: ['approved', 'sent'].includes(x.status) && actor.has('quotes.create'),
+      respond: ['sent', 'approved'].includes(x.status) && actor.has('quotes.create'),
       send: x.status === 'approved' && v.status !== 'expired' && actor.has('quotes.create'),
       accept: ['approved', 'sent'].includes(x.status) && v.status !== 'expired' && actor.has('quotes.create') && (!!x.job_file_id || actor.has('jobfiles.create')),
       decline: ['approved', 'sent'].includes(x.status) && actor.has('quotes.create'),
@@ -255,20 +278,28 @@ export async function createQuotation(actor: Actor, b: any) {
   if (!lines) throw bad('Add at least one charge line');
   return tx(async (c) => {
     if (!(await one('select 1 from customers where id = $1 and deleted_at is null', [vals.customer_id], c))) throw bad('Customer not found');
+    const cm = await import('./commercial');
+    await cm.assertCustomerAllowed(actor, vals.customer_id as string, c);
     let dept = actor.department_side === 'operations' ? actor.department_id : null;
+    vals.salesman_id = actor.role_code === 'sales' ? actor.id : null;
     // A quotation belongs to the Job No. of the enquiry (migration 017)
     if (b.job_file_id || b.job_no) {
       const { loadFile } = await import('./jobfiles');
       let fid = b.job_file_id;
       if (!fid) {
-        const f = await one(`select id from job_files where upper(btrim(job_no)) = upper(btrim($1)) and deleted_at is null and status <> 'cancelled'`, [b.job_no], c);
-        if (!f) throw bad(`No Job File with Job No. ${String(b.job_no).trim()}`);
+        const f = await one(`select id from job_files where (upper(btrim(job_no)) = upper(btrim($1)) or upper(enquiry_ref) = upper(btrim($1)))
+          and deleted_at is null and status <> 'cancelled'`, [b.job_no], c);
+        if (!f) throw bad(`No shipment with Job No. / Enquiry Ref ${String(b.job_no).trim()}`);
         fid = f.id;
       }
       const f = await loadFile(actor, fid, c);
-      if (['closed', 'cancelled'].includes(f.status)) throw bad(`Job File ${f.job_no} is ${f.status}`);
-      if (f.customer_id !== vals.customer_id) throw bad(`Job File ${f.job_no} is for another customer`);
+      const ref = f.job_no ?? f.enquiry_ref;
+      if (['closed', 'cancelled'].includes(f.status)) throw bad(`Shipment ${ref} is ${f.status}`);
+      if (f.customer_id !== vals.customer_id) throw bad(`Shipment ${ref} is for another customer`);
+      if (f.stage && !['enquiry', 'rates_requested', 'rates_received', 'quotation_draft', 'pending_approval', 'sent_to_customer', 'handed_over'].includes(f.stage))
+        throw new ApiError(409, 'STAGE', `The customer has already confirmed ${ref}. Revise the accepted quotation instead.`);
       vals.job_file_id = f.id;
+      vals.salesman_id = f.salesman_id ?? vals.salesman_id;
       dept = f.department_id ?? dept;
       await validateVendorLines(c, f.id, lines);
     } else if (lines.some((l) => l.vendor_request_id)) throw bad('Vendor rates can only be used on a quotation for their own Job No.');
@@ -283,6 +314,7 @@ export async function createQuotation(actor: Actor, b: any) {
     if (vals.job_file_id) {
       const { event } = await import('./jobfiles');
       await event(c, actor, vals.job_file_id as string, { kind: 'link', title: `Quotation ${x.quote_no} prepared` });
+      await cm.setStage(c, actor, vals.job_file_id as string, 'quotation_draft', { back: true });
     }
     const warnings = await cheaperWarnings(lines, c);
     for (const w of warnings) await evt(c, actor, x.id, 'Dearer vendor rate used', w);
@@ -314,7 +346,9 @@ export async function updateQuotation(actor: Actor, id: string, b: any) {
     }
     // a changed quotation must be checked again before it goes out
     if (x.status !== 'draft') {
-      await c.query(`update quotations set status = 'draft', approved_by = null, approved_at = null where id = $1`, [id]);
+      await c.query(`update quotations set status = 'draft', approved_by = null, approved_at = null, salesman_decision = null, salesman_decided_by = null,
+        salesman_decided_at = null, needs_manager = false where id = $1`, [id]);
+      if (x.job_file_id) { const { setStage } = await import('./commercial'); await setStage(c, actor, x.job_file_id, 'quotation_draft', { back: true }); }
       await evt(c, actor, id, 'Changed — back to draft', 'Send it for approval again before it goes to the customer');
     } else await evt(c, actor, id, 'Quotation changed');
     await refreshSearch(c, id);
@@ -330,6 +364,17 @@ async function notifyApprovers(db: Db, actor: Actor, x: any) {
   for (const u of users)
     await db.query('insert into notifications (user_id, type, title, quotation_id) values ($1,$2,$3,$4)',
       [u.id, 'quote.approval', `Quotation ${x.quote_no} needs approval`, x.id]);
+}
+
+/** Keep the quotation as it stands (header, lines, totals) — at approval, revision and customer confirmation. */
+async function snapshot(db: Db, actor: Actor, x: any, reason: string) {
+  const lines = await q('select description, charge_unit, quantity, cost_rate, sell_rate, margin_type, margin_value, vendor_request_id from quotation_lines where quotation_id = $1 order by sort_order', [x.id], db);
+  const head = Object.fromEntries(Object.keys(HEAD).map((k) => [k, x[k]]));
+  await db.query(`insert into quotation_versions (quotation_id, version_no, reason, snapshot, made_by, made_by_name) values ($1,$2,$3,$4,$5,$6)`,
+    [x.id, x.version_no ?? 1, reason, JSON.stringify({ ...head, quote_no: x.quote_no, currency: x.currency, lines, totals: quoteTotals(lines) }), actor.id, actor.full_name]);
+}
+async function notify(db: Db, userId: string | null, type: string, title: string, quotationId: string) {
+  if (userId) await db.query('insert into notifications (user_id, type, title, quotation_id) values ($1,$2,$3,$4)', [userId, type, title, quotationId]);
 }
 
 export async function quotationAction(actor: Actor, id: string, b: any) {
@@ -351,52 +396,146 @@ export async function quotationAction(actor: Actor, id: string, b: any) {
         if (Number(t.sell_total) <= 0) throw bad('Enter the selling rates first');
         const min = Number(await getSetting('quote_min_margin_pct', 10));
         const low = t.margin_pct === null || Number(t.margin_pct) < min;
-        if (low && !actor.has('quotes.approve')) {
-          await set('pending_approval');
-          await evt(c, actor, id, 'Sent for approval', `Margin is below the ${min}% minimum`);
-          await notifyApprovers(c, actor, x);
+        const lossNote = Number(t.margin) < 0 ? ' — LOSS: selling is below cost' : '';
+        // Part E: a quotation prepared by someone else goes to the responsible Salesman; a low margin also to a manager
+        const needSalesman = !!x.salesman_id && x.salesman_id !== actor.id;
+        const needManager = low && !actor.has('quotes.approve');
+        if (needSalesman || needManager) {
+          await set('pending_approval', `, needs_manager = $3, salesman_decision = $4, salesman_decided_by = $5, salesman_decided_at = $6,
+            approved_by = null, approved_at = null`, [needManager, needSalesman ? null : x.salesman_id ? 'approved' : null,
+            needSalesman || !x.salesman_id ? null : actor.id, needSalesman || !x.salesman_id ? null : new Date()]);
+          await evt(c, actor, id, 'Sent for approval', [needSalesman && 'to the Salesman', needManager && `to a manager (margin below the ${min}% minimum)`].filter(Boolean).join(' and ') + lossNote);
+          if (needSalesman) await notify(c, x.salesman_id, 'quote.approval', `Quotation ${x.quote_no} needs your approval${lossNote ? ' (LOSS)' : ''}`, id);
+          if (needManager) await notifyApprovers(c, actor, x);
+          if (x.job_file_id) { const { setStage } = await import('./commercial'); await setStage(c, actor, x.job_file_id, 'pending_approval'); }
         } else {
           await set('approved', ', approved_by = $3, approved_at = now()', [actor.id]);
-          await evt(c, actor, id, low ? 'Approved (by an approver, below the minimum margin)' : 'Approved — margin meets the minimum');
+          await evt(c, actor, id, low ? 'Approved (by an approver, below the minimum margin)' + lossNote : 'Approved — margin meets the minimum');
+          await snapshot(c, actor, { ...x, status: 'approved' }, 'approved');
+        }
+        break;
+      }
+      case 'salesman_approve': case 'salesman_reject': case 'salesman_return': {
+        from('pending_approval');
+        if (!x.salesman_id || x.salesman_decision) throw new ApiError(409, 'QUOTE_STATE', 'The Salesman has already decided');
+        const onBehalf = x.salesman_id !== actor.id;
+        if (!actor.has('quotes.salesman_approve') || (onBehalf && !actor.has('commercial.manage') && !actor.isSuperAdmin))
+          throw forbidden('Only the responsible Salesman (or the Commercials Manager) can decide');
+        const by = onBehalf ? ' (on behalf of the Salesman)' : '';
+        const reason = txt(b.reason, 500);
+        if (action !== 'salesman_approve' && !reason) throw bad(action === 'salesman_reject' ? 'Say why it is rejected' : 'Say what has to change');
+        const decision = action === 'salesman_approve' ? 'approved' : action === 'salesman_reject' ? 'rejected' : 'returned';
+        await c.query('update quotations set salesman_decision = $2, salesman_decided_by = $3, salesman_decided_at = now(), salesman_note = $4 where id = $1', [id, decision, actor.id, reason]);
+        const { setStage } = await import('./commercial');
+        if (decision === 'approved') {
+          if (!x.needs_manager || x.approved_by) {
+            await set('approved', x.approved_by ? '' : ', approved_by = $3, approved_at = now()', x.approved_by ? [] : [actor.id]);
+            await evt(c, actor, id, 'Approved by the Salesman' + by, reason);
+            await snapshot(c, actor, x, 'approved');
+            await notify(c, x.created_by, 'quote.approved', `Quotation ${x.quote_no} approved — send it to the customer`, id);
+            if (x.job_file_id) await setStage(c, actor, x.job_file_id, 'quotation_draft', { back: true });
+          } else await evt(c, actor, id, 'Approved by the Salesman' + by + ' — waiting for a manager (low margin)', reason);
+        } else if (decision === 'returned') {
+          await set('draft', ', decline_reason = $3, approved_by = null, approved_at = null', [reason]);
+          await evt(c, actor, id, 'Returned for revision by the Salesman' + by, reason);
+          await notify(c, x.created_by, 'quote.returned', `Quotation ${x.quote_no} returned for revision`, id);
+          if (x.job_file_id) await setStage(c, actor, x.job_file_id, 'quotation_draft', { back: true });
+        } else {
+          await set('cancelled', ', decline_reason = $3', [`Rejected by the Salesman: ${reason}`]);
+          await evt(c, actor, id, 'Rejected by the Salesman' + by, reason);
+          await notify(c, x.created_by, 'quote.rejected', `Quotation ${x.quote_no} was rejected by the Salesman`, id);
+          if (x.job_file_id) await setStage(c, actor, x.job_file_id, 'rates_received', { back: true });
         }
         break;
       }
       case 'approve': need('quotes.approve'); from('pending_approval');
+        if (x.salesman_id && !x.salesman_decision) {
+          // manager approved the margin; the Salesman still has to approve
+          if (!x.needs_manager) throw new ApiError(409, 'QUOTE_STATE', 'This quotation waits for the Salesman, not a manager');
+          await c.query('update quotations set approved_by = $2, approved_at = now() where id = $1', [id, actor.id]);
+          await evt(c, actor, id, 'Approved by a manager (low margin) — waiting for the Salesman');
+          break;
+        }
         await set('approved', ', approved_by = $3, approved_at = now(), decline_reason = null', [actor.id]);
         await evt(c, actor, id, 'Approved');
+        await snapshot(c, actor, x, 'approved');
         await c.query('insert into notifications (user_id, type, title, quotation_id) values ($1,$2,$3,$4)', [x.created_by, 'quote.approved', `Quotation ${x.quote_no} approved`, id]);
+        if (x.job_file_id) { const { setStage } = await import('./commercial'); await setStage(c, actor, x.job_file_id, 'quotation_draft', { back: true }); }
         break;
       case 'reject_approval': {
         need('quotes.approve'); from('pending_approval');
         const reason = txt(b.reason, 500); if (!reason) throw bad('Say why it is not approved');
-        await set('draft', ', decline_reason = $3', [reason]);
+        await set('draft', ', decline_reason = $3, salesman_decision = null, salesman_decided_by = null, salesman_decided_at = null, approved_by = null, approved_at = null', [reason]);
         await evt(c, actor, id, 'Not approved — back to draft', reason);
+        if (x.job_file_id) { const { setStage } = await import('./commercial'); await setStage(c, actor, x.job_file_id, 'quotation_draft', { back: true }); }
         await c.query('insert into notifications (user_id, type, title, quotation_id) values ($1,$2,$3,$4)', [x.created_by, 'quote.rejected', `Quotation ${x.quote_no} was not approved`, id]);
         break;
       }
       case 'send': need('quotes.create'); from('approved');
         if (expired) throw new ApiError(409, 'QUOTE_EXPIRED', 'The rates have expired. Change the validity date and approve again.');
-        await set('sent', ', sent_at = now()'); await evt(c, actor, id, 'Marked as sent to the customer', txt(b.note, 300)); break;
+        await set('sent', ', sent_at = now()'); await evt(c, actor, id, 'Marked as sent to the customer', txt(b.note, 300));
+        if (x.job_file_id) { const { setStage } = await import('./commercial'); await setStage(c, actor, x.job_file_id, 'sent_to_customer', { back: true }); }
+        break;
+      case 'revise': {
+        // the customer asked for changes (or rates moved): keep this version, open the next one as a draft
+        need('quotes.create'); from('approved', 'sent');
+        const reason = txt(b.reason, 500); if (!reason) throw bad('Say why the quotation is revised');
+        await snapshot(c, actor, x, 'revised');
+        if (b.customer_asked) await c.query(`insert into quotation_responses (quotation_id, version_no, response, note, user_id, user_name) values ($1,$2,'revision_requested',$3,$4,$5)`,
+          [id, x.version_no, reason, actor.id, actor.full_name]);
+        await set('draft', `, version_no = version_no + 1, approved_by = null, approved_at = null, salesman_decision = null, salesman_decided_by = null,
+          salesman_decided_at = null, needs_manager = false, sent_at = null`);
+        await evt(c, actor, id, `Revised — version ${x.version_no + 1} opened`, reason);
+        if (x.job_file_id) { const { setStage } = await import('./commercial'); await setStage(c, actor, x.job_file_id, 'quotation_draft', { back: true }); }
+        break;
+      }
+      case 'response': {
+        // what the customer said (no change of status): a note, no reply yet, asked for changes
+        need('quotes.create'); from('approved', 'sent');
+        const response = String(b.response ?? '');
+        if (!['note', 'no_reply', 'revision_requested'].includes(response)) throw bad('Choose what the customer said');
+        const note = txt(b.note, 1000); if (!note && response !== 'no_reply') throw bad('Write what the customer said');
+        if (b.document_id && !(isUuid(b.document_id) && x.job_file_id && await one('select 1 from jf_documents where id = $1 and job_file_id = $2 and deleted_at is null', [b.document_id, x.job_file_id], c)))
+          throw bad('Upload the customer\'s email to the shipment first');
+        await c.query(`insert into quotation_responses (quotation_id, version_no, response, note, document_id, user_id, user_name) values ($1,$2,$3,$4,$5,$6,$7)`,
+          [id, x.version_no, response, note, b.document_id || null, actor.id, actor.full_name]);
+        await evt(c, actor, id, 'Customer response recorded', [response === 'no_reply' ? 'No reply yet' : response === 'revision_requested' ? 'Asked for changes' : 'Note', note].filter(Boolean).join(': '));
+        break;
+      }
       case 'accept': {
         need('quotes.create'); from('approved', 'sent');
         if (expired) throw new ApiError(409, 'QUOTE_EXPIRED', 'The rates have expired. Change the validity date and approve again.');
         if (x.job_file_id) {
-          // The enquiry's own Job File goes live — same Job No. from enquiry to closing (migration 017)
-          const f = await one('select id, job_no, status from job_files where id = $1 for update', [x.job_file_id], c);
-          if (['closed', 'cancelled'].includes(f.status)) throw new ApiError(409, 'QUOTE_STATE', `Job File ${f.job_no} is ${f.status}`);
+          // Part E: the customer confirms → Shipping Ref is made, the approved version is kept, the shipment moves to booking.
+          // It goes live (Job No. from the ERP) only after the pre-alert is verified.
+          const f = await one('select id, job_no, enquiry_ref, shipping_ref, status, stage from job_files where id = $1 for update', [x.job_file_id], c);
+          const ref = f.job_no ?? f.enquiry_ref;
+          if (['closed', 'cancelled'].includes(f.status)) throw new ApiError(409, 'QUOTE_STATE', `Shipment ${ref} is ${f.status}`);
+          const note = txt(b.evidence_note, 1000);
+          if (b.document_id && !(isUuid(b.document_id) && await one('select 1 from jf_documents where id = $1 and job_file_id = $2 and deleted_at is null', [b.document_id, f.id], c)))
+            throw bad('Upload the customer\'s confirmation to the shipment first');
+          if (!b.document_id && (!note || note.length < 10)) throw bad('Attach the customer\'s confirmation (their email), or write how and when they confirmed');
           const { event } = await import('./jobfiles');
-          if (f.status === 'enquiry') await c.query(`update job_files set status = 'open', quotation_id = $2, updated_at = now() where id = $1`, [f.id, id]);
-          else await c.query('update job_files set quotation_id = $2, updated_at = now() where id = $1', [f.id, id]);
-          await event(c, actor, f.id, { kind: 'status', title: `Quotation ${x.quote_no} accepted by the customer`, field: 'Status',
-            old_value: f.status === 'enquiry' ? 'Enquiry / quoting' : null, new_value: f.status === 'enquiry' ? 'Open — shipment confirmed' : null });
+          const { newRef, setStage } = await import('./commercial');
+          const commercial = f.status === 'enquiry';
+          const sr = f.shipping_ref ?? (commercial ? await newRef(c, 'SR') : null);
+          await c.query(`update job_files set quotation_id = $2, shipping_ref = coalesce(shipping_ref, $3), confirmed_at = coalesce(confirmed_at, now()),
+            confirmed_by = coalesce(confirmed_by, $4), updated_at = now() where id = $1`, [f.id, id, sr, actor.id]);
+          await c.query(`insert into quotation_responses (quotation_id, version_no, response, note, document_id, user_id, user_name) values ($1,$2,'accepted',$3,$4,$5,$6)`,
+            [id, x.version_no, note, b.document_id || null, actor.id, actor.full_name]);
+          await snapshot(c, actor, x, 'confirmed by the customer');
+          await event(c, actor, f.id, { kind: 'status', title: `Quotation ${x.quote_no} v${x.version_no} confirmed by the customer`,
+            field: commercial && !f.shipping_ref ? 'Shipping Ref' : undefined, new_value: commercial && !f.shipping_ref ? sr : null,
+            remarks: note ?? (b.document_id ? 'Confirmation attached' : null) });
+          if (commercial) await setStage(c, actor, f.id, 'customer_confirmed');
           // any other open quotation on the same Job No. is no longer needed
           const others = await q(`update quotations set status = 'cancelled', decline_reason = $3, updated_at = now()
             where job_file_id = $1 and id <> $2 and status in ('draft','pending_approval','approved','sent') returning id`,
             [f.id, id, `${x.quote_no} was accepted instead`], c);
           for (const o of others) await evt(c, actor, o.id, 'Cancelled', `${x.quote_no} was accepted instead`);
           await set('accepted', ', accepted_at = now()');
-          await evt(c, actor, id, 'Accepted by the customer', `Job File ${f.job_no} is now open`);
-          created = { id: f.id, job_no: f.job_no };
+          await evt(c, actor, id, 'Confirmed by the customer', commercial ? `Shipping Ref ${sr}` : `Job No. ${f.job_no}`);
+          created = { id: f.id, job_no: f.job_no, shipping_ref: sr } as any;
           break;
         }
         if (!actor.has('jobfiles.create')) throw forbidden('You need permission to create Job Files to accept a quotation');

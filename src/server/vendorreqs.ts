@@ -4,8 +4,11 @@
  * cancelled. The vendor's price is a COST: only people who see buying cost see or enter it. No bills or payables here —
  * a completed request is handed to the ERP through the ERP export.
  */
+import { PoolClient } from 'pg';
 import { Actor } from './auth';
 import { ApiError, bad, Db, forbidden, notFound, one, q, tx } from './db';
+import { toFils, fromFils } from '../lib/finance';
+import { RATE_SOURCES, CHARGE_SECTIONS, rateSourceName } from '../lib/commercialRules';
 
 const UUID = /^[0-9a-f-]{36}$/i;
 const isUuid = (v: unknown): v is string => typeof v === 'string' && UUID.test(v);
@@ -21,6 +24,22 @@ const NEXT: Record<string, string[]> = {
   in_progress: ['completed', 'disputed', 'cancelled'], disputed: ['in_progress', 'completed', 'cancelled'], completed: ['disputed'], cancelled: [],
 };
 export const canSeeVendorRequests = (a: Actor) => a.isSuperAdmin || a.has('vendors.requests') || a.has('vendors.manage');
+/**
+ * Who sees which requests (Part E). Agent Coordinators: the ones assigned to them (and their own). Salesmen and
+ * Coordinators (own-scope roles): their shipments' requests and their own. Everyone else: all, as before.
+ */
+export function vrScope(a: Actor, params: unknown[], alias = 'r'): string {
+  if (a.isSuperAdmin || a.has('vendors.manage') || a.has('jobfiles.view_all')) return '';
+  const agent = a.has('rates.agent_coordination');
+  const own = a.has('jobfiles.view_assigned') && !a.has('jobfiles.view_department');
+  if (!agent && !own) return '';
+  params.push(a.id);
+  const me = `$${params.length}`;
+  const c = [`${alias}.created_by = ${me}`];
+  if (agent) c.push(`${alias}.assigned_to = ${me}`);
+  if (own) c.push(`exists (select 1 from job_files jf where jf.id = ${alias}.job_file_id and (jf.salesman_id = ${me} or jf.coordinator_id = ${me}))`);
+  return ` and (${c.join(' or ')})`;
+}
 const txt = (v: unknown, max = 200) => { const t = String(v ?? '').trim(); if (t.length > max) throw bad(`Value too long (max ${max} characters)`); return t || null; };
 async function evt(db: Db, actor: Actor, id: string, title: string, details?: string | null) {
   await db.query('insert into vendor_request_events (request_id, title, details, user_id, user_name) values ($1,$2,$3,$4,$5)', [id, title, details ?? null, actor.id, actor.full_name]);
@@ -32,8 +51,9 @@ const money = (v: unknown) => {
 };
 /** Leave the cost out for people who don't see buying cost. */
 const present = (a: Actor, r: any) => {
-  const out: any = { ...r, status_name: VR_STATUS[r.status][0], status_color: VR_STATUS[r.status][1], service_name: VR_SERVICES[r.service] };
-  if (!a.fin.buyingView) delete out.quoted_cost;
+  const out: any = { ...r, status_name: VR_STATUS[r.status][0], status_color: VR_STATUS[r.status][1], service_name: VR_SERVICES[r.service],
+    rate_source_name: rateSourceName(r.rate_source) };
+  if (!a.fin.buyingView) { delete out.quoted_cost; delete out.previous_quoted_cost; }
   return out;
 };
 
@@ -41,15 +61,18 @@ export async function listVendorRequests(actor: Actor, p: Record<string, string>
   if (!canSeeVendorRequests(actor)) throw forbidden();
   const params: unknown[] = [];
   const add = (v: unknown) => { params.push(v); return `$${params.length}`; };
-  let w = 'where true';
+  let w = 'where true' + vrScope(actor, params);
+  if (p.mine === 'assigned') w += ` and r.assigned_to = ${add(actor.id)}`;
+  if (p.service) w += ` and r.service = ${add(p.service)}`;
+  if (p.rate_source) w += ` and r.rate_source = ${add(p.rate_source)}`;
   if (p.status === 'open') w += ` and r.status in ('requested','quoted','confirmed','in_progress','disputed')`;
   else if (p.status) w += ` and r.status = ${add(p.status)}`;
   for (const [k, col] of Object.entries({ vendor_id: 'r.vendor_id', job_file_id: 'r.job_file_id' }))
     if (p[k]) { if (!isUuid(p[k])) throw bad('Invalid filter'); w += ` and ${col} = ${add(p[k])}`; }
-  if (p.q?.trim()) { const v = add('%' + p.q.trim().toLowerCase() + '%'); w += ` and (lower(r.request_no) like ${v} or lower(r.description) like ${v} or lower(v.name) like ${v} or lower(coalesce(f.job_no,'')) like ${v} or lower(coalesce(r.vendor_reference,'')) like ${v})`; }
-  const rows = await q(`select r.*, v.name vendor_name, v.vendor_type, f.job_no,
+  if (p.q?.trim()) { const v = add('%' + p.q.trim().toLowerCase() + '%'); w += ` and (lower(r.request_no) like ${v} or lower(r.description) like ${v} or lower(v.name) like ${v} or lower(coalesce(f.job_no,'')) like ${v} or lower(coalesce(f.enquiry_ref,'')) like ${v} or lower(coalesce(r.vendor_reference,'')) like ${v})`; }
+  const rows = await q(`select r.*, v.name vendor_name, v.vendor_type, f.job_no, f.enquiry_ref, f.shipping_ref, au.full_name assigned_to_name,
       (r.status in ('requested','quoted','confirmed','in_progress') and r.needed_by < (now() at time zone 'Asia/Dubai')::date) late
-    from vendor_requests r join vendors v on v.id = r.vendor_id left join job_files f on f.id = r.job_file_id ${w}
+    from vendor_requests r join vendors v on v.id = r.vendor_id left join job_files f on f.id = r.job_file_id left join users au on au.id = r.assigned_to ${w}
     order by r.status in ('completed','cancelled'), r.needed_by nulls last, r.created_at desc limit 500`, params);
   return rows.map((r) => present(actor, r));
 }
@@ -57,15 +80,25 @@ export async function listVendorRequests(actor: Actor, p: Record<string, string>
 export async function getVendorRequest(actor: Actor, id: string) {
   if (!canSeeVendorRequests(actor)) throw forbidden();
   if (!isUuid(id)) throw notFound('Request');
+  const sp: unknown[] = [id];
   const r = await one(`select r.*, v.name vendor_name, v.vendor_type, v.contact_person vendor_contact, v.contact_number vendor_phone, v.email vendor_email,
-      f.job_no, u.full_name created_by_name from vendor_requests r join vendors v on v.id = r.vendor_id left join job_files f on f.id = r.job_file_id
-      join users u on u.id = r.created_by where r.id = $1`, [id]);
+      f.job_no, f.enquiry_ref, f.shipping_ref, f.mode file_mode, u.full_name created_by_name, au.full_name assigned_to_name, rr.request_no rate_request_no
+      from vendor_requests r join vendors v on v.id = r.vendor_id left join job_files f on f.id = r.job_file_id
+      join users u on u.id = r.created_by left join users au on au.id = r.assigned_to left join vendor_requests rr on rr.id = r.rate_request_id
+      where r.id = $1${vrScope(actor, sp)}`, sp);
   if (!r) throw notFound('Request');
+  const charges = actor.fin.buyingView ? await q(`select id, section, description, basis, quantity, amount, currency, exchange_rate from vendor_rate_charges
+    where request_id = $1 and rate_version = $2 order by sort_order`, [id, r.rate_version]) : [];
+  const versions = actor.fin.buyingView ? await q('select rate_version, snapshot, replaced_by_name, at from vendor_rate_versions where request_id = $1 order by rate_version desc', [id]) : [];
+  const agentCoordinators = await q(`select u.id, u.full_name from users u join roles r on r.id = u.role_id where r.code = 'agent_coordinator' and u.is_active and u.deleted_at is null order by u.full_name`);
   const events = await q('select title, details, user_name, at from vendor_request_events where request_id = $1 order by at, id', [id]);
   // Same request sent to other vendors: compare (cost viewers only)
   const compare = r.rate_group && actor.fin.buyingView ? await rateGroup(r.rate_group) : null;
   const cheaper = actor.fin.buyingView ? await cheaperRateWarning(id) : null;
-  return { ...present(actor, r), events, compare, cheaper_warning: cheaper, next: NEXT[r.status], can: { update: actor.isSuperAdmin || actor.has('vendors.requests'), cost: actor.fin.buyingView } };
+  const upd = actor.isSuperAdmin || actor.has('vendors.requests');
+  return { ...present(actor, r), events, compare, cheaper_warning: cheaper, next: NEXT[r.status], charges, versions, agent_coordinators: agentCoordinators,
+    can: { update: upd, cost: actor.fin.buyingView, revise: upd && actor.fin.buyingView && ['quoted', 'confirmed'].includes(r.status) && r.service === 'rate',
+      assign: upd && !actor.has('rates.agent_coordination') && ['requested', 'quoted'].includes(r.status) } };
 }
 
 /**
@@ -73,9 +106,9 @@ export async function getVendorRequest(actor: Actor, id: string) {
  * vendor, all in one rate_group, so their prices are compared side by side. `same_as` adds another vendor to an
  * existing group (same Job No., service and description).
  */
-export async function createVendorRequest(actor: Actor, b: any) {
+export async function createVendorRequest(actor: Actor, b: any, client?: PoolClient) {
   if (!actor.isSuperAdmin && !actor.has('vendors.requests')) throw forbidden();
-  return tx(async (c) => {
+  const run = async (c: PoolClient) => {
     let fileId: string | null = null, group: string | null = null;
     if (b.same_as !== undefined) {
       if (!isUuid(b.same_as)) throw bad('Request not found');
@@ -100,25 +133,100 @@ export async function createVendorRequest(actor: Actor, b: any) {
     if (group) {
       const dup = await one('select v.name from vendor_requests r join vendors v on v.id = r.vendor_id where r.rate_group = $1 and r.vendor_id = any($2) and r.status <> \'cancelled\'', [group, vendorIds], c);
       if (dup) throw bad(`${dup.name} has already been asked for this rate`);
+    } else if (b.job_file_id) {
+      const { loadFile } = await import('./jobfiles');
+      fileId = (await loadFile(actor, b.job_file_id, c)).id;
     } else if (b.job_no?.trim()) {
-      const f = await one(`select id from job_files where upper(btrim(job_no)) = upper(btrim($1)) and deleted_at is null and status <> 'cancelled'`, [b.job_no], c);
-      if (!f) throw bad(`No Job File with Job No. ${String(b.job_no).trim()}`);
+      // the Job No., or the Enquiry / Shipping Ref of a shipment that has no Job No. yet
+      const f = await one(`select id from job_files where (upper(btrim(job_no)) = upper(btrim($1)) or upper(enquiry_ref) = upper(btrim($1)) or upper(shipping_ref) = upper(btrim($1)))
+        and deleted_at is null and status <> 'cancelled'`, [b.job_no], c);
+      if (!f) throw bad(`No shipment with Job No. / reference ${String(b.job_no).trim()}`);
       fileId = f.id;
+    }
+    if (b.rate_source && !RATE_SOURCES.some(([k]) => k === b.rate_source)) throw bad('Choose where the rate comes from');
+    let assigned: string | null = null;
+    if (b.assigned_to) {
+      if (!isUuid(b.assigned_to) || !(await one(`select 1 from users u join roles r on r.id = u.role_id where u.id = $1 and r.code = 'agent_coordinator' and u.is_active and u.deleted_at is null`, [b.assigned_to], c)))
+        throw bad('Choose an active Agent Coordinator');
+      assigned = b.assigned_to;
     }
     const cost = vendorIds.length === 1 && b.quoted_cost !== undefined && b.quoted_cost !== '' && actor.fin.buyingView ? money(b.quoted_cost) : null;
     const currency = String((await one(`select value from settings where key = 'currency'`, [], c))?.value ?? 'AED');
     if (!group && vendorIds.length > 1) group = (await one('select gen_random_uuid() id', [], c)).id;
     const made: { id: string; request_no: string }[] = [];
+    const vtypes = await q('select id, vendor_type from vendors where id = any($1)', [vendorIds], c);
     for (const vid of vendorIds) {
-      const r = await one(`insert into vendor_requests (request_no, vendor_id, job_file_id, department_id, service, description, needed_by, quoted_cost, currency, created_by, rate_valid_until, rate_group)
-        values ('VR-' || nextval('vendor_request_no_seq'), $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) returning id, request_no`,
+      // where the rate comes from: chosen, or from the vendor's type (shipping line / airline / agent)
+      const vt = vtypes.find((v) => v.id === vid)?.vendor_type;
+      const source = assigned ? 'agent_coordinator' : b.rate_source || (vt === 'shipping_line' ? 'shipping_line' : vt === 'airline' ? 'airline'
+        : ['freight_agent', 'overseas_agent'].includes(vt) ? 'overseas_agent' : 'other');
+      const r = await one(`insert into vendor_requests (request_no, vendor_id, job_file_id, department_id, service, description, needed_by, quoted_cost, currency, created_by,
+          rate_valid_until, rate_group, rate_source, assigned_to)
+        values ('VR-' || nextval('vendor_request_no_seq'), $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) returning id, request_no`,
         [vid, fileId, actor.department_side === 'operations' ? actor.department_id : null, b.service, description, b.needed_by || null, cost,
-         currency, actor.id, b.rate_valid_until || null, group], c);
-      await evt(c, actor, r.id, 'Request created', VR_SERVICES[b.service] + (group ? ' — sent to several vendors for comparison' : ''));
+         currency, actor.id, b.rate_valid_until || null, group, b.service === 'rate' || b.service === 'booking' ? source : null, assigned], c);
+      await evt(c, actor, r.id, 'Request created', VR_SERVICES[b.service] + (group ? ' — sent to several vendors for comparison' : '')
+        + (assigned ? ' — assigned to the Agent Coordinator' : ''));
+      if (assigned) await c.query('insert into notifications (user_id, type, title) values ($1,$2,$3)', [assigned, 'vr.assigned', `Rate request ${r.request_no} assigned to you`]);
       made.push(r);
     }
+    if (fileId && b.service === 'rate') {
+      const { setStage } = await import('./commercial');
+      await setStage(c, actor, fileId, 'rates_requested');
+      const { event } = await import('./jobfiles');
+      await event(c, actor, fileId, { kind: 'link', title: `Rate request ${made.map((m) => m.request_no).join(', ')} sent`, new_value: assigned ? 'Through the Agent Coordinator' : null });
+    }
     return { id: made[0].id, request_no: made[0].request_no, ids: made.map((m) => m.id), request_nos: made.map((m) => m.request_no), rate_group: group };
+  };
+  return client ? run(client) : tx(run);
+}
+
+/**
+ * Rate detail lines (freight, origin, destination charges). The total, in the request currency, becomes the quoted cost.
+ * Each line: amount × quantity × exchange rate (to the request currency).
+ */
+function parseCharges(raw: unknown) {
+  if (raw === undefined) return null;
+  if (!Array.isArray(raw)) throw bad('Charges must be a list');
+  if (raw.length > 40) throw bad('Up to 40 charge lines');
+  let total = 0;
+  const lines = raw.map((l: any, i) => {
+    const n = `Charge ${i + 1}`;
+    if (!CHARGE_SECTIONS.some(([k]) => k === l?.section)) throw bad(`${n}: choose freight, origin, destination or other`);
+    const description = txt(l.description, 200); if (!description) throw bad(`${n}: describe the charge`);
+    const amount = money(l.amount);
+    const qty = String(l.quantity ?? '1').trim() || '1';
+    if (!/^\d+(\.\d{1,3})?$/.test(qty) || Number(qty) <= 0) throw bad(`${n}: quantity must be more than 0`);
+    const cur = String(l.currency ?? '').trim().toUpperCase() || 'AED';
+    if (!/^[A-Z]{3}$/.test(cur)) throw bad(`${n}: currency is 3 letters, e.g. USD`);
+    const xr = String(l.exchange_rate ?? '1').trim() || '1';
+    if (!/^\d+(\.\d{1,6})?$/.test(xr) || Number(xr) <= 0) throw bad(`${n}: exchange rate must be more than 0`);
+    total += Math.round(Number(qty) * Number(xr) * toFils(amount));
+    return { section: l.section, description, basis: txt(l.basis, 60), quantity: qty, amount, currency: cur, exchange_rate: xr };
   });
+  return { lines, total: fromFils(total) };
+}
+const intOrNull = (v: unknown, lbl: string) => {
+  if (v === undefined || v === null || v === '') return null;
+  const n = Number(v);
+  if (!Number.isInteger(n) || n < 0 || n > 365) throw bad(`${lbl} must be a whole number of days`);
+  return n;
+};
+/** The rate details a vendor (or the Agent Coordinator) gives, as SQL sets. */
+function rateDetailSets(b: any, put: (col: string, v: unknown) => void) {
+  if (b.transit_days !== undefined) put('transit_days', intOrNull(b.transit_days, 'Transit time'));
+  if (b.free_days !== undefined) put('free_days', intOrNull(b.free_days, 'Free days'));
+  for (const [k, max] of [['routing', 300], ['inclusions', 2000], ['exclusions', 2000], ['carrier', 120]] as const)
+    if (b[k] !== undefined) put(k, txt(b[k], max));
+  if (b.etd !== undefined) { if (b.etd && !/^\d{4}-\d{2}-\d{2}$/.test(b.etd)) throw bad('ETD is not a valid date'); put('etd', b.etd || null); }
+  if (b.rate_source !== undefined && b.rate_source) { if (!RATE_SOURCES.some(([k]) => k === b.rate_source)) throw bad('Choose where the rate comes from'); put('rate_source', b.rate_source); }
+  if (b.currency !== undefined && b.currency) { const cur = String(b.currency).trim().toUpperCase(); if (!/^[A-Z]{3}$/.test(cur)) throw bad('Currency is 3 letters'); put('currency', cur); }
+}
+async function saveCharges(c: Db, id: string, version: number, lines: any[]) {
+  await c.query('delete from vendor_rate_charges where request_id = $1 and rate_version = $2', [id, version]);
+  for (const [i, l] of lines.entries())
+    await c.query(`insert into vendor_rate_charges (request_id, rate_version, section, description, basis, quantity, amount, currency, exchange_rate, sort_order)
+      values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`, [id, version, l.section, l.description, l.basis, l.quantity, l.amount, l.currency, l.exchange_rate, i]);
 }
 
 /**
@@ -159,14 +267,61 @@ export async function cheaperRateWarning(requestId: string, db?: Db): Promise<st
 }
 
 /** Status changes and notes. Quote → cost (cost viewers); confirm → vendor's reference; complete → evidence note; dispute / cancel → reason. */
-export async function vendorRequestAction(actor: Actor, id: string, b: any) {
+export async function vendorRequestAction(actor: Actor, id: string, b: any, client?: PoolClient) {
   if (!actor.isSuperAdmin && !actor.has('vendors.requests')) throw forbidden();
-  await tx(async (c) => {
-    const r = await one('select * from vendor_requests where id = $1 for update', [id], c);
+  const run = async (c: PoolClient) => {
+    const sp: unknown[] = [id];
+    const r = await one(`select r.* from vendor_requests r where r.id = $1${vrScope(actor, sp)} for update of r`, sp, c);
     if (!r) throw notFound('Request');
     if (b.what === 'note') {
       const note = txt(b.note, 2000); if (!note) throw bad('Write the note');
       await evt(c, actor, id, 'Note', note); return;
+    }
+    if (b.what === 'assign') {
+      if (actor.has('rates.agent_coordination') && !actor.isSuperAdmin) throw forbidden();
+      if (!['requested', 'quoted'].includes(r.status)) throw new ApiError(409, 'VR_STATE', 'Only an open rate request can be assigned');
+      let to: string | null = null;
+      if (b.assigned_to) {
+        const u = isUuid(b.assigned_to) && await one(`select u.full_name from users u join roles x on x.id = u.role_id where u.id = $1 and x.code = 'agent_coordinator' and u.is_active and u.deleted_at is null`, [b.assigned_to], c);
+        if (!u) throw bad('Choose an active Agent Coordinator');
+        to = b.assigned_to;
+        await c.query(`update vendor_requests set assigned_to = $2, rate_source = 'agent_coordinator', updated_at = now() where id = $1`, [id, to]);
+        await evt(c, actor, id, 'Assigned to the Agent Coordinator', u.full_name);
+        await c.query('insert into notifications (user_id, type, title) values ($1,$2,$3)', [to, 'vr.assigned', `Rate request ${r.request_no} assigned to you`]);
+      } else {
+        await c.query('update vendor_requests set assigned_to = null, updated_at = now() where id = $1', [id]);
+        await evt(c, actor, id, 'Agent Coordinator removed', txt(b.note, 300));
+      }
+      return;
+    }
+    if (b.what === 'revise_rate') {
+      // the vendor revised the rate: the old version is kept, the new one replaces it
+      if (!actor.fin.buyingView) throw forbidden();
+      if (r.service !== 'rate' || !['quoted', 'confirmed'].includes(r.status)) throw new ApiError(409, 'VR_STATE', 'Only a quoted rate can be revised');
+      const reason = txt(b.note, 500); if (!reason) throw bad('Say why the rate changed');
+      const old = await q('select section, description, basis, quantity, amount, currency, exchange_rate from vendor_rate_charges where request_id = $1 and rate_version = $2 order by sort_order', [id, r.rate_version], c);
+      await c.query(`insert into vendor_rate_versions (request_id, rate_version, snapshot, replaced_by, replaced_by_name) values ($1,$2,$3,$4,$5)`,
+        [id, r.rate_version, JSON.stringify({ quoted_cost: r.quoted_cost, currency: r.currency, rate_valid_until: r.rate_valid_until, transit_days: r.transit_days, routing: r.routing,
+          free_days: r.free_days, inclusions: r.inclusions, exclusions: r.exclusions, carrier: r.carrier, etd: r.etd, vendor_reference: r.vendor_reference, charges: old, reason }), actor.id, actor.full_name]);
+      const sets: string[] = ['rate_version = rate_version + 1', 'previous_quoted_cost = quoted_cost', 'received_at = now()', 'updated_at = now()'];
+      const params: unknown[] = [id];
+      const put = (col: string, v: unknown) => { params.push(v); sets.push(`${col} = $${params.length}`); };
+      rateDetailSets(b, put);
+      if (b.vendor_reference !== undefined) put('vendor_reference', txt(b.vendor_reference, 80));
+      if (b.rate_valid_until !== undefined) { if (b.rate_valid_until && !/^\d{4}-\d{2}-\d{2}$/.test(b.rate_valid_until)) throw bad('Rate validity date is not valid'); put('rate_valid_until', b.rate_valid_until || null); }
+      const ch = parseCharges(b.charges);
+      if (ch && ch.lines.length) put('quoted_cost', ch.total);
+      else if (b.quoted_cost !== undefined && b.quoted_cost !== '') put('quoted_cost', money(b.quoted_cost));
+      else throw bad('Enter the new rate');
+      await c.query(`update vendor_requests set ${sets.join(', ')} where id = $1`, params);
+      if (ch) await saveCharges(c, id, r.rate_version + 1, ch.lines);
+      const now = await one('select quoted_cost from vendor_requests where id = $1', [id], c);
+      await evt(c, actor, id, `Rate revised (version ${r.rate_version + 1})`, `${r.currency} ${r.quoted_cost} → ${now.quoted_cost} — ${reason}`);
+      // quotations already using this rate keep their own figures; people are told
+      const used = await q(`select distinct x.quote_no from quotation_lines l join quotations x on x.id = l.quotation_id where l.vendor_request_id = $1
+        and x.status in ('draft','pending_approval','approved','sent')`, [id], c);
+      if (used.length) await evt(c, actor, id, 'Check the quotations using this rate', used.map((u) => u.quote_no).join(', '));
+      return;
     }
     const to = String(b.status ?? '');
     if (!VR_STATUS[to]) throw bad('Choose the status');
@@ -180,10 +335,16 @@ export async function vendorRequestAction(actor: Actor, id: string, b: any) {
       if (b.rate_valid_until && !/^\d{4}-\d{2}-\d{2}$/.test(b.rate_valid_until)) throw bad('Rate validity date is not valid');
       put('rate_valid_until', b.rate_valid_until || null);
     }
-    if (b.quoted_cost !== undefined && b.quoted_cost !== '') {
+    const ch = parseCharges(b.charges);
+    if (ch && ch.lines.length) {
+      if (!actor.fin.buyingView) throw forbidden('Only people who see cost can enter the vendor price');
+      put('quoted_cost', ch.total);
+    } else if (b.quoted_cost !== undefined && b.quoted_cost !== '') {
       if (!actor.fin.buyingView) throw forbidden('Only people who see cost can enter the vendor price');
       put('quoted_cost', money(b.quoted_cost));
     }
+    if (actor.fin.buyingView) rateDetailSets(b, put);
+    if (to === 'quoted') sets.push('received_at = coalesce(received_at, now())');
     if (to === 'quoted' && !actor.fin.buyingView && r.quoted_cost === null) throw bad('Someone who sees cost must enter the vendor price');
     if (to === 'confirmed') { sets.push('confirmed_at = now()'); detail = txt(b.vendor_reference, 80) ? `Vendor ref. ${String(b.vendor_reference).trim()}` : null; }
     if (to === 'completed') {
@@ -194,13 +355,20 @@ export async function vendorRequestAction(actor: Actor, id: string, b: any) {
     if (to === 'disputed') { const note = txt(b.note, 2000); if (!note) throw bad('Describe the problem'); put('issue_note', note); detail = note; }
     if (to === 'cancelled') { const note = txt(b.note, 500); if (!note) throw bad('Give a reason'); put('cancel_reason', note); detail = note; }
     await c.query(`update vendor_requests set ${sets.join(', ')} where id = $1`, params);
+    if (ch) await saveCharges(c, id, r.rate_version, ch.lines);
     await evt(c, actor, id, `Status: ${VR_STATUS[to][0]}`, detail);
+    if (to === 'quoted' && r.service === 'rate' && r.job_file_id) {
+      const { setStage } = await import('./commercial');
+      await setStage(c, actor, r.job_file_id, 'rates_received');
+    }
     // Choosing a vendor who is not the cheapest for the same request is allowed, but it is recorded
     if (to === 'confirmed') {
       const w = await cheaperRateWarning(id, c);
       if (w) await evt(c, actor, id, 'Chosen although another vendor quoted less', w);
     }
-  });
+  };
+  if (client) { await run(client); return null; }
+  await tx(run);
   return getVendorRequest(actor, id);
 }
 
@@ -218,7 +386,7 @@ export async function vendorReport(actor: Actor, def: any, cols: any[], colsOut:
       count(*) filter (where r.status = 'cancelled')::int cancelled,
       round(avg(extract(epoch from (r.completed_at - r.created_at)) / 86400) filter (where r.status = 'completed'), 1) avg_days
     from vendors v join vendor_requests r on r.vendor_id = v.id ${w} group by v.id, v.name, v.vendor_type order by requests desc, v.name`, params);
-  const TYPES: Record<string, string> = { shipping_line: 'Shipping line', airline: 'Airline', freight_agent: 'Freight agent', customs_broker: 'Customs broker',
+  const TYPES: Record<string, string> = { shipping_line: 'Shipping line', airline: 'Airline', freight_agent: 'Freight agent', overseas_agent: 'Overseas agent', customs_broker: 'Customs broker',
     transporter: 'Transporter', warehouse: 'Warehouse', courier: 'Courier', other: 'Other' };
   const shaped = rows.map((r) => Object.fromEntries(cols.map((col: any) => [col.key, col.key === 'vendor_type' ? TYPES[r.vendor_type]
     : col.key === 'on_time_pct' ? (r.on_time + r.late ? ((r.on_time / (r.on_time + r.late)) * 100).toFixed(2) : null) : r[col.key]])));

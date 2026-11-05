@@ -28,8 +28,12 @@ export async function lookups(actor: Actor) {
     document_types: await q(`select code, name from document_types where is_active and code = 'pod'`),
     expiry_warning_days: 30, currency: await getSetting('currency', 'AED'), timezone: await getSetting('timezone', 'Asia/Dubai'),
   };
+  const { customerScopeSql } = await import('./commercial');
+  const cp: unknown[] = [];
+  const cscope = customerScopeSql(actor, cp);
   const out: Record<string, unknown> = {
-    customers: await q('select id, name from customers where is_active and deleted_at is null order by name'),
+    // Part E: Salesmen see their own customers (and unowned ones), Coordinators their Salesmen's
+    customers: await q(`select c.id, c.name from customers c where c.is_active and c.deleted_at is null${cscope} order by c.name`, cp),
     locations: await q('select id, name, address, emirate, contact_person, contact_number from locations where is_active and deleted_at is null order by name'),
     vehicle_types: await q('select id, name from vehicle_types where is_active order by sort_order'),
     job_statuses: await q('select code, name, color, stage from job_statuses where is_active order by sort_order'),
@@ -47,6 +51,14 @@ export async function lookups(actor: Actor) {
       [actor.fin.sellingView && actor.has('documents.view_commercial')]),
     currency: await getSetting('currency', 'AED'),
     timezone: await getSetting('timezone', 'Asia/Dubai'),
+    // Commercials (Part E): who can be Salesman / Coordinator on an enquiry
+    salesmen: await q(`select u.id, u.full_name name, u.division, u.coordinator_id from users u join roles r on r.id = u.role_id
+      where r.code = 'sales' and u.is_active and u.deleted_at is null order by u.full_name`),
+    coordinators: await q(`select u.id, u.full_name name, u.division from users u join roles r on r.id = u.role_id
+      where r.code = 'coordinator' and u.is_active and u.deleted_at is null order by u.full_name`),
+    agent_coordinators: await q(`select u.id, u.full_name name from users u join roles r on r.id = u.role_id
+      where r.code = 'agent_coordinator' and u.is_active and u.deleted_at is null order by u.full_name`),
+    me_coordinator_id: (await one('select coordinator_id from users where id = $1', [actor.id]))?.coordinator_id ?? null,
     money_screens: (await getSetting('money_screens', true)) !== false,
     vendors: await q(`select id, name, vendor_type from vendors where deleted_at is null and is_active order by name`),
   };
@@ -85,6 +97,8 @@ export async function createCustomer(actor: Actor, b: any) {
   if (dup) throw new ApiError(409, 'CUSTOMER_EXISTS', 'A customer with this name already exists', { id: dup.id });
   const c = await one(`insert into customers (name, contact_person, contact_number, email) values ($1,$2,$3,$4) returning id, name`,
     [name, b.contact_person || null, b.contact_number || null, b.email || null]);
+  const { ownNewCustomer } = await import('./commercial');
+  await ownNewCustomer((await import('./db')).pool(), actor, c.id);   // a Salesman owns the customer they create
   await audit((await import('./db')).pool(), actor, { entity_type: 'customer', entity_id: c.id, action: 'Customer created', new_value: name });
   return c;
 }

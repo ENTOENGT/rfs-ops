@@ -20,6 +20,7 @@ import { ApiError, bad, Db, forbidden, getSetting, notFound, one, q, tx } from '
 import { jobNoProblem } from '../lib/requestRules';
 import { DIRECTIONS, MODES, JF_STATUSES, INCOTERMS, jfStatusName, jfStatusColor, label, milestonePlan, qStatusName, qStatusColor } from '../lib/jobfileRules';
 import { normContainer } from './pro';
+import { stageName, stageColor, nextAction, divisionName, PRE_CONFIRM } from '../lib/commercialRules';
 
 const UUID = /^[0-9a-f-]{36}$/i;
 const isUuid = (v: unknown): v is string => typeof v === 'string' && UUID.test(v);
@@ -28,7 +29,7 @@ const ACTIVE = ['enquiry', 'open', 'booked', 'in_transit', 'arrived', 'deliverin
 
 // ------------------------------------------------------------ who sees / does what
 export const canSeeJobFiles = (a: Actor) =>
-  ['jobfiles.view_all', 'jobfiles.view_department', 'jobfiles.create', 'jobfiles.edit'].some((p) => a.has(p as any));
+  ['jobfiles.view_all', 'jobfiles.view_department', 'jobfiles.view_assigned', 'jobfiles.view_handed_over', 'jobfiles.create', 'jobfiles.edit'].some((p) => a.has(p as any));
 /**
  *   jobfiles.view_all         every Job File (Transport, Finance, Customer Service, Warehouse, Super Admin)
  *   jobfiles.view_department  own department's (+ ones they created)
@@ -38,11 +39,13 @@ export function jfScope(actor: Actor, params: unknown[], alias = 'f'): string {
   if (actor.has('jobfiles.view_all')) return '';
   params.push(actor.id);
   const me = `$${params.length}`;
-  if (actor.has('jobfiles.view_department') && actor.department_id) {
-    params.push(actor.department_id);
-    return ` and (${alias}.department_id = $${params.length} or ${alias}.created_by = ${me})`;
-  }
-  return ` and ${alias}.created_by = ${me}`;
+  const c = [`${alias}.created_by = ${me}`];
+  if (actor.has('jobfiles.view_department') && actor.department_id) { params.push(actor.department_id); c.push(`${alias}.department_id = $${params.length}`); }
+  // Part E: Salesman / Coordinator see the shipments they are responsible for
+  if (actor.has('jobfiles.view_assigned')) c.push(`${alias}.salesman_id = ${me}`, `${alias}.coordinator_id = ${me}`);
+  // Operations works on everything handed over to it
+  if (actor.has('jobfiles.view_handed_over')) c.push(`${alias}.stage = 'handed_over'`);
+  return ` and (${c.join(' or ')})`;
 }
 
 export async function loadFile(actor: Actor, id: string, db?: Db, lock = false) {
@@ -60,19 +63,21 @@ export function canEdit(actor: Actor, f: any) {
   return actor.has('jobfiles.edit') || (actor.has('jobfiles.create') && f.created_by === actor.id);
 }
 
-export async function event(db: Db, actor: Actor | null, jobFileId: string, e: { kind: string; title: string; field?: string; old_value?: unknown; new_value?: unknown }) {
+export async function event(db: Db, actor: Actor | null, jobFileId: string, e: { kind: string; title: string; field?: string; old_value?: unknown; new_value?: unknown; remarks?: string | null }) {
   const s = (v: unknown) => (v === undefined || v === null || v === '' ? null : String(v).slice(0, 1000));
-  await db.query(`insert into job_file_events (job_file_id, kind, title, field, old_value, new_value, user_id, user_name) values ($1,$2,$3,$4,$5,$6,$7,$8)`,
-    [jobFileId, e.kind, e.title, e.field ?? null, s(e.old_value), s(e.new_value), actor?.id ?? null, actor?.full_name ?? 'System']);
+  await db.query(`insert into job_file_events (job_file_id, kind, title, field, old_value, new_value, remarks, user_id, user_name) values ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+    [jobFileId, e.kind, e.title, e.field ?? null, s(e.old_value), s(e.new_value), e.remarks ?? null, actor?.id ?? null, actor?.full_name ?? 'System']);
 }
+export async function refreshJobFileSearch(id: string) { await refreshSearch((await import('./db')).pool(), id); }
 async function refreshSearch(db: Db, id: string) {
-  await db.query(`update job_files f set search_text = lower(concat_ws(' ', f.job_no, f.customer_reference, f.shipper, f.consignee, f.origin, f.destination,
+  await db.query(`update job_files f set search_text = lower(concat_ws(' ', f.job_no, f.enquiry_ref, f.shipping_ref, f.customer_reference, f.shipper, f.consignee, f.origin, f.destination,
       f.port_of_loading, f.port_of_discharge, f.carrier, f.vessel_flight, f.voyage, f.booking_reference, f.mbl_mawb, f.hbl_hawb, c.name,
       (select string_agg(container_no, ' ') from job_file_containers where job_file_id = f.id and deleted_at is null)))
     from customers c where f.id = $1 and c.id = f.customer_id`, [id]);
 }
 /** Link existing trips / PRO requests / runs that carry this Job No. (or unlink them when the file is cancelled). */
-async function relink(db: Db, jobNo: string) {
+async function relink(db: Db, jobNo: string | null) {
+  if (!jobNo) return;
   await db.query(`update transport_requests set job_file_id = null where upper(btrim(job_no)) = upper(btrim($1))`, [jobNo]);
   await db.query(`update pro_requests set job_file_id = null where upper(btrim(job_no)) = upper(btrim($1))`, [jobNo]);
   // runs follow their truck trip
@@ -163,11 +168,13 @@ export async function checklist(f: any, db?: Db) {
 
 // ------------------------------------------------------------ create
 /** Create a Job File. `c` lets a quotation create it inside its own transaction. */
-export async function createJobFile(actor: Actor, b: any, c?: PoolClient, from?: { quotation_id: string }): Promise<{ id: string; job_no: string }> {
+export async function createJobFile(actor: Actor, b: any, c?: PoolClient, from?: { quotation_id: string }): Promise<{ id: string; job_no: string; enquiry_ref: string }> {
   if (!actor.has('jobfiles.create')) throw forbidden();
-  const p = jobNoProblem(b.job_no);
+  // Part E: an enquiry has no Job No. yet — it gets one from the ERP at handover. A direct (already confirmed) job needs it now.
+  const enquiry = b.status === 'enquiry' && !from;
+  const p = enquiry ? null : jobNoProblem(b.job_no);
   if (p) throw new ApiError(400, 'VALIDATION', p, { fields: { job_no: p } });
-  const jobNo = String(b.job_no).trim();
+  const jobNo = enquiry ? null : String(b.job_no).trim();
   const fields: Record<string, string> = {};
   const vals: Record<string, unknown> = {};
   for (const k of ['customer_id', 'direction', 'mode'])
@@ -178,8 +185,17 @@ export async function createJobFile(actor: Actor, b: any, c?: PoolClient, from?:
 
   const run = async (db: PoolClient) => {
     if (!(await one('select 1 from customers where id = $1 and deleted_at is null', [vals.customer_id], db))) throw bad('Customer not found');
-    const dup = await one(`select id, status from job_files where upper(btrim(job_no)) = upper($1) and deleted_at is null and status <> 'cancelled'`, [jobNo], db);
-    if (dup) throw new ApiError(409, 'JOB_FILE_EXISTS', `Job No. ${jobNo} already has a Job File. Open it instead of creating a second one.`, { id: dup.id });
+    const cm = await import('./commercial');
+    await cm.assertCustomerAllowed(actor, vals.customer_id as string, db);
+    if (jobNo) {
+      const dup = await one(`select id, status from job_files where upper(btrim(job_no)) = upper($1) and deleted_at is null and status <> 'cancelled'`, [jobNo], db);
+      if (dup) throw new ApiError(409, 'JOB_FILE_EXISTS', `Job No. ${jobNo} already has a Job File. Open it instead of creating a second one.`, { id: dup.id });
+    }
+    // Responsible Salesman, Assigned Coordinator (from the Salesman's mapping) and division — kept apart from Created By
+    const people = enquiry || b.salesman_id ? await cm.resolvePeople(actor, b, vals.customer_id as string, vals.direction as string, db)
+      : { salesman_id: actor.role_code === 'sales' ? actor.id : null, coordinator_id: actor.role_code === 'coordinator' ? actor.id : null, division: actor.division };
+    Object.assign(vals, people, { enquiry_ref: await cm.newRef(db, 'ENQ'), stage: enquiry ? 'enquiry' : 'handed_over' });
+    if (!enquiry) Object.assign(vals, { handed_over_at: new Date(), handed_over_by: actor.id });
     let deptId: string | null = actor.department_side === 'operations' ? actor.department_id : null;
     if (!deptId && b.department_id) {
       const d = isUuid(b.department_id) ? await one(`select id from departments where id = $1 and side = 'operations' and is_active`, [b.department_id], db) : null;
@@ -187,10 +203,10 @@ export async function createJobFile(actor: Actor, b: any, c?: PoolClient, from?:
       deptId = d.id;
     }
     // An enquiry starts the Job File before any quotation (migration 017): same Job No. from enquiry to closing
-    vals.status = b.status === 'enquiry' && !from ? 'enquiry' : 'open';
+    vals.status = enquiry ? 'enquiry' : 'open';
     const cols = Object.keys(vals);
     const f = await one(`insert into job_files (job_no, department_id, created_by, quotation_id${cols.map((k) => ', ' + k).join('')})
-      values ($1, $2, $3, $4${cols.map((_, i) => `, $${i + 5}`).join('')}) returning id, job_no, direction, mode, needs_clearance, needs_transport, needs_warehouse, status`,
+      values ($1, $2, $3, $4${cols.map((_, i) => `, $${i + 5}`).join('')}) returning id, job_no, enquiry_ref, direction, mode, needs_clearance, needs_transport, needs_warehouse, status`,
       [jobNo, deptId, actor.id, from?.quotation_id ?? null, ...cols.map((k) => vals[k])], db);
     const plan = milestonePlan(f.direction, f.mode, { clearance: f.needs_clearance, transport: f.needs_transport, warehouse: f.needs_warehouse });
     for (const [i, [code, name]] of plan.entries())
@@ -202,17 +218,19 @@ export async function createJobFile(actor: Actor, b: any, c?: PoolClient, from?:
     await relink(db, jobNo);
     const linked = await one(`select (select count(*) from transport_requests where job_file_id = $1)::int trips,
       (select count(*) from pro_requests where job_file_id = $1)::int pro`, [f.id], db);
-    await event(db, actor, f.id, { kind: 'created', title: from ? 'Job File created from an accepted quotation' : f.status === 'enquiry' ? 'Enquiry received — Job File opened for quoting' : 'Job File created',
-      new_value: linked.trips + linked.pro ? `Linked ${linked.trips} truck trip(s) and ${linked.pro} PRO request(s) with the same Job No.` : null });
+    const who = await one(`select (select full_name from users where id = $1) s, (select full_name from users where id = $2) k`, [people.salesman_id, people.coordinator_id], db);
+    await event(db, actor, f.id, { kind: 'created', title: from ? 'Job File created from an accepted quotation' : f.status === 'enquiry' ? `Enquiry ${f.enquiry_ref} received` : 'Job File created',
+      new_value: [who.s && `Salesman ${who.s}`, who.k && `Coordinator ${who.k}`, people.division && divisionName(people.division),
+        linked.trips + linked.pro ? `Linked ${linked.trips} truck trip(s) and ${linked.pro} PRO request(s) with the same Job No.` : null].filter(Boolean).join(' · ') || null });
     await refreshSearch(db, f.id);
-    return { id: f.id as string, job_no: f.job_no as string };
+    return { id: f.id as string, job_no: f.job_no as string, enquiry_ref: f.enquiry_ref as string };
   };
   return c ? run(c) : tx(run);
 }
 
 // ------------------------------------------------------------ list
 export const VIEWS: Record<string, { label: string; sql: string }> = {
-  enquiry: { label: 'Enquiries (quoting)', sql: `f.status = 'enquiry'` },
+  enquiry: { label: 'Commercial (not handed over)', sql: `f.status = 'enquiry'` },
   open: { label: 'Open', sql: `f.status in ('open','booked','in_transit','arrived','delivering')` },
   arriving: { label: 'Arriving in 7 days', sql: `f.status in ('open','booked','in_transit') and f.ata is null
     and f.eta between (now() at time zone 'Asia/Dubai')::date and (now() at time zone 'Asia/Dubai')::date + 7` },
@@ -224,12 +242,22 @@ export const VIEWS: Record<string, { label: string; sql: string }> = {
   missing_docs: { label: 'Documents missing', sql: `f.status in ('open','booked','in_transit','arrived','delivering') and ${MISSING_DOCS_SQL}` },
   closed: { label: 'Closed', sql: `f.status = 'closed'` },
 };
+/** Commercial views (Part E) — used by the Commercials lists and dashboard, not shown as Job File tiles. */
+export const COMMERCIAL_VIEWS: Record<string, string> = {
+  c_all: `(f.stage <> 'handed_over' or f.confirmed_at is not null or f.salesman_id is not null)`,
+  c_open: `f.stage not in ('handed_over','lost','cancelled')`,
+  c_enquiry: `f.stage = 'enquiry'`, c_rates: `f.stage = 'rates_requested'`, c_quoting: `f.stage in ('rates_received','quotation_draft')`,
+  c_approval: `f.stage = 'pending_approval'`, c_sent: `f.stage = 'sent_to_customer'`, c_confirmed: `f.stage = 'customer_confirmed'`,
+  c_booking: `f.stage = 'booking_requested'`, c_prealert: `f.stage in ('booking_confirmed','prealert_awaited','prealert_received')`,
+  c_prealert_received: `f.stage = 'prealert_received'`, c_awaiting_job: `f.stage = 'prealert_verified'`,
+  c_handed_over: `f.stage = 'handed_over' and f.handed_over_at is not null`, c_lost: `f.stage in ('lost','cancelled')`,
+};
 function filterSql(actor: Actor, p: Record<string, string>, params: unknown[]) {
   const add = (v: unknown) => { params.push(v); return `$${params.length}`; };
   const like = (v: string) => add('%' + v.trim().toLowerCase().replace(/[%_\\]/g, '\\$&') + '%');
   let w = `where f.deleted_at is null` + jfScope(actor, params);
   if (p.q?.trim()) w += ` and f.search_text like ${like(p.q)}`;
-  if (p.job_no?.trim()) w += ` and lower(f.job_no) like ${like(p.job_no)}`;
+  if (p.job_no?.trim()) w += ` and (lower(f.job_no) like ${like(p.job_no)} or lower(f.enquiry_ref) like $${params.length} or lower(f.shipping_ref) like $${params.length})`;
   for (const [k, col] of Object.entries({ customer_id: 'f.customer_id', department_id: 'f.department_id' }))
     if (p[k]) { if (!isUuid(p[k])) throw bad('Invalid filter'); w += ` and ${col} = ${add(p[k])}`; }
   if (p.status) w += ` and f.status = any(${add(p.status.split(','))})`;
@@ -237,26 +265,36 @@ function filterSql(actor: Actor, p: Record<string, string>, params: unknown[]) {
   if (p.mode) w += ` and f.mode = ${add(p.mode)}`;
   for (const [k, sql] of [['from', 'f.created_at::date >='], ['to', 'f.created_at::date <=']] as const)
     if (p[k]) { if (!DATE.test(p[k])) throw bad('Invalid date'); w += ` and ${sql} ${add(p[k])}`; }
-  if (p.view) { const v = VIEWS[p.view]; if (!v) throw bad('Unknown view'); w += ` and (${v.sql})`; }
+  if (p.view) { const v = VIEWS[p.view]?.sql ?? COMMERCIAL_VIEWS[p.view]; if (!v) throw bad('Unknown view'); w += ` and (${v})`; }
+  for (const [k, col] of Object.entries({ salesman_id: 'f.salesman_id', coordinator_id: 'f.coordinator_id' }))
+    if (p[k]) { if (p[k] === 'me') w += ` and ${col} = ${add(actor.id)}`; else { if (!isUuid(p[k])) throw bad('Invalid filter'); w += ` and ${col} = ${add(p[k])}`; } }
+  if (p.mine === '1') w += ` and f.created_by = ${add(actor.id)}`;
+  if (p.assigned === '1') w += ` and (f.coordinator_id = ${add(actor.id)} or f.salesman_id = $${params.length})`;
+  if (p.division) w += ` and f.division = ${add(p.division)}`;
+  if (p.stage) w += ` and f.stage = any(${add(p.stage.split(','))})`;
   return w;
 }
-const LIST_COLS = `f.id, f.job_no, f.direction, f.mode, f.status, f.needs_clearance, f.needs_transport, f.needs_warehouse,
+const LIST_COLS = `f.id, f.job_no, f.enquiry_ref, f.shipping_ref, f.stage, f.division, f.updated_at, f.handed_over_at,
+  sm.full_name salesman_name, co.full_name coordinator_name, f.direction, f.mode, f.status, f.needs_clearance, f.needs_transport, f.needs_warehouse,
   f.origin, f.destination, f.port_of_loading, f.port_of_discharge, f.carrier, f.mbl_mawb, f.hbl_hawb, f.etd, f.eta, f.atd, f.ata,
   f.created_at, f.closed_at, c.name customer_name, dep.name department_name, u.full_name created_by_name,
   (select string_agg(k.container_no, ', ' order by k.container_no) from job_file_containers k where k.job_file_id = f.id and k.deleted_at is null) container_list,
   (select count(*)::int from transport_requests t where t.job_file_id = f.id and t.deleted_at is null and t.status_code <> 'cancelled') trips,
   (select count(*)::int from pro_requests r where r.job_file_id = f.id and r.deleted_at is null and r.status_code <> 'cancelled') pro_requests,
   (f.status in ('open','booked','in_transit') and f.ata is null and f.eta < (now() at time zone 'Asia/Dubai')::date) late`;
-const LIST_FROM = `from job_files f join customers c on c.id = f.customer_id left join departments dep on dep.id = f.department_id join users u on u.id = f.created_by`;
+const LIST_FROM = `from job_files f join customers c on c.id = f.customer_id left join departments dep on dep.id = f.department_id join users u on u.id = f.created_by
+  left join users sm on sm.id = f.salesman_id left join users co on co.id = f.coordinator_id`;
 const shape = (r: any) => ({ ...r, direction_name: label(DIRECTIONS, r.direction), mode_name: label(MODES, r.mode),
-  status_name: jfStatusName(r.status), status_color: jfStatusColor(r.status) });
+  status_name: jfStatusName(r.status), status_color: jfStatusColor(r.status),
+  stage_name: stageName(r.stage), stage_color: stageColor(r.stage), next_action: nextAction(r.stage), division_name: divisionName(r.division) });
 
 export async function listJobFiles(actor: Actor, p: Record<string, string>) {
   if (!canSeeJobFiles(actor)) throw forbidden();
   const params: unknown[] = [];
   const where = filterSql(actor, p, params);
   const size = Math.min(Math.max(Number(p.page_size) || 50, 1), 200), page = Math.max(Number(p.page) || 1, 1);
-  const SORT: Record<string, string> = { job_no: 'upper(f.job_no)', eta: 'f.eta', etd: 'f.etd', customer: 'c.name', created: 'f.created_at' };
+  const SORT: Record<string, string> = { job_no: 'upper(f.job_no)', enquiry_ref: 'f.enquiry_ref', eta: 'f.eta', etd: 'f.etd', customer: 'c.name', created: 'f.created_at',
+    updated: 'f.updated_at', stage: 'f.stage', salesman: 'sm.full_name', coordinator: 'co.full_name', division: 'f.division', origin: 'f.origin', destination: 'f.destination' };
   const sort = SORT[p.sort ?? ''] ?? `case when f.status in ('closed','cancelled') then 1 else 0 end, f.eta nulls last, f.created_at desc`;
   const rows = await q(`select ${LIST_COLS}, count(*) over() _total ${LIST_FROM} ${where}
     order by ${sort} ${SORT[p.sort ?? ''] ? (p.dir === 'desc' ? 'desc' : 'asc') : ''}, f.job_no limit ${size} offset ${(page - 1) * size}`, params);
@@ -299,26 +337,29 @@ export function closureBlockers(f: any, w: { trips: any[]; pro: any[]; runs: any
 export async function getJobFile(actor: Actor, id: string) {
   const f = await loadFile(actor, id);
   const [extra, containers, milestones, events, work] = await Promise.all([
-    one(`select c.name customer_name, c.service_instructions, dep.name department_name, u.full_name created_by_name, cb.full_name closed_by_name
+    one(`select c.name customer_name, c.service_instructions, dep.name department_name, u.full_name created_by_name, cb.full_name closed_by_name,
+       sm.full_name salesman_name, co.full_name coordinator_name, cf.full_name confirmed_by_name, ho.full_name handed_over_by_name
        from job_files f join customers c on c.id = f.customer_id left join departments dep on dep.id = f.department_id
-       join users u on u.id = f.created_by left join users cb on cb.id = f.closed_by where f.id = $1`, [id]),
+       join users u on u.id = f.created_by left join users cb on cb.id = f.closed_by left join users sm on sm.id = f.salesman_id
+       left join users co on co.id = f.coordinator_id left join users cf on cf.id = f.confirmed_by left join users ho on ho.id = f.handed_over_by where f.id = $1`, [id]),
     q(`select id, container_no, size_type, seal_no from job_file_containers where job_file_id = $1 and deleted_at is null order by container_no`, [id]),
     q(`select m.id, m.code, m.name, m.planned_date, m.actual_at, m.remarks, u.full_name updated_by_name from job_file_milestones m
        left join users u on u.id = m.updated_by where m.job_file_id = $1 order by m.sort_order`, [id]),
-    q(`select id, kind, title, field, old_value, new_value, user_name, at from job_file_events where job_file_id = $1 order by at, id`, [id]),
+    q(`select id, kind, title, field, old_value, new_value, remarks, user_name, at from job_file_events where job_file_id = $1 order by at, id`, [id]),
     linkedWork(id),
   ]);
   // The quotation (and its rates) only for people who may see quotations
   const quotation = f.quotation_id && actor.has('quotes.view')
     ? await one('select id, quote_no, status from quotations where id = $1', [f.quotation_id]) : null;
   // Enquiry side (migration 017): every quotation and vendor request on this Job No.
-  const quotations = actor.has('quotes.view') ? await q(`select id, quote_no, status, valid_until, created_at from quotations
+  const quotations = actor.has('quotes.view') ? await q(`select id, quote_no, status, valid_until, created_at, version_no, salesman_decision from quotations
     where job_file_id = $1 and deleted_at is null order by created_at`, [id]) : null;
   const seeVendors = actor.isSuperAdmin || actor.has('vendors.requests') || actor.has('vendors.manage') || actor.has('quotes.view');
   // requests sent to several vendors for the same rate share a rate_group; the lowest valid price is marked (cost viewers only)
   const { markLowest } = await import('./vendorreqs');
   const vendorRequests = seeVendors ? markLowest(await q(`select r.id, r.request_no, r.service, r.status, r.description, r.quoted_cost, r.currency, r.rate_valid_until,
-      r.vendor_reference, r.rate_group, r.vendor_id, v.name vendor_name from vendor_requests r join vendors v on v.id = r.vendor_id where r.job_file_id = $1
+      r.vendor_reference, r.rate_group, r.vendor_id, r.rate_source, r.transit_days, r.free_days, r.routing, r.carrier, r.etd rate_etd, r.rate_version,
+      r.assigned_to, r.received_at, v.name vendor_name from vendor_requests r join vendors v on v.id = r.vendor_id where r.job_file_id = $1
       order by coalesce(r.rate_group, r.id), r.quoted_cost nulls last, r.created_at`, [id]))
       .map((r) => (actor.fin.buyingView ? r : { ...r, quoted_cost: undefined, lowest: undefined })) : null;
   const docsRequired = (await getSetting('jobfile_docs_required_to_close', true)) !== false;
@@ -329,15 +370,26 @@ export async function getJobFile(actor: Actor, id: string) {
     where d.job_file_id = $1 and d.deleted_at is null order by d.doc_type, d.created_at`, [id]);
   const blockers = closureBlockers(f, work, docsRequired ? docList : []);
   const edit = canEdit(actor, f);
+  const prealert = await one(`select p.*, u.full_name verified_by_name from prealerts p left join users u on u.id = p.verified_by where p.job_file_id = $1`, [id]);
+  const booking = f.booking_vendor_request_id ? await one(`select r.id, r.request_no, r.status, r.vendor_reference, v.name vendor_name from vendor_requests r
+    join vendors v on v.id = r.vendor_id where r.id = $1`, [f.booking_vendor_request_id]) : null;
+  const commercial = f.enquiry_ref !== null;
   return {
     ...shape({ ...f, ...extra }), search_text: undefined, quotation_id: quotation ? f.quotation_id : undefined, quotation,
-    containers, milestones, events, ...work, checklist: docList, documents, docs_required_to_close: docsRequired,
+    prealert, booking, containers, milestones, events, ...work, checklist: docList, documents, docs_required_to_close: docsRequired,
     quotations: quotations?.map((x) => ({ ...x, status_name: qStatusName(x.status), status_color: qStatusColor(x.status) })) ?? null, vendor_requests: vendorRequests,
     closure: { can_close: blockers.length === 0, blockers,
       warnings: milestones.filter((m) => !m.actual_at).map((m) => `Milestone "${m.name}" has no actual date`) },
     can: { edit, status: edit, close: (actor.isSuperAdmin || actor.has('jobfiles.close')) && f.status !== 'cancelled',
       request_transport: actor.has('jobs.create') && isOpen(f), request_pro: actor.has('pro.create') && isOpen(f),
-      quote: actor.has('quotes.create') && isOpen(f), ask_vendor: (actor.isSuperAdmin || actor.has('vendors.requests')) && isOpen(f),
+      quote: actor.has('quotes.create') && isOpen(f) && (!commercial || PRE_CONFIRM.includes(f.stage) || f.stage === 'handed_over'),
+      ask_vendor: (actor.isSuperAdmin || actor.has('vendors.requests')) && isOpen(f),
+      book: edit && (actor.isSuperAdmin || actor.has('vendors.requests')) && ['customer_confirmed', 'booking_requested'].includes(f.stage),
+      confirm_booking: edit && f.stage === 'booking_requested',
+      prealert: edit && ['booking_confirmed', 'prealert_awaited', 'prealert_received'].includes(f.stage),
+      handover: edit && f.status === 'enquiry' && (actor.isSuperAdmin || actor.has('jobfiles.handover'))
+        && (f.stage === 'prealert_verified' || ((actor.isSuperAdmin || actor.has('commercial.manage')) && ['customer_confirmed', 'booking_requested', 'booking_confirmed', 'prealert_awaited', 'prealert_received'].includes(f.stage))),
+      lost: edit && PRE_CONFIRM.includes(f.stage) && f.status === 'enquiry',
       upload: edit, approve_docs: (actor.isSuperAdmin || actor.has('documents.approve')) && f.status !== 'cancelled' },
   };
 }
@@ -384,6 +436,8 @@ export async function setJobFileStatus(actor: Actor, id: string, b: any) {
     if (to === 'closed' || to === 'cancelled' || f.status === 'closed') { if (!closer) throw forbidden('Only people who close Job Files can do this'); }
     else if (!canEdit(actor, f)) throw forbidden('You cannot change this Job File');
     let note: string | null = null;
+    if (f.status === 'enquiry' && to !== 'cancelled' && to !== 'closed')
+      throw new ApiError(409, 'JOB_FILE_ENQUIRY', 'A shipment still in Commercials goes live when the operational job is created (Job No. from the ERP), after the pre-alert is verified.');
     if (to === 'closed' && f.status === 'enquiry')
       throw new ApiError(409, 'JOB_FILE_ENQUIRY', 'This is still an enquiry. Accept a quotation (or set it to Open) first, or cancel it if the customer did not go ahead.');
     if (to === 'closed') {
@@ -398,7 +452,8 @@ export async function setJobFileStatus(actor: Actor, id: string, b: any) {
       const open = [...w.trips.filter((t) => !['closed', 'cancelled'].includes(t.stage)).map((t) => t.job_number),
         ...w.pro.filter((r) => !['done', 'cancelled'].includes(r.stage)).map((r) => r.request_no)];
       if (open.length) throw new ApiError(409, 'JOB_FILE_HAS_OPEN_WORK', `Cancel or finish the linked work first: ${open.join(', ')}`, { open });
-      await c.query(`update job_files set status = 'cancelled', cancel_reason = $2, updated_at = now() where id = $1`, [id, reason]);
+      await c.query(`update job_files set status = 'cancelled', cancel_reason = $2, updated_at = now(),
+        stage = case when stage is null or stage = 'handed_over' then stage else 'cancelled' end where id = $1`, [id, reason]);
       await relink(c, f.job_no);   // the Job No. is free again; linked records let go of this file
       note = reason;
     } else {

@@ -19,6 +19,11 @@ function UserForm({ user, data, onDone, onClose }: { user?: any; data: any; onDo
     // drivers are added on the Drivers page (so jobs can be assigned to them), then sent the app from there
     && (r.code !== 'driver' || user?.role_code === 'driver'));
   const appRole = !!data.roles.find((r: any) => r.id === f.role_id)?.app_only;
+  // Part E: Commercials roles carry a division; a Salesman has a dedicated Coordinator
+  const roleCode = data.roles.find((r: any) => r.id === f.role_id)?.code;
+  const commercial = ['sales', 'coordinator', 'agent_coordinator', 'commercials_manager'].includes(roleCode);
+  const coordChanged = !!user && roleCode === 'sales' && (user.coordinator_id ?? '') !== (f.coordinator_id ?? '') && !!user.coordinator_id;
+  const [history, setHistory] = useState<any[] | null>(null);
   const ov = (code: string) => f.overrides.find((o: any) => o.code === code);
   const setOv = (code: string, v: string) => setF({ ...f, overrides: [...f.overrides.filter((o: any) => o.code !== code),
     ...(v === '' ? [] : [{ code, granted: v === 'grant' }])] });
@@ -38,7 +43,8 @@ function UserForm({ user, data, onDone, onClose }: { user?: any; data: any; onDo
     try {
       if (user) {
         await api(`/api/users/${user.id}`, { method: 'PATCH', body: { full_name: f.full_name, mobile: f.mobile, role_id: f.role_id,
-          ...(all ? { department_id: f.department_id } : {}), overrides: f.overrides } });
+          ...(all ? { department_id: f.department_id } : {}), overrides: f.overrides,
+          ...(commercial ? { division: f.division || null, coordinator_id: roleCode === 'sales' ? (f.coordinator_id || null) : undefined, assignment_reason: f.assignment_reason } : {}) } });
         onDone(`Changes saved for ${f.full_name}. They will be asked to sign in again if their access changed.`);
       } else {
         const r = await api('/api/users', { body: f });
@@ -66,7 +72,19 @@ function UserForm({ user, data, onDone, onClose }: { user?: any; data: any; onDo
           <label className="f span2"><span>Role <em>*</em></span><select value={f.role_id} onChange={set('role_id')} disabled={all && !f.department_id}>
             <option value="">{all && !f.department_id ? 'Choose the department first' : 'Choose role'}</option>
             {roles.map((r: any) => <option key={r.id} value={r.id}>{r.name}{r.is_manager ? ' (department admin)' : ''}</option>)}</select></label>
+          {commercial && <label className="f"><span>Division {['sales', 'coordinator'].includes(roleCode) && <em>*</em>}</span>
+            <select value={f.division ?? ''} onChange={set('division')}><option value="">{roleCode === 'commercials_manager' ? 'All divisions' : 'Choose division'}</option>
+              {data.divisions.map(([k, n]: [string, string]) => <option key={k} value={k}>{n}</option>)}</select></label>}
+          {roleCode === 'sales' && <label className="f"><span>Dedicated Coordinator</span>
+            <select value={f.coordinator_id ?? ''} onChange={set('coordinator_id')}><option value="">Not assigned yet</option>
+              {data.coordinators.map((c: any) => <option key={c.id} value={c.id}>{c.full_name}{c.division ? ` — ${data.divisions.find(([k]: [string]) => k === c.division)?.[1]}` : ''}</option>)}</select></label>}
+          {coordChanged && <label className="f span2"><span>Reason for changing the Coordinator <em>*</em></span><input value={f.assignment_reason ?? ''} onChange={set('assignment_reason')} /></label>}
         </div>
+        {user && commercial && <p className="small" style={{ marginTop: 6 }}>{history === null
+          ? <button className="linkish" onClick={() => api(`/api/users/${user.id}/assignments`).then(setHistory).catch((e) => setErr(e.message))}>Show assignment history</button>
+          : history.length === 0 ? <span className="muted">No division or Coordinator changes yet.</span>
+          : history.map((h, i) => <span key={i} style={{ display: 'block' }}>{new Date(h.at).toLocaleDateString('en-GB')} — {h.field === 'coordinator' ? 'Coordinator' : 'Division'}: {h.old_label ?? 'none'} → {h.new_label ?? 'none'}
+            {h.reason && <> ({h.reason})</>} · {h.changed_by_name}</span>)}</p>}
         {user && showSell && <label className="f" style={{ marginTop: 14 }}><span>Selling price, revenue and profit</span>
           <select value={sell} onChange={(e) => setSell(e.target.value)}>
             <option value="">As the role gives</option><option value="view">Can see them</option>
@@ -114,13 +132,15 @@ export default function Users() {
       {data.scope === 'department' && <p className="muted small" style={{ marginTop: -6 }}>You manage the users of {data.department.name}. Managers are added and changed by the Super Admin.</p>}
       {msg && <div className={`msg ${msg.t}`}>{msg.m}</div>}
       <div className="panel flush"><div className="table-wrap"><table className="t">
-        <thead><tr><th>Name</th><th>Email / mobile</th><th>Department</th><th>Role</th><th>Exceptions</th><th>Last sign-in</th><th>Status</th><th /></tr></thead>
+        <thead><tr><th>Name</th><th>Email / mobile</th><th>Department</th><th>Role</th><th>Division / Coordinator</th><th>Exceptions</th><th>Last sign-in</th><th>Status</th><th /></tr></thead>
         <tbody>{rows.map((u: any) => (
           <tr key={u.id}>
             <td><b>{u.full_name}</b>{u.app_only && <div className="muted small">Phone app</div>}</td>
             <td>{u.app_only && u.mobile ? u.mobile : u.email}</td>
-            <td>{u.department_name ?? <span className="flag">No department</span>}</td>
+            <td>{u.department_name ?? <span className="flag">No department</span>}{u.department_name && u.department_active === false && <div className="flag">Department retired — move this user</div>}</td>
             <td>{u.role_name}{u.is_manager && <span className="badge outline" style={{ marginLeft: 6 }}>Manager</span>}</td>
+            <td className="small">{data.divisions.find(([k]: [string]) => k === u.division)?.[1] ?? ''}{u.coordinator_name && <div>Coordinator: {u.coordinator_name}</div>}
+              {u.salesmen_count > 0 && <div className="muted">{u.salesmen_count} Salesm{u.salesmen_count === 1 ? 'an' : 'en'}</div>}</td>
             <td>{u.overrides.length ? <span className="flag">{u.overrides.length}</span> : '—'}</td>
             <td>{fmtDateTime(u.last_login_at)}</td>
             <td>{u.is_active ? (u.must_change_password ? <span className="badge outline">{u.app_only ? 'App not set up yet' : 'Awaiting first sign-in'}</span> : 'Active') : <span className="badge" style={{ background: '#9B2C2C' }}>Disabled</span>}</td>
@@ -132,7 +152,7 @@ export default function Users() {
               {u.id !== me.id && <button className="btn small danger" onClick={() => act(() => api(`/api/users/${u.id}`, { method: 'PATCH', body: { is_active: !u.is_active } }), () => `${u.full_name} ${u.is_active ? 'disabled' : 'enabled'}`)}>{u.is_active ? 'Disable' : 'Enable'}</button>}
             </>}</td>
           </tr>))}
-          {rows.length === 0 && <tr><td colSpan={8} className="muted" style={{ padding: 24, textAlign: 'center' }}>{q ? 'Nobody matches that search.' : 'No users yet.'}</td></tr>}
+          {rows.length === 0 && <tr><td colSpan={9} className="muted" style={{ padding: 24, textAlign: 'center' }}>{q ? 'Nobody matches that search.' : 'No users yet.'}</td></tr>}
         </tbody></table></div></div>
       {appFor && <SendAppLink userId={appFor.id} name={appFor.full_name} onClose={() => { setAppFor(null); load(); }} />}
       {edit && <UserForm user={edit.id ? edit : undefined} data={data} onClose={() => setEdit(null)} onDone={(m, app) => { setEdit(null); setMsg({ t: 'ok', m }); load(); if (app) setAppFor(app); }} />}

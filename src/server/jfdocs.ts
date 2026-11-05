@@ -18,9 +18,12 @@ const FILE_TYPES: Record<string, string> = {
   'application/pdf': 'pdf', 'image/jpeg': 'jpg', 'image/png': 'png',
   'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': 'xlsx',
   'application/vnd.openxmlformats-officedocument.wordprocessingml.document': 'docx',
+  // saved emails — the customer's confirmation, an agent's rate, a pre-alert
+  'message/rfc822': 'eml', 'application/vnd.ms-outlook': 'msg',
 };
 /** Document types besides the required ones that people often attach. */
-export const EXTRA_DOC_TYPES: [string, string][] = [['insurance', 'Insurance certificate'], ['permit', 'Permit / licence'], ['photo', 'Cargo photo'],
+export const EXTRA_DOC_TYPES: [string, string][] = [['customer_confirmation', 'Customer confirmation'], ['agent_rate', 'Agent / carrier rate'],
+  ['booking_confirmation', 'Booking confirmation'], ['prealert', 'Pre-alert'], ['insurance', 'Insurance certificate'], ['permit', 'Permit / licence'], ['photo', 'Cargo photo'],
   ['correspondence', 'Customer / agent correspondence'], ['other', 'Other']];
 const approver = (a: Actor) => a.isSuperAdmin || a.has('documents.approve');
 const day = (v: unknown, label: string) => {
@@ -38,7 +41,7 @@ export async function requestJfUpload(actor: Actor, fileId: string, b: any) {
   if (!canEdit(actor, f) && !approver(actor)) throw forbidden('You cannot add documents to this Job File');
   if (f.status === 'cancelled') throw new ApiError(409, 'JOB_FILE_CANCELLED', 'This Job File is cancelled');
   const mime = String(b.mime_type ?? '').toLowerCase().replace('image/jpg', 'image/jpeg');
-  if (!FILE_TYPES[mime]) throw bad('Upload a PDF, JPG, PNG, Excel or Word file');
+  if (!FILE_TYPES[mime]) throw bad('Upload a PDF, JPG, PNG, Excel, Word or saved email (.eml / .msg) file');
   const size = Number(b.size);
   if (!Number.isFinite(size) || size <= 0) throw bad('The file is empty');
   if (size > MAX_BYTES) throw bad('Files can be up to 10 MB');
@@ -64,6 +67,7 @@ export async function confirmJfUpload(actor: Actor, fileId: string, b: any) {
   if (!info) throw new ApiError(409, 'UPLOAD_MISSING', 'The file did not arrive. Please try again.');
   if (info.size > MAX_BYTES) { await store.remove(t.key); throw bad('Files can be up to 10 MB'); }
   const label = await typeName(t.doc_type);
+  let newId = '';
   await tx(async (c) => {
     await loadFile(actor, fileId, c, true);
     if (await one('select 1 from jf_documents where storage_path = $1', [t.key], c)) throw new ApiError(409, 'DUPLICATE', 'Already saved');
@@ -74,12 +78,12 @@ export async function confirmJfUpload(actor: Actor, fileId: string, b: any) {
       version = old.version + 1;
       await c.query('update jf_documents set replaced_at = now() where id = $1', [old.id]);
     }
-    await c.query(`insert into jf_documents (job_file_id, doc_type, file_name, storage_path, mime_type, size_bytes, version, replaces_id, issue_date, expiry_date, description, uploaded_by)
-      values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
-      [fileId, t.doc_type, t.name, t.key, t.mime, info.size, version, t.replaces_id, t.issue_date, t.expiry_date, t.description, actor.id]);
+    newId = (await one(`insert into jf_documents (job_file_id, doc_type, file_name, storage_path, mime_type, size_bytes, version, replaces_id, issue_date, expiry_date, description, uploaded_by)
+      values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) returning id`,
+      [fileId, t.doc_type, t.name, t.key, t.mime, info.size, version, t.replaces_id, t.issue_date, t.expiry_date, t.description, actor.id], c)).id;
     await event(c, actor, fileId, { kind: 'document', title: version > 1 ? `${label} replaced (version ${version})` : `${label} uploaded`, new_value: t.name });
   });
-  return getJobFile(actor, fileId);
+  return { ...(await getJobFile(actor, fileId)), uploaded_document_id: newId };
 }
 
 /** Approve / reject (with a reason), waive or un-waive a required document, or remove a document. */

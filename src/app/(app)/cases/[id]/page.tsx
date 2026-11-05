@@ -3,6 +3,7 @@ import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { api, fmtDateTime } from '@/components/api';
 import { useMe } from '@/components/Shell';
+import { EmailButton } from '@/components/EmailButton';
 
 export default function Case({ params }: { params: { id: string } }) {
   const { lk } = useMe();
@@ -17,6 +18,7 @@ export default function Case({ params }: { params: { id: string } }) {
   return (
     <div className="page">
       <div className="page-head"><h1>{d.case_no}</h1><span className="badge" style={{ background: d.status_color }}>{d.status_name}</span>{d.overdue && <span className="flag">Overdue</span>}<span className="spacer" />
+        {d.can.manage && <EmailButton kind="case" id={d.id} label="Email customer" onLogged={() => api(`/api/cases/${params.id}`).then(setD)} />}
         {d.can.manage && d.status === 'open' && <button className="btn" onClick={() => status('in_progress')}>Start working</button>}
         {d.can.manage && open && d.status !== 'waiting_customer' && <button className="btn" onClick={() => status('waiting_customer')}>Waiting for customer</button>}
         {d.can.manage && d.status === 'waiting_customer' && <button className="btn" onClick={() => status('in_progress')}>Customer replied</button>}
