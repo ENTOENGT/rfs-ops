@@ -49,6 +49,16 @@ const GROUPS: { key: string; label: string; perm?: string[]; items: Item[] }[] =
   { key: 'handover', label: 'Handover', perm: COMMERCIAL, items: [
     { href: '/commercials/enquiries?view=c_awaiting_job', label: 'Awaiting job creation' },
     { href: '/commercials/enquiries?view=c_handed_over', label: 'Handed over to Operations' }] },
+  { key: 'lcl', label: 'LCL management', perm: ['lcl.view', 'lcl.manage', 'lcl.receive', 'lcl.stuff'], items: [
+    { href: '/lcl', label: 'Consolidation register' },
+    { href: '/lcl/new', label: 'Create consolidation', perm: 'lcl.manage' },
+    { href: '/lcl/shipments', label: 'House shipment register' },
+    { href: '/lcl/reports?r=mbl_register', label: 'Master BL register' },
+    { href: '/lcl/shipments?view=hbl', label: 'House BL register' },
+    { href: '/lcl?view=in_transit', label: 'Container monitoring' },
+    { href: '/lcl/shipments?view=pending_receiving', label: 'Cargo receiving' },
+    { href: '/lcl?view=stuffing', label: 'Stuffing and dispatch' },
+    { href: '/lcl/reports', label: 'LCL reports' }] },
   { key: 'operations', label: 'Operations', items: [
     { href: '/job-files', label: 'Job Files', perm: ['jobfiles.view_all', 'jobfiles.view_department', 'jobfiles.view_handed_over', 'jobfiles.edit'] },
     { href: '/cases', label: 'Customer service', perm: ['cases.view_all', 'cases.manage'] },

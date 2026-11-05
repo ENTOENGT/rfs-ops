@@ -221,3 +221,20 @@ export function HandoverPanel({ d, act }: { d: any; act: (b: any, done?: string)
     </div>
   );
 }
+
+/** For a Sea LCL shipment: the consolidation (container, MBL) it sits in, and its own HBL and cargo status. */
+export function LclPanel({ d }: { d: any }) {
+  if (d.mode !== 'sea_lcl') return null;
+  const l = d.lcl;
+  return (
+    <div className="panel"><h2>LCL consolidation</h2>
+      {!l ? <p className="muted small" style={{ margin: 0 }}>Not in a consolidation yet.{d.stage && ['customer_confirmed', 'booking_requested', 'booking_confirmed', 'prealert_awaited', 'prealert_received', 'prealert_verified', 'handed_over'].includes(d.stage)
+        && ' It can be added from LCL management → the consolidation → House shipments.'}</p>
+        : <dl className="kv">
+          <dt>Consolidation</dt><dd><Link href={`/lcl/${l.id}`}><b>{l.con_ref}</b></Link></dd>
+          <dt>Container</dt><dd>{l.container_no ?? '—'}</dd><dt>Master BL</dt><dd>{l.mbl_no ?? '—'}</dd><dt>House BL</dt><dd>{l.hbl_no ?? '—'}</dd>
+          <dt>Cargo</dt><dd>{l.receiving_status === 'discrepancy' ? 'Received with differences' : l.receiving_status} · {l.stuffing_status === 'shut_out' ? 'shut out' : l.stuffing_status === 'stuffed' ? 'stuffed' : 'not stuffed'}</dd>
+          <dt>Departure / arrival</dt><dd>{fmtDate(l.atd ?? l.etd)} → {fmtDate(l.ata ?? l.eta)}</dd></dl>}
+    </div>
+  );
+}

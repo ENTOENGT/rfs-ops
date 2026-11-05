@@ -374,9 +374,10 @@ export async function getJobFile(actor: Actor, id: string) {
   const booking = f.booking_vendor_request_id ? await one(`select r.id, r.request_no, r.status, r.vendor_reference, v.name vendor_name from vendor_requests r
     join vendors v on v.id = r.vendor_id where r.id = $1`, [f.booking_vendor_request_id]) : null;
   const commercial = f.enquiry_ref !== null;
+  const lcl = f.mode === 'sea_lcl' ? await (await import('./lcl')).lclForFile(id) : null;
   return {
     ...shape({ ...f, ...extra }), search_text: undefined, quotation_id: quotation ? f.quotation_id : undefined, quotation,
-    prealert, booking, containers, milestones, events, ...work, checklist: docList, documents, docs_required_to_close: docsRequired,
+    prealert, booking, lcl, containers, milestones, events, ...work, checklist: docList, documents, docs_required_to_close: docsRequired,
     quotations: quotations?.map((x) => ({ ...x, status_name: qStatusName(x.status), status_color: qStatusColor(x.status) })) ?? null, vendor_requests: vendorRequests,
     closure: { can_close: blockers.length === 0, blockers,
       warnings: milestones.filter((m) => !m.actual_at).map((m) => `Milestone "${m.name}" has no actual date`) },

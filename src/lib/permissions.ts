@@ -19,7 +19,8 @@ export type Perm =
   | 'warehouse.view' | 'warehouse.receive' | 'warehouse.move' | 'warehouse.dispatch' | 'warehouse.adjust' | 'warehouse.configure' | 'warehouse.orders.create'
   | 'documents.approve' | 'cases.view_all' | 'cases.manage' | 'cases.escalations' | 'vendors.manage' | 'vendors.requests' | 'erp.view' | 'erp.export'
   | 'commercial.manage' | 'jobfiles.view_assigned' | 'jobfiles.view_handed_over' | 'jobfiles.handover' | 'quotes.salesman_approve'
-  | 'rates.agent_coordination' | 'customers.view_all';
+  | 'rates.agent_coordination' | 'customers.view_all'
+  | 'lcl.view' | 'lcl.manage' | 'lcl.receive' | 'lcl.stuff';
 
 export type Side = 'admin' | 'operations' | 'transport' | 'messenger' | 'finance' | 'pro' | 'warehouse';
 /** Sides that can never see selling price, revenue, profit or quotations (database rule user_has_perm). */

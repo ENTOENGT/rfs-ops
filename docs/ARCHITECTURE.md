@@ -530,6 +530,25 @@ quotations within validity; every print / download is written to the quotation h
 - **Screens**: grouped role-based menu, Commercials overview, Enquiry register on the standard table
   (`DataTable`: sort, pages, columns, CSV / Excel), quotations list on the same table, role tiles on the dashboard.
 
+## 15i. LCL consolidation (Part F, migration 019)
+
+- **Model**: one consolidation (`consolidations`, ref CON-YY-NNNNN) = one container, one carrier booking, one Master BL.
+  Many house shipments (`consolidation_shipments`), each with its own HBL (unique per issuer) and a cargo owner:
+  own customer (linked to a Job File), partner agent (a vendor) or another authorised party. A Job File sits in at most one
+  live consolidation. Partner-agent cargo stays a house shipment — no customer or Job File is created for it.
+- **Receiving**: `lcl_receipts` (append-only) records each arrival. Status per house shipment: expected → partly received →
+  received, or "received with differences" (damage/shortage or more than 5% off the declared figures). Every house shipment
+  must be verified before "Ready for stuffing"; differences need a note on how they were settled.
+- **Status**: open → ready → stuffing → stuffed → sealed → dispatched → departed → arrived → closed (or cancelled, which
+  releases the house shipments). Stuffing marks each shipment stuffed or shut out; completion needs the container number.
+- **Linked shipments**: departed/arrived fills a Job File's ATD/ATA and milestone only when it has none of its own.
+  The Job File page shows an "LCL consolidation" panel for Sea LCL files.
+- **Documents**: `consolidation_documents` (booking confirmation, MBL/HBL draft and final, stuffing report, photos…), versioned;
+  "HBL final missing" is shown before dispatch. History: `consolidation_events` (append-only).
+- **Permissions**: `lcl.view`, `lcl.manage`, `lcl.receive`, `lcl.stuff`; warehouse roles get view/receive/stuff.
+- **Screens**: LCL menu group — consolidation register (views incl. container monitoring), create, consolidation page with
+  9 tabs, house shipment / HBL register, cargo receiving, stuffing and dispatch, 14 LCL reports with Excel/CSV export.
+
 ## 16. Phase status
 
 | Phase | Status |
@@ -553,5 +572,6 @@ quotations within validity; every print / download is written to the quotation h
 | Enquiry flow — one Job No. from enquiry; rate requests to several vendors with lowest-price warning (migration 017) | Done |
 | Part D — Email button with ready-written drafts (vendors, quotations, shipment updates, case replies) | Done |
 | Part E — Commercials Department: divisions, Salesman ↔ Coordinator, three numbers, rates, approvals, booking, pre-alert, handover (migration 018) | Done |
+| Part F — LCL consolidation: containers, house shipments/HBLs, cargo receiving, stuffing, dispatch, LCL registers and reports (migration 019) | Done |
 | Freight + 3PL — remaining phases: see `docs/FREIGHT_3PL_PLAN.md` | Planned |
 | 7 Email notifications · 8 Saved views, column prefs, live ops table, performance | Planned |

@@ -7,7 +7,7 @@ import { useMe } from '@/components/Shell';
 import { JobFileFields } from '@/components/JobFileForm';
 import JobFileDocs from '@/components/JobFileDocs';
 import { CONTAINER_TYPES, JF_STATUSES, label, DIRECTIONS, MODES } from '@/lib/jobfileRules';
-import { StageHeader, RatesAndQuotes, BookingPanel, PrealertPanel, HandoverPanel } from '@/components/CommercialPanels';
+import { StageHeader, RatesAndQuotes, BookingPanel, PrealertPanel, HandoverPanel, LclPanel } from '@/components/CommercialPanels';
 
 const RUN_STATUS: Record<string, string> = { pending: 'Waiting', assigned: 'Assigned', collected: 'Collected', delivered: 'Delivered', failed: 'Could not complete', cancelled: 'Cancelled' };
 const EDIT_KEYS = ['customer_id', 'direction', 'mode', 'needs_clearance', 'needs_transport', 'needs_warehouse', 'customer_reference', 'shipper', 'consignee',
@@ -135,6 +135,7 @@ export default function JobFile({ params }: { params: { id: string } }) {
           </div>
         </div>
         <div>
+          {d.mode === 'sea_lcl' && <LclPanel d={d} />}
           {open && d.status !== 'enquiry' && <div className={`panel${d.closure.can_close ? '' : ' warnbox'}`}><h2>Before it can close</h2>
             {d.closure.can_close ? <p className="small" style={{ margin: 0 }}>✓ All linked work is finished. It can be closed.</p>
               : <ul className="small" style={{ margin: 0, paddingLeft: 18 }}>{d.closure.blockers.map((b: string) => <li key={b}>{b}</li>)}</ul>}
