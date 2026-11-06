@@ -33,7 +33,7 @@ test('1. The enquiry opens the shipment record with its Enquiry Ref — the Job 
   const f = await createJobFile(sales, { customer_id: customer, direction: 'import', mode: 'sea_fcl', status: 'enquiry',
     origin: 'Shanghai', destination: 'Jebel Ali', cargo_description: 'Furniture, 2x40HC' });
   fileId = f.id; enqRef = f.enquiry_ref;
-  assert.match(enqRef, /^ENQ-\d{2}-\d{5}$/);
+  assert.match(enqRef, /^ENQ-(IMP-|EXP-|CTR-)?\d{2}-\d{5}$/);
   const g = await getJobFile(sales, fileId);
   assert.equal(g.status, 'enquiry'); assert.equal(g.job_no, null); assert.equal(g.stage, 'enquiry');
   assert.equal(g.salesman_name, 'Sally'); assert.equal(g.coordinator_name, 'Cora'); assert.equal(g.created_by_name, 'Sally');

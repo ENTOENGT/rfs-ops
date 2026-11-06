@@ -33,9 +33,12 @@ const day = (v: unknown, lbl: string) => {
 };
 
 // ------------------------------------------------------------ numbers
-export async function newRef(db: Db, kind: 'ENQ' | 'SR') {
+/** Division code in the Enquiry Ref (decision D1): ENQ-IMP-26-00012. */
+export const DIVISION_CODES: Record<string, string> = { imports: 'IMP', exports: 'EXP', cross_trade: 'CTR' };
+export async function newRef(db: Db, kind: 'ENQ' | 'SR', division?: string | null) {
   const seq = kind === 'ENQ' ? 'enquiry_ref_seq' : 'shipping_ref_seq';
-  return (await one(`select '${kind}-' || to_char(now() at time zone 'Asia/Dubai', 'YY') || '-' || lpad(nextval('${seq}')::text, 5, '0') r`, [], db)).r as string;
+  const mid = kind === 'ENQ' && division && DIVISION_CODES[division] ? `${DIVISION_CODES[division]}-` : '';
+  return (await one(`select '${kind}-${mid}' || to_char(now() at time zone 'Asia/Dubai', 'YY') || '-' || lpad(nextval('${seq}')::text, 5, '0') r`, [], db)).r as string;
 }
 
 // ------------------------------------------------------------ stage
@@ -61,6 +64,9 @@ export async function setStage(db: Db, actor: Actor | null, fileId: string, to: 
   }
   await db.query('update job_files set stage = $2, updated_at = now() where id = $1', [fileId, to]);
   await jfEvent(db, actor, fileId, { kind: 'status', title: `Stage: ${stageName(to)}`, field: 'Stage', old_value: stageName(cur), new_value: stageName(to), remarks: opts.note ?? null });
+  // the handling group hears about the step forward (a quotation sent back for work is told by the quotation itself)
+  const { STAGE_EVENTS, notifyGroup } = await import('./notify');
+  if (STAGE_EVENTS[to] && (ending || ti > ci)) await notifyGroup(db, actor, fileId, STAGE_EVENTS[to], opts.note ?? null);
 }
 
 // ------------------------------------------------------------ customers: who may use which
@@ -176,6 +182,36 @@ export async function resolvePeople(actor: Actor, b: any, customerId: string, di
   return { salesman_id: salesmanId, coordinator_id: coordinatorId, division };
 }
 
+/** Commercials Manager: change the Salesman and / or Coordinator on a shipment before handover. Both old and new people are told. */
+export async function reassignPeople(actor: Actor, fileId: string, b: any) {
+  if (!actor.isSuperAdmin && !actor.has('commercial.manage')) throw forbidden('Only the Commercials Manager can reassign');
+  const reason = txt(b.reason, 500);
+  if (!reason) throw bad('Say why it is reassigned');
+  await tx(async (c) => {
+    const { loadFile } = await import('./jobfiles');
+    const f = await loadFile(actor, fileId, c, true);
+    if (f.stage === 'handed_over' || ['lost', 'cancelled'].includes(f.stage)) throw new ApiError(409, 'STAGE', 'Only a shipment that is not handed over can be reassigned');
+    const pick = async (id: unknown, role: string, label: string) => {
+      if (!id) return null;
+      if (!isUuid(id) || !(await one(`select 1 from users u join roles r on r.id = u.role_id where u.id = $1 and r.code = $2 and u.is_active and u.deleted_at is null`, [id, role], c)))
+        throw bad(`Choose an active ${label}`);
+      return id as string;
+    };
+    const sm = b.salesman_id === undefined ? f.salesman_id : await pick(b.salesman_id, 'sales', 'Salesman');
+    const co = b.coordinator_id === undefined ? f.coordinator_id : await pick(b.coordinator_id, 'coordinator', 'Coordinator');
+    if (sm === f.salesman_id && co === f.coordinator_id) throw bad('Nothing changed');
+    const name = async (id: string | null) => id ? (await one('select full_name from users where id = $1', [id], c))?.full_name : null;
+    await c.query('update job_files set salesman_id = $2, coordinator_id = $3, updated_at = now() where id = $1', [fileId, sm, co]);
+    if (sm !== f.salesman_id) await jfEvent(c, actor, fileId, { kind: 'edit', title: 'Salesman changed', field: 'Salesman', old_value: await name(f.salesman_id), new_value: await name(sm), remarks: reason });
+    if (co !== f.coordinator_id) await jfEvent(c, actor, fileId, { kind: 'edit', title: 'Coordinator changed', field: 'Coordinator', old_value: await name(f.coordinator_id), new_value: await name(co), remarks: reason });
+    if (sm) await claimCustomer(c, actor, f.customer_id, sm);
+    await (await import('./notify')).notifyGroup(c, actor, fileId, 'assigned', reason, { also: [f.salesman_id, f.coordinator_id] });
+  });
+  const { getJobFile, refreshJobFileSearch } = await import('./jobfiles');
+  await refreshJobFileSearch(fileId);
+  return getJobFile(actor, fileId);
+}
+
 // ------------------------------------------------------------ booking
 async function fileFor(actor: Actor, fileId: string, c: PoolClient) {
   const { loadFile, canEdit } = await import('./jobfiles');
@@ -234,6 +270,8 @@ export async function confirmBooking(actor: Actor, fileId: string, b: any) {
       await c.query('insert into vendor_request_events (request_id, title, details, user_id, user_name) values ($1,$2,$3,$4,$5)',
         [f.booking_vendor_request_id, 'Status: Confirmed', `Booking confirmed — ${ref}`, actor.id, actor.full_name]);
     }
+    await (await import('./notify')).notifyGroup(c, actor, fileId, 'booking_confirmed', ref);
+    if (set.vessel_flight && String(set.vessel_flight) !== String(f.vessel_flight ?? '')) await (await import('./notify')).notifyGroup(c, actor, fileId, 'vessel_changed', [set.vessel_flight, set.voyage].filter(Boolean).join(' '));
     const expected = day(b.prealert_expected, 'Pre-alert expected date');
     await c.query(`insert into prealerts (job_file_id, expected_date, created_by) values ($1,$2,$3)
       on conflict (job_file_id) do update set expected_date = coalesce(excluded.expected_date, prealerts.expected_date), updated_at = now()`, [fileId, expected, actor.id]);
@@ -354,6 +392,7 @@ export async function createOperationalJob(actor: Actor, fileId: string, b: any)
       where id = $1`, [fileId, jobNo, actor.id, notes]);
     await jfEvent(c, actor, fileId, { kind: 'status', title: `Operational job created — Job No. ${jobNo}`, field: 'Job No.', old_value: null, new_value: jobNo, remarks: skip ? `Before pre-alert verification: ${skip}` : null });
     await jfEvent(c, actor, fileId, { kind: 'status', title: 'Handed over to Operations', field: 'Stage', old_value: stageName(f.stage), new_value: stageName('handed_over'), remarks: notes });
+    await (await import('./notify')).notifyGroup(c, actor, fileId, 'handed_over', `Job No. ${jobNo}`);
     // trips / PRO requests already typed with this Job No. link now
     await c.query(`update transport_requests set job_file_id = null where upper(btrim(job_no)) = upper(btrim($1))`, [jobNo]);
     await c.query(`update pro_requests set job_file_id = null where upper(btrim(job_no)) = upper(btrim($1))`, [jobNo]);

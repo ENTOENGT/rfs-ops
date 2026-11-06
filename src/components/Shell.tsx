@@ -21,7 +21,9 @@ const GROUPS: { key: string; label: string; perm?: string[]; items: Item[] }[] =
     { href: '/commercials', label: 'Overview' },
     { href: '/commercials?division=imports', label: 'Imports' },
     { href: '/commercials?division=exports', label: 'Exports' },
-    { href: '/commercials?division=cross_trade', label: 'Cross Trade' }] },
+    { href: '/commercials?division=cross_trade', label: 'Cross Trade' },
+    { href: '/settings/quote-terms', label: 'Quotation terms', perm: 'templates.manage' },
+    { href: '/settings/email-templates', label: 'Email templates', perm: 'templates.manage' }] },
   { key: 'enquiries', label: 'Enquiries', perm: COMMERCIAL, items: [
     { href: '/commercials/enquiries', label: 'All enquiries' },
     { href: '/commercials/enquiries?mine=1', label: 'My enquiries' },
@@ -61,7 +63,6 @@ const GROUPS: { key: string; label: string; perm?: string[]; items: Item[] }[] =
     { href: '/lcl/reports', label: 'LCL reports' }] },
   { key: 'operations', label: 'Operations', items: [
     { href: '/job-files', label: 'Job Files', perm: ['jobfiles.view_all', 'jobfiles.view_department', 'jobfiles.view_handed_over', 'jobfiles.edit'] },
-    { href: '/cases', label: 'Customer service', perm: ['cases.view_all', 'cases.manage'] },
     { href: '/vendor-requests', label: 'Vendor requests', perm: ['vendors.requests', 'vendors.manage'] },
     { href: '/warehouse', label: 'Warehouse', perm: ['warehouse.view', 'warehouse.receive', 'warehouse.dispatch', 'warehouse.configure', 'warehouse.orders.create'] },
     { href: '/requests', label: 'Transport requests', perm: 'jobs.view' },
@@ -140,6 +141,7 @@ function Bell({ jobHref = (id: string) => `/jobs/${id}` }: { jobHref?: (id: stri
       {open && (
         <div className="dropdown" onMouseLeave={() => setOpen(false)}>
           {n.rows.length === 0 && <div style={{ padding: 12 }} className="muted">You're all caught up.</div>}
+          <Link href="/notifications" className="see-all" onClick={() => setOpen(false)}><b>See all notifications</b></Link>
           {n.rows.map((r) => (
             <Link key={r.id} href={r.case_id ? `/cases/${r.case_id}` : r.quotation_id ? `/quotations/${r.quotation_id}` : r.job_file_id ? `/job-files/${r.job_file_id}` : r.pro_id ? `/pro/${r.pro_id}` : r.run_id ? `/runs/${r.run_id}` : r.job_id ? jobHref(r.job_id) : '#'} className={r.read_at ? '' : 'unread'} onClick={() => setOpen(false)}>
               {r.title}<div className="muted small">{fmtDateTime(r.created_at)}</div>

@@ -18,11 +18,13 @@ export default function Login() {
   return (
     <div className="login">
       <div className="art">
-        <img className="mark" src="/brand/mark-on-dark.png" alt="" width={120} height={110} />
-        <div>
-          <h1>Operations requests it. Transport moves it. Everyone sees where it is.</h1>
-          <p>Sign in with the account your administrator created for you.</p>
+        <img className="mark" src="/brand/mark-on-dark.png" alt="" width={96} height={88} />
+        <div className="pitch">
+          <h1 className="motto">MOVING<br /><span>AHEAD</span></h1>
+          <p className="tagline">One platform. Complete logistics visibility.</p>
+          <h2>AI-powered communication and operational visibility</h2>
         </div>
+        <p className="foot">Reliance Freight Systems LLC · Freight Forwarding and 3PL Operations</p>
       </div>
       <form onSubmit={submit}>
         <img className="logo" src="/brand/logo.png" alt="Reliance Freight Systems LLC" width={300} height={72} />

@@ -53,7 +53,7 @@ export default function QuotePrint({ params }: { params: { id: string } }) {
           <tfoot><tr><td colSpan={4} className="num"><b>Total</b></td><td className="num"><b>{fmtMoney(d.total, d.currency)}</b></td></tr></tfoot>
         </table>
         {c.quote_vat_note && <p className="qp-note">{c.quote_vat_note}</p>}
-        {block('Scope of service', d.scope)}{block('Exclusions', d.exclusions)}{block('Terms and conditions', d.terms)}
+        {block('Scope of service', d.scope)}{block('Exclusions', d.exclusions)}{block('Terms and conditions', d.terms)}{block('Payment / commercial conditions', d.payment_terms)}{block('Additional remarks', d.additional_remarks)}
         <p className="qp-sign">Prepared by {d.prepared_by}</p>
       </div>
     </div>

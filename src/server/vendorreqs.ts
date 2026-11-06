@@ -167,7 +167,8 @@ export async function createVendorRequest(actor: Actor, b: any, client?: PoolCli
          currency, actor.id, b.rate_valid_until || null, group, b.service === 'rate' || b.service === 'booking' ? source : null, assigned], c);
       await evt(c, actor, r.id, 'Request created', VR_SERVICES[b.service] + (group ? ' — sent to several vendors for comparison' : '')
         + (assigned ? ' — assigned to the Agent Coordinator' : ''));
-      if (assigned) await c.query('insert into notifications (user_id, type, title) values ($1,$2,$3)', [assigned, 'vr.assigned', `Rate request ${r.request_no} assigned to you`]);
+      if (assigned && !fileId) await c.query('insert into notifications (user_id, type, title) values ($1,$2,$3)', [assigned, 'vr.assigned', `Rate request ${r.request_no} assigned to you`]);
+      if (fileId && b.service === 'rate') await (await import('./notify')).notifyGroup(c, actor, fileId, 'rate_requested', `${r.request_no}${assigned ? ' (Agent Coordinator)' : ''}`, { vendorRequestId: r.id, also: [assigned] });
       made.push(r);
     }
     if (fileId && b.service === 'rate') {
@@ -287,7 +288,8 @@ export async function vendorRequestAction(actor: Actor, id: string, b: any, clie
         to = b.assigned_to;
         await c.query(`update vendor_requests set assigned_to = $2, rate_source = 'agent_coordinator', updated_at = now() where id = $1`, [id, to]);
         await evt(c, actor, id, 'Assigned to the Agent Coordinator', u.full_name);
-        await c.query('insert into notifications (user_id, type, title) values ($1,$2,$3)', [to, 'vr.assigned', `Rate request ${r.request_no} assigned to you`]);
+        if (r.job_file_id) await (await import('./notify')).notifyGroup(c, actor, r.job_file_id, 'assigned', `${r.request_no} to Agent Coordinator ${u.full_name}`, { vendorRequestId: id, also: [to] });
+        else await c.query('insert into notifications (user_id, type, title) values ($1,$2,$3)', [to, 'vr.assigned', `Rate request ${r.request_no} assigned to you`]);
       } else {
         await c.query('update vendor_requests set assigned_to = null, updated_at = now() where id = $1', [id]);
         await evt(c, actor, id, 'Agent Coordinator removed', txt(b.note, 300));
@@ -321,6 +323,7 @@ export async function vendorRequestAction(actor: Actor, id: string, b: any, clie
       const used = await q(`select distinct x.quote_no from quotation_lines l join quotations x on x.id = l.quotation_id where l.vendor_request_id = $1
         and x.status in ('draft','pending_approval','approved','sent')`, [id], c);
       if (used.length) await evt(c, actor, id, 'Check the quotations using this rate', used.map((u) => u.quote_no).join(', '));
+      if (r.job_file_id) await (await import('./notify')).notifyGroup(c, actor, r.job_file_id, 'rate_updated', `${r.request_no} version ${r.rate_version + 1}`, { vendorRequestId: id });
       return;
     }
     const to = String(b.status ?? '');
@@ -358,6 +361,8 @@ export async function vendorRequestAction(actor: Actor, id: string, b: any, clie
     if (ch) await saveCharges(c, id, r.rate_version, ch.lines);
     await evt(c, actor, id, `Status: ${VR_STATUS[to][0]}`, detail);
     if (to === 'quoted' && r.service === 'rate' && r.job_file_id) {
+      const vn = await one('select v.name from vendors v where v.id = $1', [r.vendor_id], c);
+      await (await import('./notify')).notifyGroup(c, actor, r.job_file_id, 'rate_received', `${r.request_no}${vn ? ` from ${vn.name}` : ''}`, { vendorRequestId: id });
       const { setStage } = await import('./commercial');
       await setStage(c, actor, r.job_file_id, 'rates_received');
     }

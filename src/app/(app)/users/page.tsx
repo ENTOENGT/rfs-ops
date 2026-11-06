@@ -138,7 +138,7 @@ export default function Users() {
             <td><b>{u.full_name}</b>{u.app_only && <div className="muted small">Phone app</div>}</td>
             <td>{u.app_only && u.mobile ? u.mobile : u.email}</td>
             <td>{u.department_name ?? <span className="flag">No department</span>}{u.department_name && u.department_active === false && <div className="flag">Department retired — move this user</div>}</td>
-            <td>{u.role_name}{u.is_manager && <span className="badge outline" style={{ marginLeft: 6 }}>Manager</span>}</td>
+            <td>{u.role_name}{u.is_manager && <span className="badge outline" style={{ marginLeft: 6 }}>Manager</span>}{u.role_retired && <div className="flag">Role retired — give this user a new role</div>}</td>
             <td className="small">{data.divisions.find(([k]: [string]) => k === u.division)?.[1] ?? ''}{u.coordinator_name && <div>Coordinator: {u.coordinator_name}</div>}
               {u.salesmen_count > 0 && <div className="muted">{u.salesmen_count} Salesm{u.salesmen_count === 1 ? 'an' : 'en'}</div>}</td>
             <td>{u.overrides.length ? <span className="flag">{u.overrides.length}</span> : '—'}</td>

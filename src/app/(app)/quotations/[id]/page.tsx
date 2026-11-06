@@ -37,7 +37,7 @@ function ConfirmModal({ d, onClose, act }: { d: any; onClose: () => void; act: (
 }
 
 const HEAD = ['customer_id', 'service_type', 'direction', 'enquiry_reference', 'origin', 'destination', 'cargo_description', 'packages',
-  'gross_weight_kg', 'volume_cbm', 'chargeable_weight_kg', 'valid_until', 'scope', 'exclusions', 'terms'];
+  'gross_weight_kg', 'volume_cbm', 'chargeable_weight_kg', 'valid_until', 'scope', 'exclusions', 'terms', 'additional_remarks', 'payment_terms'];
 
 export default function Quotation({ params }: { params: { id: string } }) {
   const { me } = useMe();
@@ -159,7 +159,8 @@ export default function Quotation({ params }: { params: { id: string } }) {
                 {d.totals.margin_pct !== null && Number(d.totals.margin_pct) < d.min_margin_pct && <span className="flag" style={{ marginLeft: 8 }}>Below {d.min_margin_pct}%</span>}</dd></>}
             </dl>
           </div>
-          <div className="panel"><h2>Terms</h2><dl className="kv">{kv('Scope', d.scope)}{kv('Exclusions', d.exclusions)}{kv('Terms', d.terms)}</dl></div>
+          <div className="panel"><h2>Terms</h2>{d.terms_template_name && <p className="muted small" style={{ marginTop: 0 }}>From template "{d.terms_template_name}"{d.terms_edited ? ', changed for this quotation' : ''}</p>}
+            <dl className="kv">{kv('Scope', d.scope)}{kv('Exclusions', d.exclusions)}{kv('Terms', d.terms)}{kv('Payment / commercial', d.payment_terms)}{kv('Additional remarks', d.additional_remarks)}</dl></div>
         </div>
         <div>
           <div className="panel"><h2>Enquiry</h2><dl className="kv">

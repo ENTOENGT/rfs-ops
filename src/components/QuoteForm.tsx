@@ -125,10 +125,14 @@ export function QuoteFields({ f, setF, fe = {}, minMargin, vendorRates = [], job
             : minMargin !== undefined && t.pct !== null && Number(t.pct) < minMargin && <span className="flag" style={{ marginLeft: 8 }}>Below {minMargin}% — needs approval</span>}</dd></>}
       </dl>
     </div>
-    <div className="panel"><h2>Terms</h2><div className="grid g3">
-      <label className="f"><span>Scope of service</span><textarea rows={3} value={f.scope ?? ''} onChange={set('scope')} /></label>
-      <label className="f"><span>Exclusions</span><textarea rows={3} value={f.exclusions ?? ''} onChange={set('exclusions')} placeholder="e.g. Duty, VAT, inspection charges, demurrage" /></label>
-      <label className="f"><span>Terms and conditions</span><textarea rows={3} value={f.terms ?? ''} onChange={set('terms')} /></label>
+    <div className="panel"><h2>Terms</h2>
+      {f.terms_template_name && <p className="muted small" style={{ marginTop: 0 }}>Filled from the template "{f.terms_template_name}". You can change the texts for this quotation only; the template stays as it is.</p>}
+      <div className="grid g3">
+      <label className="f"><span>Scope of service</span><textarea rows={4} value={f.scope ?? ''} onChange={set('scope')} /></label>
+      <label className="f"><span>Exclusions</span><textarea rows={4} value={f.exclusions ?? ''} onChange={set('exclusions')} placeholder="e.g. Duty, VAT, inspection charges, demurrage" /></label>
+      <label className="f"><span>Terms and conditions</span><textarea rows={4} value={f.terms ?? ''} onChange={set('terms')} /></label>
+      <label className="f"><span>Payment / commercial conditions</span><textarea rows={3} value={f.payment_terms ?? ''} onChange={set('payment_terms')} /></label>
+      <label className="f span2"><span>Additional remarks</span><textarea rows={3} value={f.additional_remarks ?? ''} onChange={set('additional_remarks')} /></label>
     </div></div>
   </>;
 }

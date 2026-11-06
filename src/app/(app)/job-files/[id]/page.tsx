@@ -3,6 +3,7 @@ import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { api, fmtDate, fmtDateTime, fmtMoney } from '@/components/api';
 import { EmailButton } from '@/components/EmailButton';
+import { EmailsPanel } from '@/components/EmailsPanel';
 import { useMe } from '@/components/Shell';
 import { JobFileFields } from '@/components/JobFileForm';
 import JobFileDocs from '@/components/JobFileDocs';
@@ -14,7 +15,7 @@ const EDIT_KEYS = ['customer_id', 'direction', 'mode', 'needs_clearance', 'needs
   'notify_party', 'origin', 'destination', 'port_of_loading', 'port_of_discharge', 'carrier', 'vessel_flight', 'voyage', 'booking_reference', 'mbl_mawb',
   'hbl_hawb', 'incoterm', 'etd', 'eta', 'atd', 'ata', 'packages', 'gross_weight_kg', 'volume_cbm', 'chargeable_weight_kg', 'cargo_description', 'remarks'];
 
-function Milestones({ d, act }: { d: any; act: (b: any) => Promise<void> }) {
+function Milestones({ d, act }: { d: any; act: (b: any) => Promise<unknown> }) {
   const [planned, setPlanned] = useState<Record<string, string>>({});
   return (
     <div className="panel"><h2>Milestones</h2>
@@ -48,12 +49,13 @@ export default function JobFile({ params }: { params: { id: string } }) {
   const [edit, setEdit] = useState<any>(null);
   const [cont, setCont] = useState({ container_no: '', size_type: '40HC', seal_no: '' });
   const [note, setNote] = useState('');
+  const [emailsKey, setEmailsKey] = useState(0);
   const load = () => api(`/api/job-files/${params.id}`).then(setD).catch((e) => setErr(e.message));
   useEffect(() => { load(); }, [params.id]);
   const act = async (b: any, done?: string) => {
     setErr(''); setOk('');
-    try { setD(await api(`/api/job-files/${params.id}`, { body: b })); if (done) setOk(done); }
-    catch (e: any) { setErr(e.message); window.scrollTo(0, 0); }
+    try { setD(await api(`/api/job-files/${params.id}`, { body: b })); if (done) setOk(done); return true; }
+    catch (e: any) { setErr(e.message); window.scrollTo(0, 0); return false; }
   };
   const saveEdit = async () => {
     setErr('');
@@ -79,7 +81,7 @@ export default function JobFile({ params }: { params: { id: string } }) {
         <span className="spacer" />
         {d.can.status && open && d.status !== 'enquiry' && <select value={d.status} onChange={(e) => act({ action: 'status', status: e.target.value }, 'Status changed')} style={{ width: 'auto' }} aria-label="Status">
           {active.map(([c, n]) => <option key={c} value={c}>{n}</option>)}</select>}
-        {d.can.edit && !edit && d.status !== 'enquiry' && d.status !== 'cancelled' && <EmailButton kind="job_file" id={d.id} label="Email customer" onLogged={load} />}
+        {d.can.edit && !edit && d.status !== 'cancelled' && d.stage !== 'lost' && <EmailButton kind="job_file" id={d.id} label="Email customer" onLogged={() => { load(); setEmailsKey((k) => k + 1); }} />}
         {d.can.edit && !edit && <button className="btn" onClick={() => setEdit({ ...d })}>Edit</button>}
         {d.can.lost && <button className="btn" onClick={() => { const reason = prompt('Mark this enquiry as lost? Give the reason:'); if (reason) act({ action: 'lost', reason }, 'Marked as lost'); }}>Lost</button>}
         {d.can.close && open && d.status !== 'enquiry' && <button className="btn primary" disabled={!d.closure.can_close} title={d.closure.can_close ? '' : 'See "Before it can close"'}
@@ -94,7 +96,7 @@ export default function JobFile({ params }: { params: { id: string } }) {
       {d.status === 'cancelled' && <div className="msg warn">Cancelled: {d.cancel_reason}</div>}
       {d.service_instructions && <div className="msg">Customer's standing instructions: {d.service_instructions}</div>}
 
-      {!edit && <StageHeader d={d} />}
+      {!edit && <StageHeader d={d} act={act} />}
       {/* while in Commercials these come first; once handed over they move below the operational sections */}
       {!edit && d.status === 'enquiry' && commercialPanels}
       {edit ? <>
@@ -119,6 +121,10 @@ export default function JobFile({ params }: { params: { id: string } }) {
             {d.quotation && kv('Quotation', <Link href={`/quotations/${d.quotation.id}`}>{d.quotation.quote_no}</Link>)}
           </dl></div>
           <JobFileDocs d={d} onChange={(v) => { setD(v); setErr(''); }} onError={(m) => { setErr(m); window.scrollTo(0, 0); }} />
+          {can('emails.view') && <EmailsPanel key={emailsKey} d={d} onSaved={load} />}
+          {d.old_cases?.length > 0 && <div className="panel"><h2>Earlier customer service cases</h2>
+            <p className="muted small" style={{ marginTop: 0 }}>Customer Service is no longer a separate team; these are kept for reference.</p>
+            {d.old_cases.map((k: any) => <div key={k.id} className="small"><Link href={`/cases/${k.id}`}>{k.case_no}</Link> — {k.subject} <span className="muted">({k.status}, {fmtDate(k.created_at)})</span></div>)}</div>}
           <Milestones d={d} act={act} />
           <div className="panel"><h2>Containers</h2>
             {d.containers.length === 0 && <p className="muted small">No containers.</p>}

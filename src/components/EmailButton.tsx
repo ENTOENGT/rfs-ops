@@ -22,7 +22,7 @@ export function EmailButton({ kind, id, label = 'Email', className = 'btn', upda
     ...extra.split(/[,;\s]+/).filter((x) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(x))] : [];
   const mailto = d?.subject !== undefined
     ? `mailto:${to.map(encodeURIComponent).join(',')}?subject=${encodeURIComponent(d.subject)}&body=${encodeURIComponent(d.body.replace(/\r?\n/g, '\r\n'))}` : '';
-  const log = () => api('/api/email-draft', { body: { kind, id, update: d.update, to, subject: d.subject } }).then(() => onLogged?.()).catch(() => {});
+  const log = () => api('/api/email-draft', { body: { kind, id, update: d.update, to, subject: d.subject, body: d.body } }).then(() => onLogged?.()).catch(() => {});
   const open = () => { window.location.href = mailto; log(); };
   const copy = async () => {
     try { await navigator.clipboard.writeText(`To: ${to.join(', ')}\nSubject: ${d.subject}\n\n${d.body}`); setCopied(true); log(); } catch { setErr('Copy did not work — select the text and copy it by hand.'); }
@@ -34,8 +34,10 @@ export function EmailButton({ kind, id, label = 'Email', className = 'btn', upda
       {err && <div className="msg err">{err}</div>}
       {!d.error && <>
         {d.note && <div className="msg warn small">{d.note}</div>}
-        {d.options && <label className="f"><span>Which update?</span><select value={d.update} onChange={(e) => load(e.target.value)}>
+        {d.options && <label className="f"><span>Which email?</span><select value={d.update} onChange={(e) => load(e.target.value)}>
           {d.options.map(([c, n]: [string, string]) => <option key={c} value={c}>{n}</option>)}</select></label>}
+        {d.template && <p className="muted small" style={{ margin: '0 0 8px' }}>Template: {d.template.name} ({d.template.source === 'saved' ? 'your company\'s template' : 'standard text'})</p>}
+        {d.missing?.length > 0 && <div className="msg warn small">Not known yet — fill these in before sending: {d.missing.map((m: string) => `[${m}]`).join(', ')}</div>}
         <div className="f"><span>To</span>
           {d.recipients.length > 0 && <div className="checks">{d.recipients.map((r: any, i: number) => <label key={r.email} className="check">
             <input type="checkbox" checked={r.picked} onChange={() => setD({ ...d, recipients: d.recipients.map((x: any, j: number) => j === i ? { ...x, picked: !x.picked } : x) })} />

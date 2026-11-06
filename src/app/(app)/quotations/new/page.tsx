@@ -27,10 +27,22 @@ function NewQuotationForm() {
         packages: j.packages ?? '', gross_weight_kg: j.gross_weight_kg ?? '', volume_cbm: j.volume_cbm ?? '', chargeable_weight_kg: j.chargeable_weight_kg ?? '' }));
     }).catch((e) => setErr(e.message));
   }, [jobFileId]);
+  // Part G1: the default Scope, Exclusions and Terms for this customer / division / mode (only fills empty boxes)
+  useEffect(() => {
+    if (!f.customer_id || !f.service_type) return;
+    api(`/api/templates/terms/pick?${new URLSearchParams({ customer_id: f.customer_id, service_type: f.service_type, ...(f.job_file_id ? { job_file_id: f.job_file_id } : {}) })}`)
+      .then((t) => { if (!t.template_id) return; setF((x: any) => {
+        const keys = ['scope', 'exclusions', 'terms', 'additional_remarks', 'payment_terms'];
+        if (x.terms_template_id === t.template_id) return x;
+        const touched = keys.some((k) => x[k] && x[k] !== (x._tpl ?? {})[k]);
+        if (touched) return x;
+        return { ...x, ...Object.fromEntries(keys.map((k) => [k, t[k] ?? ''])), terms_template_id: t.template_id, terms_template_name: t.template_name, _tpl: t };
+      }); }).catch(() => {});
+  }, [f.customer_id, f.service_type, f.job_file_id]);
   if (!can('quotes.create')) return <div className="page"><div className="msg err">You can't create quotations.</div></div>;
   const save = async () => {
     setErr(''); setFe({}); setBusy(true);
-    try { const r = await api('/api/quotations', { body: f }); router.push(`/quotations/${r.id}`); }
+    try { const { _tpl, terms_template_name, ...send } = f; const r = await api('/api/quotations', { body: send }); router.push(`/quotations/${r.id}`); }
     catch (e: any) { setBusy(false); setErr(e.message); if (e.details?.fields) setFe(e.details.fields); window.scrollTo(0, 0); }
   };
   const rates = (file?.vendor_requests ?? []).filter((r: any) => r.quoted_cost);

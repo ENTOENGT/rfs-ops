@@ -24,6 +24,9 @@ export interface FileStore {
   /** inline=true opens the file in the browser (viewer); otherwise it is saved as a download. */
   downloadUrl(key: string, fileName: string, inline?: boolean): Promise<string>;
   remove(key: string): Promise<void>;
+  /** Server-side read / write, for files the server itself opens (saved emails and their attachments). */
+  read(key: string): Promise<Buffer>;
+  write(key: string, body: Buffer, contentType: string): Promise<void>;
 }
 
 // ------------------------------------------------------------ supabase
@@ -88,6 +91,15 @@ function supabaseStore(rawUrl: string, key: string): FileStore {
       const { error } = await bucket().remove([k]);
       if (error) fail('deleting', error);
     },
+    async read(k) {
+      const { data, error } = await bucket().download(k);
+      if (error || !data) fail('reading the file', error);
+      return Buffer.from(await data!.arrayBuffer());
+    },
+    async write(k, body, contentType) {
+      const { error } = await bucket().upload(k, body, { contentType, upsert: false });
+      if (error) fail('saving the file', error);
+    },
   };
 }
 
@@ -119,6 +131,8 @@ function localStore(): FileStore {
     },
     async downloadUrl(k, fileName, inline = false) { return link(k, 'get', `&name=${encodeURIComponent(fileName)}${inline ? '&inline=1' : ''}`); },
     async remove(k) { await unlink(localPath(k)).catch(() => {}); await unlink(localPath(k) + '.type').catch(() => {}); },
+    async read(k) { return readFile(localPath(k)); },
+    async write(k, body, contentType) { await localWrite(k, body, contentType); },
   };
 }
 export async function localWrite(k: string, body: Buffer, contentType: string) {

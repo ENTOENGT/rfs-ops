@@ -142,14 +142,38 @@ a.kpi:hover { background: #faf8f4; text-decoration: none; }
 .modal-bg { position: fixed; inset: 0; background: #1f222666; display: grid; place-items: center; z-index: 20; padding: 16px; }
 .modal { background: #fff; border-radius: var(--radius); padding: 20px; width: min(560px, 100%); max-height: 90vh; overflow-y: auto; }
 .modal .actions, .form-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
-.login { min-height: 100vh; display: grid; grid-template-columns: 1fr 420px; }
-.login .art { background: var(--side); color: #c9ccd1; padding: 48px; display: flex; flex-direction: column; justify-content: space-between; }
-.login .art .mark { width: 120px; height: auto; opacity: .95; }
-.login .logo { width: 100%; max-width: 300px; height: auto; margin-bottom: 8px; }
-.login .art h1 { color: #fff; font-size: 28px; font-weight: 500; max-width: 420px; }
-.login .art p { max-width: 420px; }
-.login form { padding: 48px 40px; display: flex; flex-direction: column; justify-content: center; gap: 14px; background: #fff; }
-@media (max-width: 800px) { .login { grid-template-columns: 1fr; } .login .art { display: none; } }
+/* Login (Part G1): "MOVING AHEAD" on the left, a larger sign-in panel on the right */
+.login { min-height: 100vh; display: grid; grid-template-columns: minmax(0, 1fr) minmax(400px, 520px); }
+.login .art { background: var(--side); color: #c9ccd1; padding: 44px 56px; display: flex; flex-direction: column; justify-content: space-between; gap: 32px; }
+.login .art .mark { width: 96px; height: auto; opacity: .95; }
+.login .art .pitch { max-width: 640px; }
+.login .art .motto { color: #fff; font-size: clamp(64px, 8.4vw, 132px); line-height: .9; font-weight: 700; letter-spacing: -.035em; margin: 0 0 22px; }
+.login .art .motto span { color: var(--brand-gold); }
+.login .art .tagline { color: #fff; font-size: 22px; font-style: italic; margin: 0 0 14px; }
+.login .art .lead { font-size: 16px; line-height: 1.6; max-width: 60ch; margin: 0 0 26px; }
+.login .art h2 { color: var(--brand-gold); font-size: 14px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; margin: 28px 0 0; }
+.login .art .caps { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px 28px; }
+.login .art .caps li { font-size: 15px; color: #e4e6e9; padding-left: 18px; position: relative; }
+.login .art .caps li::before { content: ''; position: absolute; left: 0; top: .62em; width: 9px; height: 2px; background: var(--brand-gold); }
+.login .art .caps em { font-style: normal; font-size: 11px; letter-spacing: .04em; color: var(--brand-gold); border: 1px solid #e8a80866; border-radius: 3px; padding: 0 5px; margin-left: 6px; white-space: nowrap; }
+.login .art .foot { font-size: 12px; color: #8b9097; margin: 0; }
+.login form { padding: 56px 56px; display: flex; flex-direction: column; justify-content: center; gap: 18px; background: #fff; }
+.login form h1 { font-size: 30px; margin: 4px 0; }
+.login form .f span { font-size: 15px; }
+.login form input { font-size: 17px; padding: 13px 14px; }
+.login form .btn.primary { font-size: 17px; padding: 14px 18px; }
+.login .logo { width: 100%; max-width: 320px; height: auto; margin-bottom: 8px; }
+@media (max-width: 1100px) { .login .art .caps { grid-template-columns: minmax(0, 1fr); } }
+@media (max-width: 860px) {
+  .login { grid-template-columns: minmax(0, 1fr); }
+  .login .art { padding: 28px 20px; gap: 14px; }
+  .login .art .mark, .login .art h2, .login .art .foot { display: none; }
+  .login .art .motto { font-size: clamp(48px, 15vw, 84px); margin-bottom: 10px; }
+  .login .art .tagline { font-size: 17px; margin: 0; }
+  .login .art .caps { display: none; }
+  .login form { padding: 28px 20px 40px; }
+}
+.see-all { text-align: center; background: #faf9f6; }
 .bell { position: relative; }
 .bell .dot { position: absolute; top: -4px; right: -6px; background: var(--attention); color: #fff; font-size: 11px; border-radius: 8px; padding: 0 5px; }
 .dropdown { position: absolute; right: 0; top: 36px; width: 340px; background: #fff; border: 1px solid var(--line); border-radius: var(--radius); box-shadow: 0 8px 24px #1f222622; z-index: 10; max-height: 420px; overflow-y: auto; }

@@ -24,9 +24,12 @@ export async function uploadToShipment(fileId: string, file: File, docType: stri
 
 const MAIN = STAGES.filter(([c]) => !['lost', 'cancelled', 'booking_confirmed'].includes(c));
 /** The three numbers, the people, and where the shipment stands. */
-export function StageHeader({ d }: { d: any }) {
+export function StageHeader({ d, act }: { d: any; act?: (b: any, done?: string) => Promise<any> }) {
+  const { can, lk } = useMe();
+  const [re, setRe] = useState<any>(null);
   if (!d.enquiry_ref) return null;
   const idx = MAIN.findIndex(([c]) => c === d.stage);
+  const canReassign = act && can('commercial.manage') && !['handed_over', 'lost', 'cancelled'].includes(d.stage);
   return (
     <div className="panel" style={{ padding: '10px 14px' }}>
       <div className="refs">
@@ -37,7 +40,17 @@ export function StageHeader({ d }: { d: any }) {
         <span>Salesman <b>{d.salesman_name ?? '—'}</b></span>
         <span>Coordinator <b>{d.coordinator_name ?? '—'}</b></span>
         <span className="muted">Created by {d.created_by_name}</span>
+        {canReassign && !re && <button className="linkish" onClick={() => setRe({ salesman_id: d.salesman_id ?? '', coordinator_id: d.coordinator_id ?? '', reason: '' })}>Reassign</button>}
       </div>
+      {re && <div className="grid g4" style={{ marginTop: 8 }}>
+        <label className="f"><span>Salesman</span><select value={re.salesman_id} onChange={(e) => setRe({ ...re, salesman_id: e.target.value })}><option value="">—</option>
+          {(lk.salesmen ?? []).map((u: any) => <option key={u.id} value={u.id}>{u.name}</option>)}</select></label>
+        <label className="f"><span>Coordinator</span><select value={re.coordinator_id} onChange={(e) => setRe({ ...re, coordinator_id: e.target.value })}><option value="">—</option>
+          {(lk.coordinators ?? []).map((u: any) => <option key={u.id} value={u.id}>{u.name}</option>)}</select></label>
+        <label className="f"><span>Why? *</span><input value={re.reason} onChange={(e) => setRe({ ...re, reason: e.target.value })} /></label>
+        <div style={{ display: 'flex', gap: 6, alignItems: 'end' }}><button className="btn small" onClick={() => setRe(null)}>Cancel</button>
+          <button className="btn small primary" disabled={!re.reason.trim()} onClick={async () => { if (await act!({ action: 'reassign', ...re, salesman_id: re.salesman_id || null, coordinator_id: re.coordinator_id || null }, 'Reassigned — both people were told.')) setRe(null); }}>Save</button></div>
+      </div>}
       {['lost', 'cancelled'].includes(d.stage) ? <div className="msg warn" style={{ margin: '8px 0 0' }}>{d.stage === 'lost' ? 'Lost' : 'Cancelled'}: {d.cancel_reason}</div>
         : <>
           <div className="stage-track" aria-label="Progress">{MAIN.map(([c, n], i) => <span key={c} className={i < idx ? 'done' : i === idx ? 'now' : ''}>{n}</span>)}</div>
@@ -98,7 +111,7 @@ export function RatesAndQuotes({ d, reload }: { d: any; reload: () => void }) {
 }
 
 /** After the customer confirms: book with the chosen agent / carrier, then record the confirmation. */
-export function BookingPanel({ d, act }: { d: any; act: (b: any, done?: string) => Promise<void> }) {
+export function BookingPanel({ d, act }: { d: any; act: (b: any, done?: string) => Promise<unknown> }) {
   const { me } = useMe();
   const rates = (d.vendor_requests ?? []).filter((r: any) => r.service === 'rate' && r.status !== 'cancelled' && r.quoted_cost !== null);
   const preferred = rates.find((r: any) => r.status === 'confirmed') ?? rates.find((r: any) => r.lowest) ?? rates[0];
@@ -139,7 +152,7 @@ export function BookingPanel({ d, act }: { d: any; act: (b: any, done?: string) 
 }
 
 /** The pre-alert: expected date and follow-up, received (file + details), correction, verified against the booking. */
-export function PrealertPanel({ d, act, onError }: { d: any; act: (b: any, done?: string) => Promise<void>; onError: (m: string) => void }) {
+export function PrealertPanel({ d, act, onError }: { d: any; act: (b: any, done?: string) => Promise<unknown>; onError: (m: string) => void }) {
   const p = d.prealert;
   const air = d.mode === 'air';
   const [r, setR] = useState<any>({ source: air ? 'airline' : 'shipping_line', vessel_flight: d.vessel_flight ?? '', voyage: d.voyage ?? '', containers: d.containers.map((k: any) => k.container_no).join(', '),
@@ -202,7 +215,7 @@ export function PrealertPanel({ d, act, onError }: { d: any; act: (b: any, done?
 }
 
 /** The operational job: type the Job No. from the ERP; the same record goes to Operations. */
-export function HandoverPanel({ d, act }: { d: any; act: (b: any, done?: string) => Promise<void> }) {
+export function HandoverPanel({ d, act }: { d: any; act: (b: any, done?: string) => Promise<unknown> }) {
   const [h, setH] = useState({ job_no: '', notes: '', skip_prealert_reason: '' });
   if (!d.can.handover) return null;
   const early = d.stage !== 'prealert_verified';

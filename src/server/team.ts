@@ -41,10 +41,11 @@ async function grantable(actor: Actor, scope: Scope) {
 }
 
 async function assignableRoles(scope: Scope) {
-  if (scope.all) return q(`select r.id, r.code, r.name, r.side, r.department_id, r.is_manager, r.app_only from roles r
+  // retired roles (Customer Service, migration 020) are kept for history but can't be given any more
+  if (scope.all) return q(`select r.id, r.code, r.name, r.side, r.department_id, r.is_manager, r.app_only from roles r where r.retired_at is null
     order by r.is_manager desc, r.name`);
   return q(`select r.id, r.code, r.name, r.side, r.department_id, r.is_manager, r.app_only from roles r
-    where r.code <> 'super_admin' and not r.is_manager
+    where r.code <> 'super_admin' and not r.is_manager and r.retired_at is null
       and (r.department_id = $1 or (r.department_id is null and r.side = $2)) order by r.name`, [scope.deptId, scope.side]);
 }
 
@@ -124,7 +125,7 @@ export async function listUsers(actor: Actor) {
   const users = await q(`select u.id, u.full_name, u.email, u.mobile, u.is_active, u.must_change_password, u.last_login_at, u.created_at,
       u.division, u.coordinator_id, (select k.full_name from users k where k.id = u.coordinator_id) coordinator_name,
       (select count(*)::int from users s where s.coordinator_id = u.id and s.deleted_at is null and s.is_active) salesmen_count,
-      d.is_active department_active,
+      d.is_active department_active, r.retired_at is not null role_retired,
       r.id role_id, r.code role_code, r.name role_name, r.is_manager, r.app_only, d.id department_id, d.name department_name, d.side department_side
     from users u join roles r on r.id = u.role_id left join departments d on d.id = u.department_id
     ${where} order by d.name nulls first, r.is_manager desc, u.full_name`, params);

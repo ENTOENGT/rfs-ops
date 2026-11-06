@@ -34,9 +34,12 @@ before(async () => {
 test('1. Vendor rate request email: vendor address, Job No., route, our reference, reply-by date', async () => {
   const d = await emailDraft(sales, { kind: 'vendor_request', id: reqId });
   assert.deepEqual(d.recipients.map((r) => [r.email, r.picked]), [['raj@msc.example', true]]);
-  assert.match(d.subject, /^Rate request – Job SI-EM-1 – Ningbo → Jebel Ali – Our ref\. VR-\d+$/);
+  // Part G1: one subject for the whole shipment, Enquiry Ref first
+  assert.match(d.subject, /^\[ENQ-IMP-\d{2}-\d{5}\] \[SI-EM-1\] Shipment Update – Ningbo to Jebel Ali$/);
+  assert.equal(d.template?.key, 'liner_rate_request', 'a shipping line gets the liner template');
   assert.match(d.body, /^Dear Raj,/);
-  for (const s of ['1x40HC, ready 10 Nov', 'Job No.: SI-EM-1', 'Route: Ningbo → Jebel Ali', 'We need your rate by', 'Sally Sales']) assert.ok(d.body.includes(s), s);
+  for (const s of ['1x40HC, ready 10 Nov', 'SI-EM-1', 'Route: Ningbo → Jebel Ali', 'We need your rate by', 'Sally Sales']) assert.ok(d.body.includes(s), s);
+  assert.ok(!d.body.includes('Desert'), 'agents never see the customer name');
   await emailPrepared(sales, { kind: 'vendor_request', id: reqId, to: ['raj@msc.example'], subject: d.subject });
   assert.ok((await vr.getVendorRequest(sales, reqId)).events.some((e: any) => e.title === 'Email prepared' && e.details.includes('raj@msc.example')));
 });
@@ -48,7 +51,7 @@ test('2. Quotation email: only when approved; selling prices only — the cost n
   await qt.quotationAction(sales, quoteId, { action: 'submit' });
   const d = await emailDraft(sales, { kind: 'quotation', id: quoteId });
   assert.deepEqual(d.recipients.map((r) => [r.email, r.picked]), [['omar@desert.ae', true], ['accounts@desert.ae', false], ['info@desert.ae', false]]);
-  assert.match(d.subject, /^Quotation Q-\d+ – Ningbo to Jebel Ali – Job SI-EM-1 – Your ref\. PO-77$/);
+  assert.match(d.subject, /^\[ENQ-IMP-\d{2}-\d{5}\] \[SI-EM-1\] Shipment Update – Ningbo to Jebel Ali$/);
   assert.match(d.body, /^Dear Omar,/);
   assert.ok(d.body.includes('Ocean freight: AED 1,250.00 per container x 2 = AED 2,500.00'));
   assert.ok(d.body.includes('Total: AED 2,500.00 (excluding VAT)'));
@@ -62,8 +65,8 @@ test('3. Job File update to the customer: chosen update, shipment details, missi
   const { updateJobFile } = await import('../src/server/jobfiles');
   await updateJobFile(sales, fileId, { carrier: 'MSC', vessel_flight: 'MSC AURORA', voyage: '123W', mbl_mawb: 'MSCU123', eta: D(12), etd: D(1) });
   const d = await emailDraft(sales, { kind: 'job_file', id: fileId, update: 'departed' });
-  assert.equal(d.update, 'departed');
-  assert.match(d.subject, /^Departed – Job SI-EM-1 – Your ref\. PO-77 – Ningbo → Jebel Ali$/);
+  assert.equal(d.update, 'shipment_update:departed');
+  assert.match(d.subject, /^\[ENQ-IMP-\d{2}-\d{5}\] \[SI-EM-1\] Shipment Update – Ningbo to Jebel Ali$/);
   for (const s of ['Your shipment has departed', 'Carrier / vessel: MSC · MSC AURORA · voy. 123W', 'BL no.: MSCU123', 'ETA:']) assert.ok(d.body.includes(s), s);
   const docs = await emailDraft(sales, { kind: 'job_file', id: fileId, update: 'documents_needed' });
   const missing = (await getJobFile(sales, fileId)).checklist.filter((c: any) => c.status === 'missing');

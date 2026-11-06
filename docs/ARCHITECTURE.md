@@ -549,6 +549,33 @@ quotations within validity; every print / download is written to the quotation h
 - **Screens**: LCL menu group — consolidation register (views incl. container monitoring), create, consolidation page with
   9 tabs, house shipment / HBL register, cargo receiving, stuffing and dispatch, 14 LCL reports with Excel/CSV export.
 
+## 15j. Notifications, templates and email history (Part G1, migration 020)
+
+- **Group notifications** (`src/server/notify.ts`): each important event on a shipment notifies its handling group:
+  Salesman, Coordinator, an Agent Coordinator with an open rate request on it, and Commercials Managers of that division
+  (or of all divisions). The person who acted is not notified. Duplicates are dropped (same person, shipment, event and
+  rate request / quotation within 2 minutes). Events come from stage changes (`setStage`) and from rates, quotations,
+  booking, reassignment and saved emails. The `notifications` table is the log; the Notifications page filters by event,
+  marks items read, and stores each person's "email me too" choices (`notification_prefs`, used from G3).
+- **Enquiry Ref with division:** ENQ-IMP / ENQ-EXP / ENQ-CTR-YY-NNNNN for new enquiries.
+- **One subject per shipment:** `threadSubject()` = `[ENQ…]` + `[Job No.]` (or `[SR…]` before handover) + Shipment
+  Enquiry / Booking / Update + `job_files.email_topic` (the route, fixed when the enquiry opens).
+- **Quotation terms templates** (`quote_term_templates`): Scope, Exclusions, Terms, Additional remarks and Payment
+  conditions by division, mode, FCL/LCL or customer. The most specific active template fills a new quotation;
+  `terms_template_id` and `terms_edited` are kept on the quotation. Issued quotations keep their own text.
+- **Email templates** (`email_templates`): 16 emails with `{{Placeholders}}`. Unknown placeholders are refused when
+  saving, and agent emails can't use the customer's name. The subject must keep `{{ThreadSubject}}`. The built-in text
+  is used until a template is saved. Missing values are listed when a draft is made.
+- **Email history** (`email_messages`): prepared emails (Email button) and saved .eml / .msg files, which are read with
+  mailparser and msgreader. Attachments (PDF, images, Office, emails, up to 10 MB) become shipment documents with
+  `email_id`. The same Message-ID can't be saved twice. A subject with another shipment's [ENQ] tag asks for
+  confirmation first.
+- **Reassign:** the Commercials Manager changes the Salesman or Coordinator before handover, with a reason. Old and new
+  people are notified.
+- **Customer Service retired:** the menu item is gone and `roles.retired_at` is set, so the role can't be given. Users
+  who have it are flagged. Old cases show read-only on the shipment.
+- **Login page:** "MOVING AHEAD" on the left; a larger sign-in form on the right.
+
 ## 16. Phase status
 
 | Phase | Status |
@@ -573,5 +600,6 @@ quotations within validity; every print / download is written to the quotation h
 | Part D — Email button with ready-written drafts (vendors, quotations, shipment updates, case replies) | Done |
 | Part E — Commercials Department: divisions, Salesman ↔ Coordinator, three numbers, rates, approvals, booking, pre-alert, handover (migration 018) | Done |
 | Part F — LCL consolidation: containers, house shipments/HBLs, cargo receiving, stuffing, dispatch, LCL registers and reports (migration 019) | Done |
+| Part G1 — group notifications, quotation terms and email templates, one subject per shipment, email history, Customer Service retired, login page (migration 020) | Done |
 | Freight + 3PL — remaining phases: see `docs/FREIGHT_3PL_PLAN.md` | Planned |
 | 7 Email notifications · 8 Saved views, column prefs, live ops table, performance | Planned |

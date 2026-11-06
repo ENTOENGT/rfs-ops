@@ -165,10 +165,11 @@ export async function getQuotation(actor: Actor, id: string) {
   const x = await load(actor, id);
   const [extra, lines, events] = await Promise.all([
     one(`select c.name customer_name, u.full_name created_by_name, a.full_name approved_by_name, dep.name department_name, f.job_no, f.enquiry_ref, f.shipping_ref, f.stage file_stage,
-       sm.full_name salesman_name, sd.full_name salesman_decided_by_name
+       sm.full_name salesman_name, sd.full_name salesman_decided_by_name, tt.name terms_template_name
        from quotations x join customers c on c.id = x.customer_id join users u on u.id = x.created_by left join users a on a.id = x.approved_by
        left join departments dep on dep.id = x.department_id left join job_files f on f.id = x.job_file_id
-       left join users sm on sm.id = x.salesman_id left join users sd on sd.id = x.salesman_decided_by where x.id = $1`, [id]),
+       left join users sm on sm.id = x.salesman_id left join users sd on sd.id = x.salesman_decided_by
+       left join quote_term_templates tt on tt.id = x.terms_template_id where x.id = $1`, [id]),
     q('select * from quotation_lines where quotation_id = $1 order by sort_order', [id]),
     q('select title, details, user_name, at from quotation_events where quotation_id = $1 order by at, id', [id]),
   ]);
@@ -207,7 +208,11 @@ const HEAD: Record<string, (v: unknown) => unknown> = {
   volume_cbm: (v) => num(v, 'Volume'), chargeable_weight_kg: (v) => num(v, 'Chargeable weight'),
   valid_until: (v) => { if (!DATE.test(String(v ?? ''))) throw bad('Choose the date the rates are valid until'); return v; },
   scope: (v) => txt(v, 3000), exclusions: (v) => txt(v, 3000), terms: (v) => txt(v, 3000),
+  additional_remarks: (v) => txt(v, 3000), payment_terms: (v) => txt(v, 3000),
 };
+const TERM_KEYS = ['scope', 'exclusions', 'terms', 'additional_remarks', 'payment_terms'];
+/** Did the person change the template's text for this quotation? (shown as "from template X, changed") */
+const termsDiffer = (q0: any, t: any) => TERM_KEYS.some((k) => String(q0[k] ?? '').trim() !== String(t[k] ?? '').trim());
 /**
  * Selling rate from cost + margin, to the fils.
  *   percent: selling = cost ÷ (1 − margin%)  → the margin is that % of the selling price (cost 1000, 20% → 1250)
@@ -303,6 +308,16 @@ export async function createQuotation(actor: Actor, b: any) {
       dept = f.department_id ?? dept;
       await validateVendorLines(c, f.id, lines);
     } else if (lines.some((l) => l.vendor_request_id)) throw bad('Vendor rates can only be used on a quotation for their own Job No.');
+    // Part G1: default Scope, Exclusions and Terms — the best matching template fills what was left empty
+    const { pickTerms } = await import('./templates');
+    const division = vals.job_file_id ? (await one('select division from job_files where id = $1', [vals.job_file_id], c))?.division : actor.division;
+    const tpl = await pickTerms({ division: division ?? null, service_type: vals.service_type as string, customer_id: vals.customer_id as string }, c);
+    if (tpl) {
+      const chosen = isUuid(b.terms_template_id) && b.terms_template_id === tpl.template_id;
+      for (const k of TERM_KEYS) if (!chosen && (vals[k] === undefined || vals[k] === null)) vals[k] = (tpl as any)[k] || null;
+      vals.terms_template_id = tpl.template_id;
+      vals.terms_edited = termsDiffer(vals, tpl);
+    }
     const cols = Object.keys(vals);
     const x = await one(`insert into quotations (quote_no, department_id, created_by, currency${cols.map((k) => ', ' + k).join('')})
       values ('Q-' || nextval('quote_no_seq'), $1, $2, $3${cols.map((_, i) => `, $${i + 4}`).join('')}) returning id, quote_no`,
@@ -336,6 +351,10 @@ export async function updateQuotation(actor: Actor, id: string, b: any) {
     if (lines) await validateVendorLines(c, x.job_file_id, lines);
     if (sets.length && x.job_file_id && sets.some(([k, v]) => k === 'customer_id' && v !== x.customer_id))
       throw bad('This quotation is on a Job File; its customer is the Job File\'s customer');
+    if (x.terms_template_id && sets.some(([k]) => TERM_KEYS.includes(k))) {
+      const t = await one('select * from quote_term_templates where id = $1', [x.terms_template_id], c);
+      if (t) sets.push(['terms_edited', termsDiffer({ ...x, ...Object.fromEntries(sets) }, t)]);
+    }
     if (sets.length) await c.query(`update quotations set ${sets.map(([k], i) => `${k} = $${i + 2}`).join(', ')}, updated_at = now() where id = $1`,
       [id, ...sets.map(([, v]) => v)]);
     if (lines) {
@@ -426,6 +445,8 @@ export async function quotationAction(actor: Actor, id: string, b: any) {
         if (action !== 'salesman_approve' && !reason) throw bad(action === 'salesman_reject' ? 'Say why it is rejected' : 'Say what has to change');
         const decision = action === 'salesman_approve' ? 'approved' : action === 'salesman_reject' ? 'rejected' : 'returned';
         await c.query('update quotations set salesman_decision = $2, salesman_decided_by = $3, salesman_decided_at = now(), salesman_note = $4 where id = $1', [id, decision, actor.id, reason]);
+        if (x.job_file_id) await (await import('./notify')).notifyGroup(c, actor, x.job_file_id, decision === 'approved' ? 'quotation_approved' : decision === 'returned' ? 'quotation_returned' : 'quotation_rejected',
+          `${x.quote_no} by the Salesman${reason ? `: ${reason}` : ''}`, { quotationId: id, also: [x.created_by] });
         const { setStage } = await import('./commercial');
         if (decision === 'approved') {
           if (!x.needs_manager || x.approved_by) {
@@ -458,6 +479,7 @@ export async function quotationAction(actor: Actor, id: string, b: any) {
         }
         await set('approved', ', approved_by = $3, approved_at = now(), decline_reason = null', [actor.id]);
         await evt(c, actor, id, 'Approved');
+        if (x.job_file_id) await (await import('./notify')).notifyGroup(c, actor, x.job_file_id, 'quotation_approved', x.quote_no, { quotationId: id, also: [x.created_by] });
         await snapshot(c, actor, x, 'approved');
         await c.query('insert into notifications (user_id, type, title, quotation_id) values ($1,$2,$3,$4)', [x.created_by, 'quote.approved', `Quotation ${x.quote_no} approved`, id]);
         if (x.job_file_id) { const { setStage } = await import('./commercial'); await setStage(c, actor, x.job_file_id, 'quotation_draft', { back: true }); }
@@ -467,6 +489,7 @@ export async function quotationAction(actor: Actor, id: string, b: any) {
         const reason = txt(b.reason, 500); if (!reason) throw bad('Say why it is not approved');
         await set('draft', ', decline_reason = $3, salesman_decision = null, salesman_decided_by = null, salesman_decided_at = null, approved_by = null, approved_at = null', [reason]);
         await evt(c, actor, id, 'Not approved — back to draft', reason);
+        if (x.job_file_id) await (await import('./notify')).notifyGroup(c, actor, x.job_file_id, 'quotation_returned', `${x.quote_no} not approved by a manager: ${reason}`, { quotationId: id, also: [x.created_by] });
         if (x.job_file_id) { const { setStage } = await import('./commercial'); await setStage(c, actor, x.job_file_id, 'quotation_draft', { back: true }); }
         await c.query('insert into notifications (user_id, type, title, quotation_id) values ($1,$2,$3,$4)', [x.created_by, 'quote.rejected', `Quotation ${x.quote_no} was not approved`, id]);
         break;
@@ -500,6 +523,7 @@ export async function quotationAction(actor: Actor, id: string, b: any) {
         await c.query(`insert into quotation_responses (quotation_id, version_no, response, note, document_id, user_id, user_name) values ($1,$2,$3,$4,$5,$6,$7)`,
           [id, x.version_no, response, note, b.document_id || null, actor.id, actor.full_name]);
         await evt(c, actor, id, 'Customer response recorded', [response === 'no_reply' ? 'No reply yet' : response === 'revision_requested' ? 'Asked for changes' : 'Note', note].filter(Boolean).join(': '));
+        if (x.job_file_id && response !== 'no_reply') await (await import('./notify')).notifyGroup(c, actor, x.job_file_id, 'customer_response', response === 'revision_requested' ? 'asked for changes' : note, { quotationId: id });
         break;
       }
       case 'accept': {
@@ -629,7 +653,7 @@ export async function customerCopy(actor: Actor, id: string, how: 'print' | 'exc
     gross_weight_kg: x.gross_weight_kg, volume_cbm: x.volume_cbm, chargeable_weight_kg: x.chargeable_weight_kg,
     lines: lines.map((l, i) => ({ description: l.description, unit_name: label(CHARGE_UNITS, l.charge_unit), quantity: l.quantity,
       rate: l.sell_rate, amount: t.each[i].sell })),
-    total: t.sell_total, scope: x.scope, exclusions: x.exclusions, terms: x.terms,
+    total: t.sell_total, scope: x.scope, exclusions: x.exclusions, terms: x.terms, additional_remarks: x.additional_remarks, payment_terms: x.payment_terms,
     prepared_by: extra.prepared_by, prepared_by_email: extra.prepared_by_email,
   };
 }
@@ -666,7 +690,7 @@ export async function customerExcel(actor: Actor, id: string) {
   tot.getCell(5).numFmt = '#,##0.00'; tot.getCell(5).border = { top: { style: 'thin' }, bottom: { style: 'double' } };
   add([]);
   if (d.company.quote_vat_note) add([d.company.quote_vat_note], { italic: true });
-  for (const [k, v] of [['Scope of service', d.scope], ['Exclusions', d.exclusions], ['Terms and conditions', d.terms]] as const)
+  for (const [k, v] of [['Scope of service', d.scope], ['Exclusions', d.exclusions], ['Terms and conditions', d.terms], ['Payment / commercial conditions', d.payment_terms], ['Additional remarks', d.additional_remarks]] as const)
     if (v) { add([]); add([k], bold); for (const line of String(v).split('\n')) add([line]); }
   add([]); add([`Prepared by ${d.prepared_by}${d.prepared_by_email && !d.prepared_by_email.endsWith('.local') ? ` (${d.prepared_by_email})` : ''}`]);
   ws.getColumn(1).alignment = { wrapText: true, vertical: 'top' };

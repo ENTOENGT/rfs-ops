@@ -194,7 +194,11 @@ export async function createJobFile(actor: Actor, b: any, c?: PoolClient, from?:
     // Responsible Salesman, Assigned Coordinator (from the Salesman's mapping) and division — kept apart from Created By
     const people = enquiry || b.salesman_id ? await cm.resolvePeople(actor, b, vals.customer_id as string, vals.direction as string, db)
       : { salesman_id: actor.role_code === 'sales' ? actor.id : null, coordinator_id: actor.role_code === 'coordinator' ? actor.id : null, division: actor.division };
-    Object.assign(vals, people, { enquiry_ref: await cm.newRef(db, 'ENQ'), stage: enquiry ? 'enquiry' : 'handed_over' });
+    Object.assign(vals, people, { enquiry_ref: await cm.newRef(db, 'ENQ', people.division), stage: enquiry ? 'enquiry' : 'handed_over' });
+    // the words after the [ENQ] tag in every email subject — fixed now, so the email thread keeps one subject
+    const place = (a: unknown, b: unknown) => String(a ?? '').trim() || String(b ?? '').trim();
+    const from0 = place(vals.origin, vals.port_of_loading), to0 = place(vals.destination, vals.port_of_discharge);
+    vals.email_topic = from0 && to0 ? `${from0} to ${to0}` : from0 || to0 || null;
     if (!enquiry) Object.assign(vals, { handed_over_at: new Date(), handed_over_by: actor.id });
     let deptId: string | null = actor.department_side === 'operations' ? actor.department_id : null;
     if (!deptId && b.department_id) {
@@ -223,6 +227,7 @@ export async function createJobFile(actor: Actor, b: any, c?: PoolClient, from?:
       new_value: [who.s && `Salesman ${who.s}`, who.k && `Coordinator ${who.k}`, people.division && divisionName(people.division),
         linked.trips + linked.pro ? `Linked ${linked.trips} truck trip(s) and ${linked.pro} PRO request(s) with the same Job No.` : null].filter(Boolean).join(' · ') || null });
     await refreshSearch(db, f.id);
+    if (enquiry) await (await import('./notify')).notifyGroup(db, actor, f.id, 'new_enquiry');
     return { id: f.id as string, job_no: f.job_no as string, enquiry_ref: f.enquiry_ref as string };
   };
   return c ? run(c) : tx(run);
@@ -367,7 +372,10 @@ export async function getJobFile(actor: Actor, id: string) {
   const documents = await q(`select d.id, d.doc_type, d.file_name, d.mime_type, d.size_bytes, d.version, d.replaced_at, d.issue_date, d.expiry_date,
       d.description, d.status, d.review_note, d.reviewed_at, d.created_at, u.full_name uploaded_by_name, r.full_name reviewed_by_name
     from jf_documents d left join users u on u.id = d.uploaded_by left join users r on r.id = d.reviewed_by
-    where d.job_file_id = $1 and d.deleted_at is null order by d.doc_type, d.created_at`, [id]);
+    where d.job_file_id = $1 and d.deleted_at is null
+      -- saved emails and their attachments are listed on the Emails panel instead (Part G1)
+      and d.email_id is null and not exists (select 1 from email_messages e where e.document_id = d.id)
+    order by d.doc_type, d.created_at`, [id]);
   const blockers = closureBlockers(f, work, docsRequired ? docList : []);
   const edit = canEdit(actor, f);
   const prealert = await one(`select p.*, u.full_name verified_by_name from prealerts p left join users u on u.id = p.verified_by where p.job_file_id = $1`, [id]);
@@ -375,9 +383,11 @@ export async function getJobFile(actor: Actor, id: string) {
     join vendors v on v.id = r.vendor_id where r.id = $1`, [f.booking_vendor_request_id]) : null;
   const commercial = f.enquiry_ref !== null;
   const lcl = f.mode === 'sea_lcl' ? await (await import('./lcl')).lclForFile(id) : null;
+  // Customer Service is retired (Part G1): old cases on this shipment stay visible, read-only
+  const oldCases = await q(`select id, case_no, subject, status, created_at from cs_cases where job_file_id = $1 order by created_at`, [id]);
   return {
     ...shape({ ...f, ...extra }), search_text: undefined, quotation_id: quotation ? f.quotation_id : undefined, quotation,
-    prealert, booking, lcl, containers, milestones, events, ...work, checklist: docList, documents, docs_required_to_close: docsRequired,
+    prealert, booking, lcl, old_cases: oldCases, email_subject: (await import('./emails')).threadSubject({ ...f, ...extra }), containers, milestones, events, ...work, checklist: docList, documents, docs_required_to_close: docsRequired,
     quotations: quotations?.map((x) => ({ ...x, status_name: qStatusName(x.status), status_color: qStatusColor(x.status) })) ?? null, vendor_requests: vendorRequests,
     closure: { can_close: blockers.length === 0, blockers,
       warnings: milestones.filter((m) => !m.actual_at).map((m) => `Milestone "${m.name}" has no actual date`) },

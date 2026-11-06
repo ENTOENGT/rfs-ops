@@ -79,7 +79,7 @@ export async function listNotifications(actor: Actor) {
   try { const { maybeRunDocumentCleanup } = await import('./documents'); await maybeRunDocumentCleanup(); } catch (e) { console.error('Document clean-up', e); }
   try { const { runProReminders } = await import('./pro'); await runProReminders(); } catch (e) { console.error('PRO reminders', e); }
   try { const { runCaseEscalations } = await import('./cases'); await runCaseEscalations(); } catch (e) { console.error('Case escalations', e); }
-  const rows = await q(`select id, type, title, job_id, run_id, pro_id, job_file_id, quotation_id, case_id, read_at, created_at from notifications
+  const rows = await q(`select id, type, event, title, actor_name, job_id, run_id, pro_id, job_file_id, quotation_id, case_id, vendor_request_id, read_at, created_at from notifications
     where user_id = $1 order by created_at desc limit 50`, [actor.id]);
   return { unread: rows.filter((r) => !r.read_at).length, rows };
 }
