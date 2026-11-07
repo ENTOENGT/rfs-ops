@@ -4,6 +4,7 @@ import { bad } from '@/server/db';
 import { confirmJfUpload, jfDocAction, requestJfUpload } from '@/server/jfdocs';
 import { route, body } from '@/server/http';
 import { confirmBooking, createOperationalJob, markLost, prealertAction, reassignPeople, requestBooking } from '@/server/commercial';
+import { blAction, routeAction, vesselAction } from '@/server/routing';
 export const dynamic = 'force-dynamic';
 export const fetchCache = 'force-no-store';
 export const GET = route(async (req, { params }) => getJobFile(await requireActor(req), params.id));
@@ -15,6 +16,8 @@ const ACTIONS: Record<string, (a: any, id: string, b: any) => Promise<unknown>> 
   // Part E: booking, pre-alert, operational job + handover, lost
   book: requestBooking, 'confirm-booking': confirmBooking, prealert: (a, id, b) => prealertAction(a, id, { ...b, action: b.step }),
   handover: createOperationalJob, lost: markLost, reassign: reassignPeople,
+  // Part G2: route options, vessel legs, BL drafts
+  route: routeAction, vessel: vesselAction, bl: blAction,
 };
 export const POST = route(async (req, { params }) => {
   const a = await requireActor(req);

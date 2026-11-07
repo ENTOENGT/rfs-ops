@@ -129,8 +129,18 @@ async function vendorDraft(actor: Actor, id: string, key?: string): Promise<Draf
     const options = optionsFor('vendor');
     if (!options.some(([k]) => k === key))
       key = r.service === 'booking' ? 'booking_instruction' : ['shipping_line', 'airline'].includes(r.vendor_type) ? 'liner_rate_request' : 'agent_rate_request';
+    // Part G2: the exact route option this request is for, in the subject (decision D2) and the details
+    const opt = r.route_id ? await one('select * from enquiry_routes where id = $1', [r.route_id]) : null;
+    const many = opt ? (await one('select count(*)::int n from enquiry_routes where job_file_id = $1 and removed_at is null', [f.id])).n > 1 : false;
+    const { routeLabel } = await import('../lib/routingRules');
+    const optText = opt ? facts([['Route option', `Option ${opt.option_no}`], ['Origin', [opt.origin_city, opt.origin_country].filter(Boolean).join(', ')], ['Port of loading', opt.pol],
+      ['Port of discharge', opt.pod], ['Destination', [opt.destination_city, opt.destination_country].filter(Boolean).join(', ')], ['Final delivery', opt.final_delivery],
+      ['Cargo', [opt.cargo_description, opt.packages && `${opt.packages} pkgs`, opt.gross_weight_kg && `${Number(opt.gross_weight_kg).toLocaleString()} kg`, opt.volume_cbm && `${opt.volume_cbm} CBM`].filter(Boolean).join(' · ')]]) : '';
+    const bl = await one('select bl_no, correction_notes from bl_drafts where job_file_id = $1 order by version desc limit 1', [f.id]);
     const vals = { ...(await shipmentVals(f, true)), VendorName: r.vendor_name, RequestNumber: r.request_no,
-      RequestDetails: [r.description, `Our request no. ${r.request_no}`].filter(Boolean).join('\n'),
+      ThreadSubject: threadSubject(f) + (many && opt ? ` – ${routeLabel(opt)}` : ''),
+      RequestDetails: [many && optText ? `Please quote for this option only:\n${optText}` : null, r.description, `Our request no. ${r.request_no}`].filter(Boolean).join('\n\n'),
+      RouteOption: opt ? routeLabel(opt) : null, CorrectionNotes: bl?.correction_notes ?? null, BLNumber: bl?.bl_no ?? f.mbl_mawb ?? f.hbl_hawb,
       NeededBy: r.needed_by ? `We need your ${r.service === 'rate' ? 'rate' : 'reply'} by ${D(r.needed_by)}.` : '',
       Greeting: `Dear ${r.vendor_contact ? r.vendor_contact.split(' ')[0] : `${r.vendor_name} team`},`, Signature: await signature(actor) };
     const t = await fromTemplate(key!, f, vals);
@@ -164,10 +174,17 @@ async function quotationDraft(actor: Actor, id: string, key?: string): Promise<D
     ThreadSubject: `Quotation ${d.quote_no}${[d.origin, d.destination].filter(Boolean).length ? ` – ${[d.origin, d.destination].filter(Boolean).join(' to ')}` : ''}`,
     CustomerName: d.customer_name, CustomerReference: d.enquiry_reference, Origin: d.origin, Destination: d.destination,
     CargoDetails: d.cargo_description, ShipmentDetails: facts([['Route', [d.origin, d.destination].filter(Boolean).join(' to ')], ['Cargo', d.cargo_description]]) };
+  const line = (l: any) => `- ${l.description}: ${money(l.sell_rate, cur)} ${l.unit_name}${Number(l.quantity) !== 1 ? ` x ${Number(l.quantity)} = ${money(l.sell_amount, cur)}` : ''}`;
+  // Part G2: several route options → the charges are listed per option, each with its own total
+  const opts: any[] = d.options ?? [];
+  const { routeLabel } = await import('../lib/routingRules');
+  const multi = opts.length > 1;
   const vals = { ...base,
     QuoteNumber: d.quote_no, QuoteVersion: String(d.version_no ?? 1),
-    Charges: d.lines.map((l: any) => `- ${l.description}: ${money(l.sell_rate, cur)} ${l.unit_name}${Number(l.quantity) !== 1 ? ` x ${Number(l.quantity)} = ${money(l.sell_amount, cur)}` : ''}`).join('\n'),
-    Total: money(d.totals.sell_total, cur), ValidUntil: D(d.valid_until), Exclusions: d.exclusions ? `Not included: ${d.exclusions}` : '',
+    Charges: multi ? opts.map((o) => `${routeLabel(o)}\n${d.lines.filter((l: any) => l.route_id === o.id).map(line).join('\n')}\nOption ${o.option_no} total: ${money(o.sell_total, cur)}`).join('\n\n')
+      : d.lines.map(line).join('\n'),
+    Total: multi ? opts.map((o) => `Option ${o.option_no} ${money(o.sell_total, cur)}`).join(' / ') : money(d.totals.sell_total, cur),
+    RouteOptions: multi ? opts.map((o) => `${routeLabel(o)}: ${money(o.sell_total, cur)}`).join('\n') : '', ValidUntil: D(d.valid_until), Exclusions: d.exclusions ? `Not included: ${d.exclusions}` : '',
     Greeting: dear(recipients, `${d.customer_name} team`), Signature: await signature(actor) };
   const t = await fromTemplate(key!, f, vals);
   return { kind: 'quotation', id, recipients, ...t, options, update: key,
@@ -200,7 +217,9 @@ async function jobFileDraft(actor: Actor, id: string, choice: string): Promise<D
     documents_needed: missing.length ? `To avoid delays, please send us the following documents for your shipment:\n${missing.join('\n')}` : 'Please send us the documents for your shipment.',
     general: 'Please see the latest update on your shipment below.',
   };
-  const vals = { ...(await shipmentVals(f, false)), UpdateText: upd ? opening[upd] : null, Greeting: dear(recipients, `${f.customer_name} team`), Signature: await signature(actor) };
+  const bl = await one('select bl_no from bl_drafts where job_file_id = $1 order by version desc limit 1', [id]);
+  const vals = { ...(await shipmentVals(f, false)), UpdateText: upd ? opening[upd] : null, Greeting: dear(recipients, `${f.customer_name} team`), Signature: await signature(actor),
+    BLNumber: f.final_bl_no ?? bl?.bl_no ?? f.mbl_mawb ?? f.hbl_hawb };
   const t = await fromTemplate(key, f, vals);
   return { kind: 'job_file', id, recipients, ...t, options, update: choice,
     note: recipients.length ? undefined : 'This customer has no email saved — add one under Customers → contacts.' };

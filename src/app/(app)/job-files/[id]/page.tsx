@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { api, fmtDate, fmtDateTime, fmtMoney } from '@/components/api';
 import { EmailButton } from '@/components/EmailButton';
 import { EmailsPanel } from '@/components/EmailsPanel';
+import { RoutesPanel, VesselPanel, BlPanel } from '@/components/RoutingPanels';
 import { useMe } from '@/components/Shell';
 import { JobFileFields } from '@/components/JobFileForm';
 import JobFileDocs from '@/components/JobFileDocs';
@@ -69,7 +70,10 @@ export default function JobFile({ params }: { params: { id: string } }) {
   const commercialPanels = <>
     <HandoverPanel d={d} act={act} />
     <PrealertPanel d={d} act={act} onError={(m) => { setErr(m); window.scrollTo(0, 0); }} />
+    <BlPanel d={d} act={act} />
+    <VesselPanel d={d} act={act} />
     <BookingPanel d={d} act={act} />
+    <RoutesPanel d={d} act={act} />
     {(d.status === 'enquiry' || (d.quotations?.length ?? 0) > 0 || (d.vendor_requests?.length ?? 0) > 0) && <RatesAndQuotes d={d} reload={load} />}
   </>;
   return (

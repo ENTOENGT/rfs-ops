@@ -229,12 +229,14 @@ export async function requestBooking(actor: Actor, fileId: string, b: any) {
     const r = await one(`select r.*, v.name vendor_name from vendor_requests r join vendors v on v.id = r.vendor_id
       where r.id = $1 and r.job_file_id = $2 and r.service = 'rate' and r.status <> 'cancelled'`, [b.rate_request_id, fileId], c);
     if (!r) throw bad('Choose a rate on this shipment');
+    // Part G2: only a rate for the option the customer chose can be booked
+    if (f.selected_route_id && r.route_id && r.route_id !== f.selected_route_id) throw bad('This rate is for a route option the customer did not choose');
     const open = f.booking_vendor_request_id && await one(`select request_no from vendor_requests where id = $1 and status not in ('cancelled')`, [f.booking_vendor_request_id], c);
     if (open) throw new ApiError(409, 'BOOKING_OPEN', `Booking ${open.request_no} is already open. Cancel it first to book with another vendor.`);
     const { createVendorRequest, vendorRequestAction } = await import('./vendorreqs');
     const instructions = txt(b.description, 2000) ?? `Please book as per your rate ${r.request_no}${r.vendor_reference ? ` (your ref. ${r.vendor_reference})` : ''}.`;
     const made = await createVendorRequest(actor, { vendor_id: r.vendor_id, service: 'booking', job_file_id: fileId, description: instructions,
-      needed_by: b.needed_by || undefined, rate_source: r.rate_source ?? undefined }, c);
+      needed_by: b.needed_by || undefined, rate_source: r.rate_source ?? undefined, route_id: r.route_id ?? undefined }, c);
     await c.query('update vendor_requests set rate_request_id = $2, quoted_cost = $3, currency = $4 where id = $1', [made.id, r.id, r.quoted_cost, r.currency]);
     await c.query('update job_files set booking_vendor_request_id = $2 where id = $1', [fileId, made.id]);
     // the chosen rate is confirmed (a dearer choice is noted there)
@@ -254,9 +256,15 @@ export async function confirmBooking(actor: Actor, fileId: string, b: any) {
     const ref = txt(b.booking_reference, 80);
     if (!ref) throw bad('Enter the carrier booking reference');
     const set: Record<string, unknown> = { booking_reference: ref, carrier: txt(b.carrier, 120), vessel_flight: txt(b.vessel_flight, 80),
-      voyage: txt(b.voyage, 40), etd: day(b.etd, 'ETD'), eta: day(b.eta, 'ETA') };
+      voyage: txt(b.voyage, 40), etd: day(b.etd, 'ETD'), eta: day(b.eta, 'ETA'),
+      // Part G2: the rest of the booking confirmation
+      booking_confirmed_on: day(b.booking_confirmed_on, 'Confirmation date'), port_of_loading: txt(b.port_of_loading, 80), port_of_discharge: txt(b.port_of_discharge, 80),
+      booked_equipment: txt(b.booked_equipment, 120), routing_type: b.routing_type === 'via' ? 'via' : b.routing_type === 'direct' ? 'direct' : null };
     if (set.etd && set.eta && String(set.eta) < String(set.etd)) throw bad('ETA is before ETD');
-    const labels: Record<string, string> = { booking_reference: 'Carrier booking ref.', carrier: 'Shipping line / airline', vessel_flight: 'Vessel / flight', voyage: 'Voyage', etd: 'ETD', eta: 'ETA' };
+    if (b.document_id && !(isUuid(b.document_id) && await one('select 1 from jf_documents where id = $1 and job_file_id = $2 and deleted_at is null', [b.document_id, fileId], c)))
+      throw bad('Upload the booking confirmation to the shipment first');
+    const labels: Record<string, string> = { booking_reference: 'Carrier booking ref.', carrier: 'Shipping line / airline', vessel_flight: 'Vessel / flight', voyage: 'Voyage', etd: 'ETD', eta: 'ETA',
+      booking_confirmed_on: 'Booking confirmed on', port_of_loading: 'Port of loading', port_of_discharge: 'Port of discharge', booked_equipment: 'Containers booked', routing_type: 'Direct / via' };
     for (const [k, v] of Object.entries(set)) {
       if (v === null) continue;
       const old = f[k] instanceof Date ? f[k].toISOString().slice(0, 10) : f[k];
@@ -269,6 +277,12 @@ export async function confirmBooking(actor: Actor, fileId: string, b: any) {
       await c.query(`update vendor_requests set status = 'confirmed', vendor_reference = $2, confirmed_at = now(), updated_at = now() where id = $1`, [f.booking_vendor_request_id, ref]);
       await c.query('insert into vendor_request_events (request_id, title, details, user_id, user_name) values ($1,$2,$3,$4,$5)',
         [f.booking_vendor_request_id, 'Status: Confirmed', `Booking confirmed — ${ref}`, actor.id, actor.full_name]);
+    }
+    // the expected vessel becomes leg 1 until the vessel details are confirmed
+    if (set.vessel_flight && !(await one('select 1 from shipment_legs where job_file_id = $1', [fileId], c))) {
+      await c.query(`insert into shipment_legs (job_file_id, leg_no, vessel, voyage, from_port, to_port, etd, eta, updated_by) values ($1, 1, $2, $3, $4, $5, $6, $7, $8)`,
+        [fileId, set.vessel_flight, set.voyage, set.port_of_loading ?? f.port_of_loading, set.routing_type === 'via' ? null : set.port_of_discharge ?? f.port_of_discharge, set.etd, set.eta, actor.id]);
+      await c.query(`update job_files set vessel_status = 'received' where id = $1 and vessel_status = 'pending'`, [fileId]);
     }
     await (await import('./notify')).notifyGroup(c, actor, fileId, 'booking_confirmed', ref);
     if (set.vessel_flight && String(set.vessel_flight) !== String(f.vessel_flight ?? '')) await (await import('./notify')).notifyGroup(c, actor, fileId, 'vessel_changed', [set.vessel_flight, set.voyage].filter(Boolean).join(' '));
@@ -385,11 +399,20 @@ export async function createOperationalJob(actor: Actor, fileId: string, b: any)
         throw new ApiError(409, 'STAGE', 'The customer has not confirmed this shipment');
       if (!skip) throw bad('Say why the job is created before the pre-alert is verified');
     }
+    // Decision D3: Exports and Cross Trade need the customer's BL draft confirmation first; a manager can override with a reason
+    const { BL_BEFORE_HANDOVER } = await import('../lib/routingRules');
+    const blOverride = txt(b.bl_override_reason, 500);
+    if (BL_BEFORE_HANDOVER.includes(f.division) && f.bl_status !== 'customer_confirmed') {
+      if (!(actor.isSuperAdmin || actor.has('commercial.manage'))) throw new ApiError(409, 'BL_NOT_CONFIRMED', 'The customer must confirm the BL draft before handover (Exports and Cross Trade). A Commercials Manager can override with a reason.');
+      if (!blOverride) throw new ApiError(400, 'VALIDATION', 'The BL draft is not confirmed by the customer — say why the job is handed over anyway', { fields: { bl_override_reason: 'Reason needed' } });
+    }
     const dup = await one(`select id, enquiry_ref from job_files where upper(btrim(job_no)) = upper($1) and deleted_at is null and status <> 'cancelled' and id <> $2`, [jobNo, fileId], c);
     if (dup) throw new ApiError(409, 'JOB_FILE_EXISTS', `Job No. ${jobNo} is already used (${dup.enquiry_ref ?? 'another shipment'}).`, { id: dup.id });
     const notes = txt(b.notes, 2000);
-    await c.query(`update job_files set job_no = $2, status = 'open', stage = 'handed_over', handed_over_at = now(), handed_over_by = $3, handover_notes = $4, updated_at = now()
-      where id = $1`, [fileId, jobNo, actor.id, notes]);
+    await c.query(`update job_files set job_no = $2, status = 'open', stage = 'handed_over', handed_over_at = now(), handed_over_by = $3, handover_notes = $4,
+      handover_override_reason = $5, updated_at = now() where id = $1`, [fileId, jobNo, actor.id, notes, BL_BEFORE_HANDOVER.includes(f.division) && f.bl_status !== 'customer_confirmed' ? blOverride : null]);
+    if (BL_BEFORE_HANDOVER.includes(f.division) && f.bl_status !== 'customer_confirmed')
+      await jfEvent(c, actor, fileId, { kind: 'status', title: 'Handed over before the customer confirmed the BL draft', remarks: blOverride });
     await jfEvent(c, actor, fileId, { kind: 'status', title: `Operational job created — Job No. ${jobNo}`, field: 'Job No.', old_value: null, new_value: jobNo, remarks: skip ? `Before pre-alert verification: ${skip}` : null });
     await jfEvent(c, actor, fileId, { kind: 'status', title: 'Handed over to Operations', field: 'Stage', old_value: stageName(f.stage), new_value: stageName('handed_over'), remarks: notes });
     await (await import('./notify')).notifyGroup(c, actor, fileId, 'handed_over', `Job No. ${jobNo}`);

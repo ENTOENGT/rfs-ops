@@ -1,5 +1,6 @@
 'use client';
 import { useMe } from './Shell';
+import { routeLabel } from '@/lib/routingRules';
 import { fmtMoney } from './api';
 import { SERVICE_TYPES, DIRECTIONS, CHARGE_UNITS } from '@/lib/jobfileRules';
 
@@ -35,8 +36,10 @@ export function cheaperThan(rates: any[], r: any): string | null {
   return `${best.vendor_name} quoted less for the same request: ${fmtMoney(best.quoted_cost, best.currency)} (${best.request_no}) against ${r.vendor_name} ${fmtMoney(r.quoted_cost, r.currency)}.`;
 }
 
-export function QuoteFields({ f, setF, fe = {}, minMargin, vendorRates = [], jobNo }: { f: any; setF: (v: any) => void; fe?: Record<string, string>; minMargin?: number;
-  vendorRates?: any[]; jobNo?: string }) {
+export function QuoteFields({ f, setF, fe = {}, minMargin, vendorRates = [], jobNo, routes = [] }: { f: any; setF: (v: any) => void; fe?: Record<string, string>; minMargin?: number;
+  vendorRates?: any[]; jobNo?: string; routes?: any[] }) {
+  // Part G2: with several route options every charge says which option it belongs to (a vendor rate brings its own)
+  const multi = routes.length > 1;
   const { me, lk } = useMe();
   const { buyingView, sellingView, profitView } = me.financial_access;
   const set = (k: string) => (e: any) => setF({ ...f, [k]: e.target.value });
@@ -56,7 +59,7 @@ export function QuoteFields({ f, setF, fe = {}, minMargin, vendorRates = [], job
     const w = cheaperThan(rates, r);
     if (w && !confirm(`${w}\n\nUse ${r.vendor_name}'s rate anyway?`)) return;
     const line = { ...emptyLine(), description: `${r.service === 'rate' ? 'Freight' : r.service} — ${r.vendor_name}`, cost_rate: r.quoted_cost, margin_type: sellingView ? 'percent' : '', margin_value: '',
-      sell_rate: '', vendor_request_id: r.id };
+      sell_rate: '', vendor_request_id: r.id, route_id: r.route_id ?? '' };
     const blank = lines.length === 1 && !lines[0].description && !lines[0].cost_rate && !lines[0].sell_rate;
     setF({ ...f, lines: blank ? [line] : [...lines, line] });
   };
@@ -86,12 +89,12 @@ export function QuoteFields({ f, setF, fe = {}, minMargin, vendorRates = [], job
       <div className="table-wrap"><table className="t"><thead><tr><th>Request</th><th>Vendor</th><th className="num">Rate</th><th>Valid until</th><th /></tr></thead>
         <tbody>{rates.map((r) => { const used = lines.some((l) => l.vendor_request_id === r.id); return <tr key={r.id} className={r.lowest ? 'is-lowest' : ''}>
           <td>{r.request_no}<div className="muted small">{String(r.description ?? '').slice(0, 50)}</div></td>
-          <td>{r.vendor_name}{r.lowest && <span className="lowest">Lowest</span>}</td><td className="num">{fmtMoney(r.quoted_cost, r.currency)}</td><td>{r.rate_valid_until ?? '—'}</td>
+          <td>{r.vendor_name}{r.lowest && <span className="lowest">Lowest</span>}{multi && r.route_id && <div className="muted small">{routeLabel(routes.find((x: any) => x.id === r.route_id))}</div>}</td><td className="num">{fmtMoney(r.quoted_cost, r.currency)}</td><td>{r.rate_valid_until ?? '—'}</td>
           <td style={{ textAlign: 'right' }}>{used ? <span className="muted small">Used</span> : <button className="btn small" type="button" onClick={() => useRate(r)}>Use</button>}</td></tr>; })}</tbody></table></div>
     </div>}
     <div className="panel"><h2>Charges ({cur}, excluding VAT)</h2>
       <div className="table-wrap"><table className="t">
-        <thead><tr><th style={{ width: '32%' }}>Charge</th><th>Charged</th><th className="num">Qty</th>
+        <thead><tr><th style={{ width: '32%' }}>Charge</th>{multi && <th>Route option</th>}<th>Charged</th><th className="num">Qty</th>
           {buyingView && <th className="num">Cost rate</th>}{canMargin && <th>Margin</th>}{sellingView && <th className="num">Selling rate</th>}
           {sellingView && <th className="num">Amount</th>}<th /></tr></thead>
         <tbody>{lines.map((l, i) => <tr key={i}>
@@ -99,6 +102,8 @@ export function QuoteFields({ f, setF, fe = {}, minMargin, vendorRates = [], job
             {l.vendor_request_id && (() => { const r = rates.find((x) => x.id === l.vendor_request_id); const w = r && cheaperThan(rates, r);
               return r ? <div className="small" style={{ marginTop: 3 }}><span className="muted">Vendor rate {r.request_no} · {r.vendor_name}</span>
                 {w && <div className="flag" style={{ display: 'block', marginTop: 3, whiteSpace: 'normal' }}>{w}</div>}</div> : null; })()}</td>
+          {multi && <td><select value={l.route_id ?? ''} disabled={!!l.vendor_request_id && !!rates.find((x) => x.id === l.vendor_request_id)?.route_id} onChange={(e) => setLine(i, 'route_id', e.target.value)} aria-label="Option">
+            <option value="">Option?</option>{routes.map((r: any) => <option key={r.id} value={r.id}>{routeLabel(r)}</option>)}</select></td>}
           <td><select value={l.charge_unit} onChange={(e) => setLine(i, 'charge_unit', e.target.value)}>
             {CHARGE_UNITS.map(([c, n]) => <option key={c} value={c}>{n}</option>)}</select></td>
           <td className="num"><input style={{ width: 80, textAlign: 'right' }} value={l.quantity} onChange={(e) => setLine(i, 'quantity', e.target.value)} inputMode="decimal" /></td>

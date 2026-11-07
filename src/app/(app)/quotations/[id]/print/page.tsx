@@ -46,12 +46,16 @@ export default function QuotePrint({ params }: { params: { id: string } }) {
           {(d.origin || d.destination) && <><dt>Route</dt><dd>{[d.origin, d.destination].filter(Boolean).join(' → ')}</dd></>}
           {cargo && <><dt>Cargo</dt><dd>{cargo}</dd></>}
         </dl>
-        <table className="qp-lines">
-          <thead><tr><th>Description</th><th>Charged</th><th className="num">Qty</th><th className="num">Rate ({d.currency})</th><th className="num">Amount ({d.currency})</th></tr></thead>
-          <tbody>{d.lines.map((l: any, i: number) => <tr key={i}><td>{l.description}</td><td>{l.unit_name}</td><td className="num">{Number(l.quantity)}</td>
-            <td className="num">{fmtMoney(l.rate, '')}</td><td className="num">{fmtMoney(l.amount, '')}</td></tr>)}</tbody>
-          <tfoot><tr><td colSpan={4} className="num"><b>Total</b></td><td className="num"><b>{fmtMoney(d.total, d.currency)}</b></td></tr></tfoot>
-        </table>
+        {/* Part G2: one table per route option, each with its own total; the customer picks one */}
+        {(d.options ?? [{ option_no: null, lines: d.lines, total: d.total }]).map((o: any) => <div key={o.option_no ?? 'all'} style={{ marginBottom: 14 }}>
+          {o.option_no && <h3 style={{ margin: '10px 0 4px', fontSize: 14 }}>Option {o.option_no}: {[o.pol, o.pod].filter(Boolean).join(' → ')}{o.selected ? ' (chosen)' : ''}</h3>}
+          <table className="qp-lines">
+            <thead><tr><th>Description</th><th>Charged</th><th className="num">Qty</th><th className="num">Rate ({d.currency})</th><th className="num">Amount ({d.currency})</th></tr></thead>
+            <tbody>{o.lines.map((l: any, i: number) => <tr key={i}><td>{l.description}</td><td>{l.unit_name}</td><td className="num">{Number(l.quantity)}</td>
+              <td className="num">{fmtMoney(l.rate, '')}</td><td className="num">{fmtMoney(l.amount, '')}</td></tr>)}</tbody>
+            <tfoot><tr><td colSpan={4} className="num"><b>{o.option_no ? `Option ${o.option_no} total` : 'Total'}</b></td><td className="num"><b>{fmtMoney(o.total, d.currency)}</b></td></tr></tfoot>
+          </table></div>)}
+        {d.options && <p className="qp-note">Please tell us which option you choose.</p>}
         {c.quote_vat_note && <p className="qp-note">{c.quote_vat_note}</p>}
         {block('Scope of service', d.scope)}{block('Exclusions', d.exclusions)}{block('Terms and conditions', d.terms)}{block('Payment / commercial conditions', d.payment_terms)}{block('Additional remarks', d.additional_remarks)}
         <p className="qp-sign">Prepared by {d.prepared_by}</p>

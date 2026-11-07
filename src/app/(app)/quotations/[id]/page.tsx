@@ -1,5 +1,6 @@
 'use client';
 import Link from 'next/link';
+import { routeLabel } from '@/lib/routingRules';
 import { useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
 import { api, fmtDate, fmtDateTime, fmtMoney } from '@/components/api';
@@ -16,11 +17,13 @@ function ConfirmModal({ d, onClose, act }: { d: any; onClose: () => void; act: (
   const [note, setNote] = useState('');
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
+  const [route, setRoute] = useState('');
+  const opts: any[] = d.options ?? [];
   const go = async () => {
     setBusy(true); setErr('');
     try {
       const document_id = file ? await uploadToShipment(d.job_file_id, file, 'customer_confirmation', `Confirmation of ${d.quote_no} v${d.version_no}`) : undefined;
-      await act({ action: 'accept', document_id, evidence_note: note || undefined }, 'Customer confirmation saved.');
+      await act({ action: 'accept', document_id, evidence_note: note || undefined, route_id: route || undefined }, 'Customer confirmation saved.');
     } catch (e: any) { setErr(e.message); } finally { setBusy(false); }
   };
   return <div className="modal-bg" onClick={(e) => e.target === e.currentTarget && onClose()}>
@@ -29,10 +32,12 @@ function ConfirmModal({ d, onClose, act }: { d: any; onClose: () => void; act: (
       <p className="small">This version is kept as the approved one, the system gives the shipment its Shipping Ref, and the next step is the booking.
         Any other open quotation on {d.enquiry_ref ?? d.job_no} is cancelled.</p>
       {err && <div className="msg err">{err}</div>}
+      {opts.length > 1 && <label className="f"><span>Which option did the customer choose? <em>*</em></span><select value={route} onChange={(e) => setRoute(e.target.value)}>
+        <option value="">Choose</option>{opts.map((o) => <option key={o.id} value={o.id}>{routeLabel(o)}{o.sell_total ? ` — ${fmtMoney(o.sell_total, d.currency)}` : ''}</option>)}</select></label>}
       <label className="f"><span>Customer's confirmation (email saved as .msg / .eml / PDF, or a signed copy)</span><input type="file" onChange={(e) => setFile(e.target.files?.[0] ?? null)} /></label>
       <label className="f"><span>Or: how and when they confirmed {!file && <em>*</em>}</span><input value={note} onChange={(e) => setNote(e.target.value)} placeholder="e.g. Omar confirmed by phone, 5 Nov 10:15" /></label>
       <div className="actions"><button className="btn" onClick={onClose}>Cancel</button>
-        <button className="btn primary" disabled={busy || (!file && note.trim().length < 10)} onClick={go}>{busy ? 'Saving…' : 'Save confirmation'}</button></div>
+        <button className="btn primary" disabled={busy || (!file && note.trim().length < 10) || (opts.length > 1 && !route)} onClick={go}>{busy ? 'Saving…' : 'Save confirmation'}</button></div>
     </div></div>;
 }
 
@@ -137,21 +142,25 @@ export default function Quotation({ params }: { params: { id: string } }) {
 
       {edit ? <>
         {d.status !== 'draft' && <div className="msg warn">Saving changes puts this quotation back to draft — it must be approved again.</div>}
-        <QuoteFields f={edit} setF={setEdit} minMargin={d.min_margin_pct} vendorRates={d.vendor_rates} jobNo={d.job_no ?? d.enquiry_ref ?? undefined} />
+        <QuoteFields f={edit} setF={setEdit} minMargin={d.min_margin_pct} vendorRates={d.vendor_rates} jobNo={d.job_no ?? d.enquiry_ref ?? undefined} routes={d.routes ?? []} />
         <div className="form-actions"><button className="btn" onClick={() => setEdit(null)}>Cancel</button>
           <button className="btn primary" onClick={saveEdit}>Save changes</button></div>
       </> : <div className="cols">
         <div>
           <div className="panel"><h2>Charges ({cur}, excluding VAT)</h2>
             <div className="table-wrap"><table className="t">
-              <thead><tr><th>Charge</th><th>Charged</th><th className="num">Qty</th>
+              <thead><tr><th>Charge</th>{(d.options?.length ?? 0) > 1 && <th>Option</th>}<th>Charged</th><th className="num">Qty</th>
                 {buyingView && <th className="num">Cost rate</th>}{buyingView && <th className="num">Cost</th>}{profitView && <th>Margin</th>}
                 {sellingView && <th className="num">Selling rate</th>}{sellingView && <th className="num">Amount</th>}</tr></thead>
-              <tbody>{d.lines.map((l: any) => <tr key={l.id}><td>{l.description}</td><td className="small">{l.unit_name}</td><td className="num">{Number(l.quantity)}</td>
+              <tbody>{d.lines.map((l: any) => <tr key={l.id}><td>{l.description}</td>
+                {(d.options?.length ?? 0) > 1 && <td className="small">Option {d.options.find((o: any) => o.id === l.route_id)?.option_no ?? '?'}</td>}<td className="small">{l.unit_name}</td><td className="num">{Number(l.quantity)}</td>
                 {buyingView && <td className="num">{fmtMoney(l.cost_rate, '')}</td>}{buyingView && <td className="num">{fmtMoney(l.cost_amount, '')}</td>}
                 {profitView && <td className="small">{l.margin_type === 'percent' ? `${Number(l.margin_value)}%` : l.margin_type === 'amount' ? `+${fmtMoney(l.margin_value, '')}` : <span className="muted">typed</span>}</td>}
                 {sellingView && <td className="num">{fmtMoney(l.sell_rate, '')}</td>}{sellingView && <td className="num">{fmtMoney(l.sell_amount, '')}</td>}</tr>)}</tbody>
             </table></div>
+            {(d.options?.length ?? 0) > 1 && <div className="small" style={{ marginTop: 10 }}><b>Options offered</b>
+              {d.options.map((o: any) => <div key={o.id} style={{ display: 'flex', gap: 10 }}><span>{routeLabel(o)}{d.selected_route_id === o.id && <b style={{ color: '#22543D' }}> — chosen</b>}</span>
+                <span className="spacer" />{o.sell_total && <b>{fmtMoney(o.sell_total, d.currency)}</b>}{o.margin && Number(o.margin) < 0 && <span className="flag">loss</span>}</div>)}</div>}
             <dl className="kv" style={{ marginTop: 12 }}>
               {d.totals.cost_total !== undefined && <><dt>Total cost</dt><dd>{fmtMoney(d.totals.cost_total, cur)}</dd></>}
               {d.totals.sell_total !== undefined && <><dt>Total to customer</dt><dd><b>{fmtMoney(d.totals.sell_total, cur)}</b></dd></>}

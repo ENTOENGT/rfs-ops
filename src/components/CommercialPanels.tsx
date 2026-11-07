@@ -11,13 +11,14 @@ import { useMe } from './Shell';
 import { EmailButton } from './EmailButton';
 import { NewVendorRequest } from './NewVendorRequest';
 import { STAGES, PRE_CONFIRM, PREALERT_CHECKS, divisionName, rateSourceName } from '@/lib/commercialRules';
+import { routeLabel, BL_BEFORE_HANDOVER } from '@/lib/routingRules';
 
 /** Upload a file to this shipment's documents; returns the new document's id. */
 export async function uploadToShipment(fileId: string, file: File, docType: string, description?: string): Promise<string> {
   const mime = file.type || (file.name.toLowerCase().endsWith('.msg') ? 'application/vnd.ms-outlook' : file.name.toLowerCase().endsWith('.eml') ? 'message/rfc822' : '');
   const r = await api(`/api/job-files/${fileId}`, { body: { action: 'upload-url', file_name: file.name, mime_type: mime, size: file.size, doc_type: docType, description } });
   const put = await fetch(r.upload.url, { method: 'PUT', headers: r.upload.headers, body: file });
-  if (!put.ok) throw new Error('The upload did not finish. Please try again.');
+  if (!put.ok) throw new Error(put.status === 400 || put.status === 415 ? 'The file store refused this type of file. Ask the admin to allow it (database update 021).' : 'The upload did not finish. Please try again.');
   const done = await api(`/api/job-files/${fileId}`, { body: { action: 'upload-confirm', ticket: r.ticket } });
   return done.uploaded_document_id;
 }
@@ -64,7 +65,7 @@ const rateStatus = (s: string) => s === 'requested' ? 'Waiting for rate' : s ===
 /** Rates from lines, airlines, agents and the Agent Coordinator, compared side by side; and the quotations. */
 export function RatesAndQuotes({ d, reload }: { d: any; reload: () => void }) {
   const { me } = useMe();
-  const [ask, setAsk] = useState<null | { sameAs?: { id: string; asked: string[] } }>(null);
+  const [ask, setAsk] = useState<null | { sameAs?: { id: string; asked: string[] }; routeId?: string }>(null);
   const cost = me.financial_access.buyingView;
   if (d.quotations === null && d.vendor_requests === null) return null;
   const rates = (d.vendor_requests ?? []).filter((r: any) => r.service === 'rate');
@@ -72,12 +73,22 @@ export function RatesAndQuotes({ d, reload }: { d: any; reload: () => void }) {
   const groups: any[][] = [];
   for (const r of rates) { const g = r.rate_group && groups.find((x) => x[0].rate_group === r.rate_group); if (g) g.push(r); else groups.push([r]); }
   const canAsk = d.can.ask_vendor && PRE_CONFIRM.includes(d.stage ?? 'enquiry');
+  // Part G2: with several route options, rates are shown under their option (never compared across options)
+  const routes: any[] = d.routes ?? [];
+  const sections: [any | null, any[][]][] = routes.length > 1
+    ? routes.map((rt) => [rt, groups.filter((g) => g[0].route_id === rt.id)] as [any, any[][]]).concat(groups.some((g) => !routes.some((rt) => rt.id === g[0].route_id)) ? [[null, groups.filter((g) => !routes.some((rt) => rt.id === g[0].route_id))]] : [])
+    : [[null, groups]];
   return (
     <div className="panel"><h2>Rates and quotation</h2>
       {d.vendor_requests !== null && <>
         <h3 className="small" style={{ margin: '6px 0' }}>Rates received</h3>
-        {groups.length === 0 && <p className="muted small">No agent or carrier has been asked for a rate yet.</p>}
-        {groups.map((g) => <div key={g[0].rate_group ?? g[0].id} style={{ marginBottom: 12 }}>
+        {groups.length === 0 && routes.length <= 1 && <p className="muted small">No agent or carrier has been asked for a rate yet.</p>}
+        {sections.map(([rt, gs]) => <div key={rt?.id ?? 'all'}>
+        {rt && <div className="small" style={{ display: 'flex', gap: 8, alignItems: 'center', margin: '10px 0 4px', borderTop: '1px solid var(--line-soft)', paddingTop: 8 }}>
+          <b>{routeLabel(rt)}</b>{d.selected_route_id === rt.id && <span className="badge" style={{ background: '#22543D' }}>Chosen by customer</span>}<span className="spacer" />
+          {canAsk && <button className="linkish" onClick={() => setAsk({ routeId: rt.id })}>Ask for a rate for this option</button>}</div>}
+        {rt && gs.length === 0 && <p className="muted small" style={{ margin: '0 0 8px' }}>No rate asked for this option yet.</p>}
+        {gs.map((g) => <div key={g[0].rate_group ?? g[0].id} style={{ marginBottom: 12 }}>
           <div className="small" style={{ display: 'flex', gap: 8, alignItems: 'center' }}><span className="muted">{g[0].description.slice(0, 100)}</span><span className="spacer" />
             {canAsk && <button className="linkish" onClick={() => setAsk({ sameAs: { id: g[0].id, asked: g.filter((r) => r.status !== 'cancelled').map((r) => r.vendor_id) } })}>+ Ask more</button>}</div>
           <div className="table-wrap"><table className="t"><thead><tr><th>Request</th><th>Agent / carrier</th><th>Source</th>{cost && <th className="num">Rate</th>}
@@ -91,7 +102,7 @@ export function RatesAndQuotes({ d, reload }: { d: any; reload: () => void }) {
               <td>{fmtDate(r.rate_etd)}</td><td className="small">{r.routing ?? '—'}</td><td>{fmtDate(r.rate_valid_until)}</td>
               <td className="small">{rateStatus(r.status)}</td>
               {d.can.ask_vendor && <td style={{ textAlign: 'right' }}>{r.status !== 'cancelled' && <EmailButton kind="vendor_request" id={r.id} className="btn small" label="Email" />}</td>}</tr>)}</tbody></table></div>
-        </div>)}
+        </div>)}</div>)}
         {others.length > 0 && <p className="small muted">Bookings and other requests: {others.map((r: any, i: number) => <span key={r.id}>{i ? ', ' : ''}<Link href={`/vendor-requests/${r.id}`}>{r.request_no}</Link> ({r.vendor_name}, {r.service})</span>)}</p>}
         {canAsk && <button className="btn small" onClick={() => setAsk({})}>Ask agents / carriers for a rate</button>}
       </>}
@@ -103,7 +114,7 @@ export function RatesAndQuotes({ d, reload }: { d: any; reload: () => void }) {
           <span className="badge" style={{ background: x.status_color }}>{x.status_name}</span> <span className="muted">valid until {fmtDate(x.valid_until)}</span></div>)}
         {d.can.quote && <Link className="btn small primary" style={{ marginTop: 6 }} href={`/quotations/new?job_file=${d.id}`}>Make quotation</Link>}
       </>}
-      {ask && <NewVendorRequest jobFileId={d.id} jobNo={d.job_no ?? d.enquiry_ref} sameAs={ask.sameAs}
+      {ask && <NewVendorRequest jobFileId={d.id} jobNo={d.job_no ?? d.enquiry_ref} sameAs={ask.sameAs} routes={d.routes} routeId={ask.routeId}
         description={[d.origin ?? d.port_of_loading, d.destination ?? d.port_of_discharge].filter(Boolean).join(' → ') + (d.cargo_description ? ` — ${d.cargo_description}` : '') + (d.incoterm ? ` (${d.incoterm})` : '')}
         onClose={() => setAsk(null)} onDone={() => { setAsk(null); reload(); }} />}
     </div>
@@ -113,10 +124,15 @@ export function RatesAndQuotes({ d, reload }: { d: any; reload: () => void }) {
 /** After the customer confirms: book with the chosen agent / carrier, then record the confirmation. */
 export function BookingPanel({ d, act }: { d: any; act: (b: any, done?: string) => Promise<unknown> }) {
   const { me } = useMe();
-  const rates = (d.vendor_requests ?? []).filter((r: any) => r.service === 'rate' && r.status !== 'cancelled' && r.quoted_cost !== null);
+  // Part G2: only the option the customer chose can be booked
+  const rates = (d.vendor_requests ?? []).filter((r: any) => r.service === 'rate' && r.status !== 'cancelled' && r.quoted_cost !== null
+    && (!d.selected_route_id || !r.route_id || r.route_id === d.selected_route_id));
   const preferred = rates.find((r: any) => r.status === 'confirmed') ?? rates.find((r: any) => r.lowest) ?? rates[0];
   const [b, setB] = useState<any>({ rate_request_id: preferred?.id ?? '', needed_by: '', description: '' });
-  const [c, setC] = useState<any>({ booking_reference: '', carrier: d.carrier ?? '', vessel_flight: d.vessel_flight ?? '', voyage: d.voyage ?? '', etd: d.etd ?? '', eta: d.eta ?? '', prealert_expected: '' });
+  const [c, setC] = useState<any>({ booking_reference: '', carrier: d.carrier ?? '', vessel_flight: d.vessel_flight ?? '', voyage: d.voyage ?? '', etd: d.etd ?? '', eta: d.eta ?? '', prealert_expected: '',
+    booking_confirmed_on: new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Dubai' }), port_of_loading: d.port_of_loading ?? '', port_of_discharge: d.port_of_discharge ?? '', booked_equipment: '', routing_type: 'direct' });
+  const [bcFile, setBcFile] = useState<File | null>(null);
+  const [busy, setBusy] = useState(false);
   if (!d.can.book && !d.can.confirm_booking && !d.booking) return null;
   return (
     <div className="panel"><h2>Booking</h2>
@@ -144,8 +160,21 @@ export function BookingPanel({ d, act }: { d: any; act: (b: any, done?: string) 
           <label className="f"><span>ETD</span><input type="date" value={c.etd} onChange={(e) => setC({ ...c, etd: e.target.value })} /></label>
           <label className="f"><span>ETA</span><input type="date" value={c.eta} onChange={(e) => setC({ ...c, eta: e.target.value })} /></label>
           <label className="f"><span>Pre-alert expected on</span><input type="date" value={c.prealert_expected} onChange={(e) => setC({ ...c, prealert_expected: e.target.value })} /></label>
+          <label className="f"><span>Confirmed on</span><input type="date" value={c.booking_confirmed_on} onChange={(e) => setC({ ...c, booking_confirmed_on: e.target.value })} /></label>
+          <label className="f"><span>Port of loading</span><input value={c.port_of_loading} onChange={(e) => setC({ ...c, port_of_loading: e.target.value })} /></label>
+          <label className="f"><span>Port of discharge</span><input value={c.port_of_discharge} onChange={(e) => setC({ ...c, port_of_discharge: e.target.value })} /></label>
+          {d.mode !== 'air' && <label className="f"><span>Containers booked</span><input value={c.booked_equipment} placeholder="e.g. 2 x 40HC" onChange={(e) => setC({ ...c, booked_equipment: e.target.value })} /></label>}
+          <label className="f"><span>Direct or via</span><select value={c.routing_type} onChange={(e) => setC({ ...c, routing_type: e.target.value })}>
+            <option value="direct">Direct</option><option value="via">Via / transshipment</option></select></label>
+          <label className="f"><span>Booking confirmation (file)</span><input type="file" accept=".pdf,.jpg,.png,.msg,.eml" onChange={(e) => setBcFile(e.target.files?.[0] ?? null)} /></label>
         </div>
-        <button className="btn primary small" disabled={!c.booking_reference.trim()} onClick={() => act({ action: 'confirm-booking', ...c }, 'Booking confirmed — now waiting for the pre-alert')}>Save booking confirmation</button>
+        {(() => { const miss = [['Vessel', c.vessel_flight], ['ETD', c.etd], ['ETA', c.eta], ...(d.mode !== 'air' ? [['Containers booked', c.booked_equipment]] : [])].filter(([, v]) => !String(v ?? '').trim()).map(([k]) => k);
+          return miss.length > 0 && <p className="small" style={{ color: '#B7791F', margin: '4px 0' }}>Still missing — chase the carrier / agent: {miss.join(', ')}</p>; })()}
+        <button className="btn primary small" disabled={!c.booking_reference.trim() || busy} onClick={async () => {
+          setBusy(true);
+          try { const document_id = bcFile ? await uploadToShipment(d.id, bcFile, 'booking_confirmation', 'Booking confirmation') : undefined;
+            await act({ action: 'confirm-booking', ...c, document_id }, 'Booking confirmed — now waiting for the vessel details, BL draft and pre-alert'); }
+          catch (e: any) { alert(e.message); } finally { setBusy(false); } }}>Save booking confirmation</button>
       </>}
     </div>
   );
@@ -216,7 +245,9 @@ export function PrealertPanel({ d, act, onError }: { d: any; act: (b: any, done?
 
 /** The operational job: type the Job No. from the ERP; the same record goes to Operations. */
 export function HandoverPanel({ d, act }: { d: any; act: (b: any, done?: string) => Promise<unknown> }) {
-  const [h, setH] = useState({ job_no: '', notes: '', skip_prealert_reason: '' });
+  const [h, setH] = useState({ job_no: '', notes: '', skip_prealert_reason: '', bl_override_reason: '' });
+  const { can } = useMe();
+  const blNeeded = BL_BEFORE_HANDOVER.includes(d.division) && d.bl_status !== 'customer_confirmed';
   if (!d.can.handover) return null;
   const early = d.stage !== 'prealert_verified';
   return (
@@ -228,6 +259,9 @@ export function HandoverPanel({ d, act }: { d: any; act: (b: any, done?: string)
         <label className="f"><span>Job No. (from the ERP) <em>*</em></span><input value={h.job_no} onChange={(e) => setH({ ...h, job_no: e.target.value })} maxLength={40} /></label>
         <label className="f span2"><span>Handover notes for Operations</span><input value={h.notes} onChange={(e) => setH({ ...h, notes: e.target.value })} /></label>
         {early && <label className="f span3"><span>Why before the pre-alert? <em>*</em></span><input value={h.skip_prealert_reason} onChange={(e) => setH({ ...h, skip_prealert_reason: e.target.value })} /></label>}
+        {blNeeded && (can('commercial.manage')
+          ? <label className="f span3"><span>The customer has not confirmed the BL draft — why hand over now? <em>*</em></span><input value={h.bl_override_reason} onChange={(e) => setH({ ...h, bl_override_reason: e.target.value })} /></label>
+          : <p className="small span3" style={{ color: '#C53030', margin: 0 }}>For {divisionName(d.division)}, the customer must confirm the BL draft before handover. A Commercials Manager can override with a reason.</p>)}
       </div>
       <button className="btn primary small" disabled={!h.job_no.trim()} onClick={() => confirm(`Create Job No. ${h.job_no.trim()} and hand over to Operations?`)
         && act({ action: 'handover', ...h }, `Job No. ${h.job_no.trim()} created — handed over to Operations`)}>Create job and hand over</button>

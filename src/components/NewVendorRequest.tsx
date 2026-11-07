@@ -1,5 +1,6 @@
 'use client';
 import { useState } from 'react';
+import { routeLabel } from '@/lib/routingRules';
 import { api } from '@/components/api';
 import { useMe } from '@/components/Shell';
 
@@ -10,13 +11,15 @@ export const VR_SERVICES: [string, string][] = [['rate', 'Rate request (for a qu
  * New vendor request. For a rate request you can tick several vendors: the same request goes to each of them and their
  * prices are compared side by side. `sameAs` = add one more vendor to an existing rate request.
  */
-export function NewVendorRequest({ jobNo, jobFileId, service = 'rate', sameAs, description, onClose, onDone }: {
+export function NewVendorRequest({ jobNo, jobFileId, service = 'rate', sameAs, description, routes, routeId, onClose, onDone }: {
   jobNo?: string; jobFileId?: string; service?: string; sameAs?: { id: string; asked: string[] }; description?: string;
+  /** Part G2: the shipment's route options — with more than one, a rate request says which option it is for */
+  routes?: any[]; routeId?: string;
   onClose: () => void; onDone: (r: { id: string; ids: string[]; request_nos: string[] }) => void;
 }) {
   const { me, lk } = useMe();
   const cost = me.financial_access.buyingView;
-  const [nw, setNw] = useState<any>({ service, job_no: jobNo ?? '', description: description ?? '', vendor_ids: [] as string[] });
+  const [nw, setNw] = useState<any>({ service, job_no: jobNo ?? '', description: description ?? '', vendor_ids: [] as string[], route_id: routeId ?? '' });
   const [err, setErr] = useState('');
   const [busy, setBusy] = useState(false);
   const multi = nw.service === 'rate';
@@ -26,7 +29,7 @@ export function NewVendorRequest({ jobNo, jobFileId, service = 'rate', sameAs, d
     setErr(''); setBusy(true);
     try {
       const body = sameAs ? { same_as: sameAs.id, vendor_ids: nw.vendor_ids, needed_by: nw.needed_by || undefined }
-        : { ...nw, job_file_id: jobFileId, job_no: jobFileId ? undefined : nw.job_no, vendor_ids: multi ? nw.vendor_ids : undefined, vendor_id: multi ? undefined : nw.vendor_id, quoted_cost: !multi || nw.vendor_ids.length === 1 ? nw.quoted_cost : undefined };
+        : { ...nw, route_id: nw.route_id || undefined, job_file_id: jobFileId, job_no: jobFileId ? undefined : nw.job_no, vendor_ids: multi ? nw.vendor_ids : undefined, vendor_id: multi ? undefined : nw.vendor_id, quoted_cost: !multi || nw.vendor_ids.length === 1 ? nw.quoted_cost : undefined };
       onDone(await api('/api/vendor-requests', { body }));
     } catch (e: any) { setErr(e.message); } finally { setBusy(false); }
   };
@@ -38,6 +41,9 @@ export function NewVendorRequest({ jobNo, jobFileId, service = 'rate', sameAs, d
       <div className="grid g2">
         {!sameAs && <label className="f"><span>Service <em>*</em></span><select value={nw.service} onChange={(e) => setNw({ ...nw, service: e.target.value })}>
           {VR_SERVICES.map(([c, n]) => <option key={c} value={c}>{n}</option>)}</select></label>}
+        {!sameAs && multi && (routes?.length ?? 0) > 1 && <label className="f"><span>Route option <em>*</em></span>
+          <select value={nw.route_id} onChange={(e) => setNw({ ...nw, route_id: e.target.value })}><option value="">Choose</option>
+            {routes!.map((r: any) => <option key={r.id} value={r.id}>{routeLabel(r)}</option>)}</select></label>}
         {!sameAs && <label className="f"><span>Job No. / Enquiry Ref</span><input value={nw.job_no} onChange={(e) => setNw({ ...nw, job_no: e.target.value })} readOnly={!!jobNo} /></label>}
         {!sameAs && multi && (lk.agent_coordinators?.length ?? 0) > 0 && <label className="f"><span>Collect through</span>
           <select value={nw.assigned_to ?? ''} onChange={(e) => setNw({ ...nw, assigned_to: e.target.value || undefined })}>

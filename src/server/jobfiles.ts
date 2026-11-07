@@ -364,8 +364,8 @@ export async function getJobFile(actor: Actor, id: string) {
   const { markLowest } = await import('./vendorreqs');
   const vendorRequests = seeVendors ? markLowest(await q(`select r.id, r.request_no, r.service, r.status, r.description, r.quoted_cost, r.currency, r.rate_valid_until,
       r.vendor_reference, r.rate_group, r.vendor_id, r.rate_source, r.transit_days, r.free_days, r.routing, r.carrier, r.etd rate_etd, r.rate_version,
-      r.assigned_to, r.received_at, v.name vendor_name from vendor_requests r join vendors v on v.id = r.vendor_id where r.job_file_id = $1
-      order by coalesce(r.rate_group, r.id), r.quoted_cost nulls last, r.created_at`, [id]))
+      r.assigned_to, r.received_at, r.route_id, v.name vendor_name from vendor_requests r join vendors v on v.id = r.vendor_id where r.job_file_id = $1
+      order by coalesce(r.rate_group, r.id), r.quoted_cost nulls last, r.created_at`, [id]), (r) => r.service === 'rate' ? `route:${r.route_id ?? ''}` : r.rate_group)
       .map((r) => (actor.fin.buyingView ? r : { ...r, quoted_cost: undefined, lowest: undefined })) : null;
   const docsRequired = (await getSetting('jobfile_docs_required_to_close', true)) !== false;
   const docList = await checklist(f);
@@ -385,9 +385,12 @@ export async function getJobFile(actor: Actor, id: string) {
   const lcl = f.mode === 'sea_lcl' ? await (await import('./lcl')).lclForFile(id) : null;
   // Customer Service is retired (Part G1): old cases on this shipment stay visible, read-only
   const oldCases = await q(`select id, case_no, subject, status, created_at from cs_cases where job_file_id = $1 order by created_at`, [id]);
+  // Part G2: route options, vessel legs, BL drafts
+  const rt = await import('./routing');
+  const [routes, legs, blDrafts] = await Promise.all([rt.routesFor(id), rt.legsFor(id), rt.blDraftsFor(id)]);
   return {
     ...shape({ ...f, ...extra }), search_text: undefined, quotation_id: quotation ? f.quotation_id : undefined, quotation,
-    prealert, booking, lcl, old_cases: oldCases, email_subject: (await import('./emails')).threadSubject({ ...f, ...extra }), containers, milestones, events, ...work, checklist: docList, documents, docs_required_to_close: docsRequired,
+    prealert, booking, lcl, old_cases: oldCases, routes, legs, bl_drafts: blDrafts, email_subject: (await import('./emails')).threadSubject({ ...f, ...extra }), containers, milestones, events, ...work, checklist: docList, documents, docs_required_to_close: docsRequired,
     quotations: quotations?.map((x) => ({ ...x, status_name: qStatusName(x.status), status_color: qStatusColor(x.status) })) ?? null, vendor_requests: vendorRequests,
     closure: { can_close: blockers.length === 0, blockers,
       warnings: milestones.filter((m) => !m.actual_at).map((m) => `Milestone "${m.name}" has no actual date`) },

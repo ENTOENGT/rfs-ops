@@ -23,7 +23,7 @@ const FILE_TYPES: Record<string, string> = {
 };
 /** Document types besides the required ones that people often attach. */
 export const EXTRA_DOC_TYPES: [string, string][] = [['customer_confirmation', 'Customer confirmation'], ['agent_rate', 'Agent / carrier rate'],
-  ['booking_confirmation', 'Booking confirmation'], ['prealert', 'Pre-alert'], ['insurance', 'Insurance certificate'], ['permit', 'Permit / licence'], ['photo', 'Cargo photo'],
+  ['booking_confirmation', 'Booking confirmation'], ['bl_draft', 'BL draft'], ['prealert', 'Pre-alert'], ['insurance', 'Insurance certificate'], ['permit', 'Permit / licence'], ['photo', 'Cargo photo'],
   ['correspondence', 'Customer / agent correspondence'], ['other', 'Other']];
 const approver = (a: Actor) => a.isSuperAdmin || a.has('documents.approve');
 const day = (v: unknown, label: string) => {

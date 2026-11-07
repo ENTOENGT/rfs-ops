@@ -109,13 +109,14 @@ export async function getVendorRequest(actor: Actor, id: string) {
 export async function createVendorRequest(actor: Actor, b: any, client?: PoolClient) {
   if (!actor.isSuperAdmin && !actor.has('vendors.requests')) throw forbidden();
   const run = async (c: PoolClient) => {
-    let fileId: string | null = null, group: string | null = null;
+    let fileId: string | null = null, group: string | null = null, routeId: string | null = null;
     if (b.same_as !== undefined) {
       if (!isUuid(b.same_as)) throw bad('Request not found');
       const src = await one('select * from vendor_requests where id = $1', [b.same_as], c);
       if (!src) throw notFound('Request');
       b = { ...b, service: src.service, description: b.description?.trim() ? b.description : src.description, needed_by: b.needed_by ?? src.needed_by?.toISOString?.().slice(0, 10) ?? src.needed_by };
       fileId = src.job_file_id;
+      routeId = src.route_id ?? null;   // more vendors for the same rate = the same route option
       group = src.rate_group ?? src.id;
       if (!src.rate_group) await c.query('update vendor_requests set rate_group = $1 where id = $1', [src.id]);
     }
@@ -144,6 +145,8 @@ export async function createVendorRequest(actor: Actor, b: any, client?: PoolCli
       fileId = f.id;
     }
     if (b.rate_source && !RATE_SOURCES.some(([k]) => k === b.rate_source)) throw bad('Choose where the rate comes from');
+    // Part G2: a rate request is for one route option (required when the shipment has several)
+    if (fileId && !group) routeId = await (await import('./routing')).routeForRequest(c, fileId, b.route_id, b.service);
     let assigned: string | null = null;
     if (b.assigned_to) {
       if (!isUuid(b.assigned_to) || !(await one(`select 1 from users u join roles r on r.id = u.role_id where u.id = $1 and r.code = 'agent_coordinator' and u.is_active and u.deleted_at is null`, [b.assigned_to], c)))
@@ -161,10 +164,10 @@ export async function createVendorRequest(actor: Actor, b: any, client?: PoolCli
       const source = assigned ? 'agent_coordinator' : b.rate_source || (vt === 'shipping_line' ? 'shipping_line' : vt === 'airline' ? 'airline'
         : ['freight_agent', 'overseas_agent'].includes(vt) ? 'overseas_agent' : 'other');
       const r = await one(`insert into vendor_requests (request_no, vendor_id, job_file_id, department_id, service, description, needed_by, quoted_cost, currency, created_by,
-          rate_valid_until, rate_group, rate_source, assigned_to)
-        values ('VR-' || nextval('vendor_request_no_seq'), $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) returning id, request_no`,
+          rate_valid_until, rate_group, rate_source, assigned_to, route_id)
+        values ('VR-' || nextval('vendor_request_no_seq'), $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) returning id, request_no`,
         [vid, fileId, actor.department_side === 'operations' ? actor.department_id : null, b.service, description, b.needed_by || null, cost,
-         currency, actor.id, b.rate_valid_until || null, group, b.service === 'rate' || b.service === 'booking' ? source : null, assigned], c);
+         currency, actor.id, b.rate_valid_until || null, group, b.service === 'rate' || b.service === 'booking' ? source : null, assigned, routeId], c);
       await evt(c, actor, r.id, 'Request created', VR_SERVICES[b.service] + (group ? ' — sent to several vendors for comparison' : '')
         + (assigned ? ' — assigned to the Agent Coordinator' : ''));
       if (assigned && !fileId) await c.query('insert into notifications (user_id, type, title) values ($1,$2,$3)', [assigned, 'vr.assigned', `Rate request ${r.request_no} assigned to you`]);
@@ -245,12 +248,13 @@ export async function rateGroup(group: string, db?: Db) {
 }
 
 /** Mark the lowest valid price in each rate group of a list of requests (rows need id, rate_group, quoted_cost, status, rate_valid_until). */
-export function markLowest<T extends Record<string, any>>(rows: T[]): (T & { lowest: boolean; group_size: number })[] {
+export function markLowest<T extends Record<string, any>>(rows: T[], keyOf: (r: T) => unknown = (r) => r.rate_group): (T & { lowest: boolean; group_size: number })[] {
   const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Dubai' });
   const valid = (r: T) => r.quoted_cost !== null && r.quoted_cost !== undefined && r.status !== 'cancelled'
     && !(r.rate_valid_until && String(r.rate_valid_until).slice(0, 10) < today);
   return rows.map((r) => {
-    const same = r.rate_group ? rows.filter((x) => x.rate_group === r.rate_group) : [r];
+    const k = keyOf(r);
+    const same = k ? rows.filter((x) => keyOf(x) === k) : [r];
     const live = same.filter(valid);
     const low = live.length ? Math.min(...live.map((x) => Number(x.quoted_cost))) : null;
     return { ...r, group_size: same.length, lowest: same.length > 1 && valid(r) && Number(r.quoted_cost) === low };

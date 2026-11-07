@@ -576,6 +576,35 @@ quotations within validity; every print / download is written to the quotation h
   who have it are flagged. Old cases show read-only on the shipment.
 - **Login page:** "MOVING AHEAD" on the left; a larger sign-in form on the right.
 
+## 15k. Route options, vessel legs and BL drafts (Part G2, migration 022)
+
+- **Route options** (`enquiry_routes`, `src/server/routing.ts`): one Enquiry Ref can hold several options (for example
+  Shanghai / Ningbo / Shenzhen → Jebel Ali). Option 1 is created from the shipment's own fields when a second option is
+  added, and existing rate requests and quotation lines move onto it. Options can be changed until the customer confirms,
+  then they are locked. Removing an option needs a reason and isn't allowed while one of its rate requests is open.
+- **Rates per option:** `vendor_requests.route_id` is required for rate requests when there are several options.
+  `same_as` and booking requests take their rate's option. The cheapest rate is marked within each option (`markLowest`
+  with a key), never across options. Agent emails add "– Option N · POL → POD" to the shipment's subject (D2) and list
+  the option's details.
+- **Quotation options:** `quotation_lines.route_id`. A line takes its rate's option; with several options every line must
+  name one, and a rate can't be used under another option. The detail, customer copy (print and Excel) and email show
+  one section per option, each with its own total. Accepting asks which option the customer chose (`chooseRoute`): it is
+  copied onto the shipment (`selected_route_id`, POL / POD / origin / destination), the other options are kept, and
+  only rates for the chosen option can be booked.
+- **Booking details:** confirmation date, POL / POD, containers booked, direct / via, and the confirmation file. The
+  expected vessel becomes leg 1.
+- **Vessel legs** (`shipment_legs`): Direct = one leg; Via = a leg per vessel, checked for order. Leg 1 and the last ETA
+  are copied to the shipment. Status goes Pending → Received → Verified. A change is recorded old → new and notifies
+  the group (`vessel_changed`).
+- **BL drafts** (`bl_drafts`, `job_files.bl_status`): awaiting → received → under review → sent to customer →
+  correction required → correction sent → revised received → revised sent → confirmed by customer (locked). Every
+  version is kept with when it was sent, to whom, the customer's reply and the correction notes. After confirmation, an
+  amendment needs a Commercials Manager and a reason, and starts a new version. The final BL (number, date, file) is
+  recorded separately, and only after confirmation.
+- **Handover rule (D3):** for Exports and Cross Trade, the customer must confirm the BL draft before handover. A
+  Commercials Manager can override with a reason (`handover_override_reason`, plus a history line).
+- **Storage (021):** the file bucket accepts .eml / .msg.
+
 ## 16. Phase status
 
 | Phase | Status |
@@ -601,5 +630,6 @@ quotations within validity; every print / download is written to the quotation h
 | Part E — Commercials Department: divisions, Salesman ↔ Coordinator, three numbers, rates, approvals, booking, pre-alert, handover (migration 018) | Done |
 | Part F — LCL consolidation: containers, house shipments/HBLs, cargo receiving, stuffing, dispatch, LCL registers and reports (migration 019) | Done |
 | Part G1 — group notifications, quotation terms and email templates, one subject per shipment, email history, Customer Service retired, login page (migration 020) | Done |
+| Part G2 — route options per enquiry, rates and quotation per option, booking details, vessel legs, BL draft cycle, final BL (migrations 021, 022) | Done |
 | Freight + 3PL — remaining phases: see `docs/FREIGHT_3PL_PLAN.md` | Planned |
 | 7 Email notifications · 8 Saved views, column prefs, live ops table, performance | Planned |

@@ -102,7 +102,7 @@ function present(actor: Actor, x: any, lines: any[]) {
       ...(buyingView ? { cost_rate: l.cost_rate, cost_amount: t.each[i].cost } : {}),
       ...(sellingView ? { sell_rate: l.sell_rate, sell_amount: t.each[i].sell } : {}),
       ...(profitView ? { margin_type: l.margin_type, margin_value: l.margin_value } : {}),
-      ...(buyingView ? { vendor_request_id: l.vendor_request_id } : {}),
+      ...(buyingView ? { vendor_request_id: l.vendor_request_id } : {}), route_id: l.route_id ?? null,
     })),
     totals: {
       ...(buyingView ? { cost_total: t.cost_total } : {}),
@@ -116,10 +116,10 @@ function present(actor: Actor, x: any, lines: any[]) {
 export async function vendorRatesFor(jobFileId: string) {
   const { markLowest } = await import('./vendorreqs');
   const rows = await q(`select r.id, r.request_no, r.service, r.status, r.quoted_cost, r.currency, r.rate_valid_until, r.vendor_reference, r.description,
-      r.rate_group, v.name vendor_name
+      r.rate_group, r.route_id, v.name vendor_name
     from vendor_requests r join vendors v on v.id = r.vendor_id
     where r.job_file_id = $1 and r.quoted_cost is not null and r.status not in ('cancelled') order by r.created_at`, [jobFileId]);
-  return markLowest(rows);
+  return markLowest(rows, (r) => r.service === 'rate' ? `route:${r.route_id ?? ''}` : r.rate_group);
 }
 
 /** One message per cost line whose vendor rate is dearer than another vendor's rate for the same request. */
@@ -174,6 +174,12 @@ export async function getQuotation(actor: Actor, id: string) {
     q('select title, details, user_name, at from quotation_events where quotation_id = $1 order by at, id', [id]),
   ]);
   const v = present(actor, { ...x, ...extra }, lines);
+  // Part G2: the route options of the shipment, and a selling total per option used on this quotation
+  const routes = x.job_file_id ? await q('select id, option_no, origin_city, pol, destination_city, pod, mode from enquiry_routes where job_file_id = $1 and removed_at is null order by option_no', [x.job_file_id]) : [];
+  const options = routes.filter((r) => lines.some((l) => l.route_id === r.id)).map((r) => {
+    const t = quoteTotals(lines.filter((l) => l.route_id === r.id));
+    return { ...r, ...(actor.fin.sellingView ? { sell_total: t.sell_total } : {}), ...(actor.fin.buyingView && actor.fin.sellingView ? { margin: t.margin } : {}) };
+  });
   const minMargin = Number(await getSetting('quote_min_margin_pct', 10));
   const vendorRates = x.job_file_id && actor.fin.buyingView ? await vendorRatesFor(x.job_file_id) : [];
   const editable = ['draft', 'pending_approval', 'approved'].includes(x.status) && actor.has('quotes.create');
@@ -182,7 +188,7 @@ export async function getQuotation(actor: Actor, id: string) {
   const responses = await q('select version_no, response, note, document_id, user_name, at from quotation_responses where quotation_id = $1 order by at desc, id desc', [id]);
   const pending = x.status === 'pending_approval';
   const salesmanTurn = pending && !!x.salesman_id && !x.salesman_decision;
-  return { ...v, events, versions, responses, min_margin_pct: minMargin, vendor_rates: vendorRates, rate_warnings: rateWarnings,
+  return { ...v, events, versions, responses, min_margin_pct: minMargin, vendor_rates: vendorRates, rate_warnings: rateWarnings, routes, options,
     approvals: { salesman: x.salesman_id ? (x.salesman_decision ?? (pending ? 'waiting' : null)) : null,
       manager: x.needs_manager ? (x.approved_by && pending ? 'approved' : pending ? 'waiting' : null) : null },
     can: { edit: editable, submit: x.status === 'draft' && actor.has('quotes.create'),
@@ -257,17 +263,29 @@ function parseLines(actor: Actor, raw: unknown, old: any[]) {
     }
     if (margin_type) sell = sellFromMargin(cost, margin_type as any, margin_value!);
     const vendor_request_id = typeof l.vendor_request_id === 'string' && UUID.test(l.vendor_request_id) ? l.vendor_request_id : prev?.vendor_request_id ?? null;
-    return { description, charge_unit: l.charge_unit, quantity: String(l.quantity).trim(), cost_rate: cost, sell_rate: sell, margin_type, margin_value, vendor_request_id };
+    // Part G2: which route option the charge belongs to (checked against the shipment's options in validateVendorLines)
+    const route_id = typeof l.route_id === 'string' && UUID.test(l.route_id) ? l.route_id : l.route_id === null || l.route_id === '' ? null : prev?.route_id ?? null;
+    return { description, charge_unit: l.charge_unit, quantity: String(l.quantity).trim(), cost_rate: cost, sell_rate: sell, margin_type, margin_value, vendor_request_id, route_id };
   });
 }
 
 /** A cost line taken from a vendor rate must come from a vendor request on the same Job File. */
-async function validateVendorLines(c: Db, jobFileId: string | null, lines: { vendor_request_id: string | null }[]) {
+async function validateVendorLines(c: Db, jobFileId: string | null, lines: { vendor_request_id: string | null; route_id?: string | null }[]) {
   const ids = [...new Set(lines.map((l) => l.vendor_request_id).filter((x): x is string => !!x))];
-  if (!ids.length) return;
-  if (!jobFileId) throw bad('Vendor rates can only be used on a quotation for their own Job No.');
-  const ok = await q('select id from vendor_requests where id = any($1) and job_file_id = $2', [ids, jobFileId], c);
+  if (ids.length && !jobFileId) throw bad('Vendor rates can only be used on a quotation for their own Job No.');
+  const ok = ids.length ? await q('select id, route_id from vendor_requests where id = any($1) and job_file_id = $2', [ids, jobFileId], c) : [];
   if (ok.length !== ids.length) throw bad('A vendor rate on this quotation belongs to another Job No.');
+  // Part G2: route options — a line takes its rate's option; with several options every line must say which one, and
+  // a rate is never used under another option (rates for different loading ports are not mixed)
+  const routes = jobFileId ? await q('select id, option_no from enquiry_routes where job_file_id = $1 and removed_at is null', [jobFileId], c) : [];
+  for (const [i, l] of lines.entries()) {
+    const rate = ok.find((r) => r.id === l.vendor_request_id);
+    if (rate?.route_id && !l.route_id) l.route_id = rate.route_id;
+    if (rate?.route_id && l.route_id !== rate.route_id) throw bad(`Line ${i + 1}: this rate is for another route option`);
+    if (l.route_id && !routes.some((r) => r.id === l.route_id)) throw bad(`Line ${i + 1}: choose a route option of this shipment`);
+    if (!l.route_id && routes.length > 1) throw bad(`Line ${i + 1}: choose which route option the charge is for`);
+    if (!l.route_id && routes.length === 1) l.route_id = routes[0].id;
+  }
 }
 
 export async function createQuotation(actor: Actor, b: any) {
@@ -308,6 +326,7 @@ export async function createQuotation(actor: Actor, b: any) {
       dept = f.department_id ?? dept;
       await validateVendorLines(c, f.id, lines);
     } else if (lines.some((l) => l.vendor_request_id)) throw bad('Vendor rates can only be used on a quotation for their own Job No.');
+    else for (const l of lines) l.route_id = null;
     // Part G1: default Scope, Exclusions and Terms — the best matching template fills what was left empty
     const { pickTerms } = await import('./templates');
     const division = vals.job_file_id ? (await one('select division from job_files where id = $1', [vals.job_file_id], c))?.division : actor.division;
@@ -323,8 +342,8 @@ export async function createQuotation(actor: Actor, b: any) {
       values ('Q-' || nextval('quote_no_seq'), $1, $2, $3${cols.map((_, i) => `, $${i + 4}`).join('')}) returning id, quote_no`,
       [dept, actor.id, await getSetting('currency', 'AED', c), ...cols.map((k) => vals[k])], c);
     for (const [i, l] of lines.entries())
-      await c.query(`insert into quotation_lines (quotation_id, sort_order, description, charge_unit, quantity, cost_rate, sell_rate, margin_type, margin_value, vendor_request_id)
-        values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`, [x.id, i, l.description, l.charge_unit, l.quantity, l.cost_rate, l.sell_rate, l.margin_type, l.margin_value, l.vendor_request_id]);
+      await c.query(`insert into quotation_lines (quotation_id, sort_order, description, charge_unit, quantity, cost_rate, sell_rate, margin_type, margin_value, vendor_request_id, route_id)
+        values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`, [x.id, i, l.description, l.charge_unit, l.quantity, l.cost_rate, l.sell_rate, l.margin_type, l.margin_value, l.vendor_request_id, l.route_id]);
     await evt(c, actor, x.id, 'Quotation created', `${lines.length} line(s)`);
     if (vals.job_file_id) {
       const { event } = await import('./jobfiles');
@@ -348,7 +367,7 @@ export async function updateQuotation(actor: Actor, id: string, b: any) {
     for (const [k, parse] of Object.entries(HEAD)) if (b[k] !== undefined) sets.push([k, parse(b[k])]);
     const old = await q('select * from quotation_lines where quotation_id = $1 order by sort_order', [id], c);
     const lines = parseLines(actor, b.lines, old);
-    if (lines) await validateVendorLines(c, x.job_file_id, lines);
+    if (lines) { await validateVendorLines(c, x.job_file_id, lines); if (!x.job_file_id) for (const l of lines) l.route_id = null; }
     if (sets.length && x.job_file_id && sets.some(([k, v]) => k === 'customer_id' && v !== x.customer_id))
       throw bad('This quotation is on a Job File; its customer is the Job File\'s customer');
     if (x.terms_template_id && sets.some(([k]) => TERM_KEYS.includes(k))) {
@@ -360,8 +379,8 @@ export async function updateQuotation(actor: Actor, id: string, b: any) {
     if (lines) {
       await c.query('delete from quotation_lines where quotation_id = $1', [id]);
       for (const [i, l] of lines.entries())
-        await c.query(`insert into quotation_lines (quotation_id, sort_order, description, charge_unit, quantity, cost_rate, sell_rate, margin_type, margin_value, vendor_request_id)
-          values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`, [id, i, l.description, l.charge_unit, l.quantity, l.cost_rate, l.sell_rate, l.margin_type, l.margin_value, l.vendor_request_id]);
+        await c.query(`insert into quotation_lines (quotation_id, sort_order, description, charge_unit, quantity, cost_rate, sell_rate, margin_type, margin_value, vendor_request_id, route_id)
+          values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`, [id, i, l.description, l.charge_unit, l.quantity, l.cost_rate, l.sell_rate, l.margin_type, l.margin_value, l.vendor_request_id, l.route_id]);
     }
     // a changed quotation must be checked again before it goes out
     if (x.status !== 'draft') {
@@ -387,7 +406,7 @@ async function notifyApprovers(db: Db, actor: Actor, x: any) {
 
 /** Keep the quotation as it stands (header, lines, totals) — at approval, revision and customer confirmation. */
 async function snapshot(db: Db, actor: Actor, x: any, reason: string) {
-  const lines = await q('select description, charge_unit, quantity, cost_rate, sell_rate, margin_type, margin_value, vendor_request_id from quotation_lines where quotation_id = $1 order by sort_order', [x.id], db);
+  const lines = await q('select description, charge_unit, quantity, cost_rate, sell_rate, margin_type, margin_value, vendor_request_id, route_id from quotation_lines where quotation_id = $1 order by sort_order', [x.id], db);
   const head = Object.fromEntries(Object.keys(HEAD).map((k) => [k, x[k]]));
   await db.query(`insert into quotation_versions (quotation_id, version_no, reason, snapshot, made_by, made_by_name) values ($1,$2,$3,$4,$5,$6)`,
     [x.id, x.version_no ?? 1, reason, JSON.stringify({ ...head, quote_no: x.quote_no, currency: x.currency, lines, totals: quoteTotals(lines) }), actor.id, actor.full_name]);
@@ -551,6 +570,9 @@ export async function quotationAction(actor: Actor, id: string, b: any) {
           await event(c, actor, f.id, { kind: 'status', title: `Quotation ${x.quote_no} v${x.version_no} confirmed by the customer`,
             field: commercial && !f.shipping_ref ? 'Shipping Ref' : undefined, new_value: commercial && !f.shipping_ref ? sr : null,
             remarks: note ?? (b.document_id ? 'Confirmation attached' : null) });
+          // Part G2: several route options → the customer's choice goes onto the shipment and is locked
+          const chosen = await (await import('./routing')).chooseRoute(c, actor, f.id, id, b.route_id);
+          if (chosen) await evt(c, actor, id, 'Route option chosen by the customer', chosen);
           if (commercial) await setStage(c, actor, f.id, 'customer_confirmed');
           // any other open quotation on the same Job No. is no longer needed
           const others = await q(`update quotations set status = 'cancelled', decline_reason = $3, updated_at = now()
@@ -637,8 +659,11 @@ export async function customerCopy(actor: Actor, id: string, how: 'print' | 'exc
   const [extra, lines] = await Promise.all([
     one(`select c.name customer_name, c.address customer_address, c.trn customer_trn, c.contact_person customer_contact, u.full_name prepared_by, u.email prepared_by_email
        from quotations x join customers c on c.id = x.customer_id join users u on u.id = x.created_by where x.id = $1`, [id]),
-    q('select description, charge_unit, quantity, sell_rate from quotation_lines where quotation_id = $1 order by sort_order', [id]),
+    q('select description, charge_unit, quantity, sell_rate, route_id from quotation_lines where quotation_id = $1 order by sort_order', [id]),
   ]);
+  // Part G2: one section per route option (with its own total)
+  const routes = x.job_file_id ? await q('select id, option_no, origin_city, pol, destination_city, pod from enquiry_routes where job_file_id = $1 order by option_no', [x.job_file_id]) : [];
+  const used = routes.filter((r) => lines.some((l) => l.route_id === r.id));
   const company: Record<string, string> = {};
   for (const k of ['company_name', 'company_address', 'company_phone', 'company_email', 'company_trn', 'quote_vat_note'])
     company[k] = String(await getSetting(k, ''));
@@ -654,6 +679,12 @@ export async function customerCopy(actor: Actor, id: string, how: 'print' | 'exc
     lines: lines.map((l, i) => ({ description: l.description, unit_name: label(CHARGE_UNITS, l.charge_unit), quantity: l.quantity,
       rate: l.sell_rate, amount: t.each[i].sell })),
     total: t.sell_total, scope: x.scope, exclusions: x.exclusions, terms: x.terms, additional_remarks: x.additional_remarks, payment_terms: x.payment_terms,
+    options: used.length > 1 ? used.map((r) => {
+      const mine = lines.map((l, i) => ({ l, i })).filter(({ l }) => l.route_id === r.id);
+      return { option_no: r.option_no, pol: r.pol ?? r.origin_city, pod: r.pod ?? r.destination_city, selected: x.selected_route_id === r.id,
+        lines: mine.map(({ l, i }) => ({ description: l.description, unit_name: label(CHARGE_UNITS, l.charge_unit), quantity: l.quantity, rate: l.sell_rate, amount: t.each[i].sell })),
+        total: quoteTotals(mine.map(({ l }) => ({ ...l, cost_rate: '0' }))).sell_total };
+    }) : null,
     prepared_by: extra.prepared_by, prepared_by_email: extra.prepared_by_email,
   };
 }
@@ -680,15 +711,19 @@ export async function customerExcel(actor: Actor, id: string) {
   kv('Cargo', [d.cargo_description, d.packages && `${d.packages} packages`, d.gross_weight_kg && `${Number(d.gross_weight_kg)} kg`,
     d.volume_cbm && `${Number(d.volume_cbm)} CBM`, d.chargeable_weight_kg && `chargeable ${Number(d.chargeable_weight_kg)} kg`].filter(Boolean).join(', '));
   add([]);
-  const head = add(['Description', 'Charged', 'Qty', `Rate (${d.currency})`, `Amount (${d.currency})`], bold);
-  head.eachCell((c) => { c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF3E7C7' } }; c.border = { bottom: { style: 'thin' } }; });
-  for (const l of d.lines) {
-    const r = add([l.description, l.unit_name, Number(l.quantity), Number(l.rate), Number(l.amount)]);
-    r.getCell(3).numFmt = '#,##0.###'; r.getCell(4).numFmt = '#,##0.00'; r.getCell(5).numFmt = '#,##0.00';
+  // Part G2: one block per route option, each with its own total
+  for (const o of d.options ?? [{ option_no: null, pol: null, pod: null, lines: d.lines, total: d.total }]) {
+    if (o.option_no) add([`Option ${o.option_no}: ${[o.pol, o.pod].filter(Boolean).join(' → ')}`], bold);
+    const head = add(['Description', 'Charged', 'Qty', `Rate (${d.currency})`, `Amount (${d.currency})`], bold);
+    head.eachCell((c) => { c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF3E7C7' } }; c.border = { bottom: { style: 'thin' } }; });
+    for (const l of o.lines) {
+      const r = add([l.description, l.unit_name, Number(l.quantity), Number(l.rate), Number(l.amount)]);
+      r.getCell(3).numFmt = '#,##0.###'; r.getCell(4).numFmt = '#,##0.00'; r.getCell(5).numFmt = '#,##0.00';
+    }
+    const tot = add(['', '', '', o.option_no ? `Option ${o.option_no} total` : 'Total', Number(o.total)], bold);
+    tot.getCell(5).numFmt = '#,##0.00'; tot.getCell(5).border = { top: { style: 'thin' }, bottom: { style: 'double' } };
+    add([]);
   }
-  const tot = add(['', '', '', 'Total', Number(d.total)], bold);
-  tot.getCell(5).numFmt = '#,##0.00'; tot.getCell(5).border = { top: { style: 'thin' }, bottom: { style: 'double' } };
-  add([]);
   if (d.company.quote_vat_note) add([d.company.quote_vat_note], { italic: true });
   for (const [k, v] of [['Scope of service', d.scope], ['Exclusions', d.exclusions], ['Terms and conditions', d.terms], ['Payment / commercial conditions', d.payment_terms], ['Additional remarks', d.additional_remarks]] as const)
     if (v) { add([]); add([k], bold); for (const line of String(v).split('\n')) add([line]); }

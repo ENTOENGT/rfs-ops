@@ -75,8 +75,9 @@ label.f > span em { color: var(--danger); font-style: normal; }
 .g2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .g3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .g4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.g6 { grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 8px; }
 .span2 { grid-column: span 2; }
-@media (max-width: 900px) { .g3, .g4 { grid-template-columns: repeat(2, minmax(0, 1fr)); } .shell { grid-template-columns: 1fr; } .side { position: static; height: auto; } }
+@media (max-width: 900px) { .g3, .g4, .g6 { grid-template-columns: repeat(2, minmax(0, 1fr)); } .shell { grid-template-columns: 1fr; } .side { position: static; height: auto; } }
 
 /* ---------- panels & tables ---------- */
 .panel { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 16px; }
