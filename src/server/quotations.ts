@@ -17,6 +17,7 @@ import { ApiError, bad, Db, forbidden, getSetting, notFound, one, q, tx } from '
 import { fromFils, toFils } from '../lib/finance';
 import { SERVICE_TYPES, DIRECTIONS, CHARGE_UNITS, Q_STATUSES, qStatusName, qStatusColor, label } from '../lib/jobfileRules';
 import { createJobFile } from './jobfiles';
+import { isCurrency } from '../lib/currency';
 
 const UUID = /^[0-9a-f-]{36}$/i;
 const isUuid = (v: unknown): v is string => typeof v === 'string' && UUID.test(v);
@@ -218,6 +219,7 @@ const HEAD: Record<string, (v: unknown) => unknown> = {
   valid_until: (v) => { if (!DATE.test(String(v ?? ''))) throw bad('Choose the date the rates are valid until'); return v; },
   scope: (v) => txt(v, 3000), exclusions: (v) => txt(v, 3000), terms: (v) => txt(v, 3000),
   additional_remarks: (v) => txt(v, 3000), payment_terms: (v) => txt(v, 3000),
+  currency: (v) => { const c = String(v ?? '').toUpperCase(); if (!isCurrency(c)) throw bad('Quotation currency: AED, USD, EUR, INR or CNY'); return c; },
 };
 const TERM_KEYS = ['scope', 'exclusions', 'terms', 'additional_remarks', 'payment_terms'];
 /** Did the person change the template's text for this quotation? (shown as "from template X, changed") */
@@ -340,10 +342,11 @@ export async function createQuotation(actor: Actor, b: any) {
       vals.terms_template_id = tpl.template_id;
       vals.terms_edited = termsDiffer(vals, tpl);
     }
+    if (!vals.currency) vals.currency = await getSetting('currency', 'AED', c);
     const cols = Object.keys(vals);
-    const x = await one(`insert into quotations (quote_no, department_id, created_by, currency${cols.map((k) => ', ' + k).join('')})
-      values ('Q-' || nextval('quote_no_seq'), $1, $2, $3${cols.map((_, i) => `, $${i + 4}`).join('')}) returning id, quote_no`,
-      [dept, actor.id, await getSetting('currency', 'AED', c), ...cols.map((k) => vals[k])], c);
+    const x = await one(`insert into quotations (quote_no, department_id, created_by${cols.map((k) => ', ' + k).join('')})
+      values ('Q-' || nextval('quote_no_seq'), $1, $2${cols.map((_, i) => `, $${i + 3}`).join('')}) returning id, quote_no`,
+      [dept, actor.id, ...cols.map((k) => vals[k])], c);
     for (const [i, l] of lines.entries())
       await c.query(`insert into quotation_lines (quotation_id, sort_order, description, charge_unit, quantity, cost_rate, sell_rate, margin_type, margin_value, vendor_request_id, route_id)
         values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`, [x.id, i, l.description, l.charge_unit, l.quantity, l.cost_rate, l.sell_rate, l.margin_type, l.margin_value, l.vendor_request_id, l.route_id]);

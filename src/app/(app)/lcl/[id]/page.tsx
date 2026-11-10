@@ -11,7 +11,8 @@ const TABS: [string, string][] = [['overview', 'Overview'], ['shipments', 'House
 const blankShp = { owner_type: 'partner_agent', packages: '', gross_weight_kg: '', volume_cbm: '' };
 
 export default function Consolidation({ params }: { params: { id: string } }) {
-  const { lk } = useMe();
+  const { lk, me } = useMe();
+  const seeFiles = me.permissions.some((p) => p.startsWith('jobfiles.'));   // the LCL Team sees the reference, not the shipment page
   const [d, setD] = useState<any>(null);
   const [tab, setTab] = useState('overview');
   const [err, setErr] = useState('');
@@ -31,7 +32,7 @@ export default function Consolidation({ params }: { params: { id: string } }) {
   const ask = (body: any, question: string, done: string, key = 'reason') => { const v = prompt(question); if (v) act({ ...body, [key]: v }, done); };
   if (!d) return <div className="page">{err ? <div className="msg err">{err}</div> : <p className="muted">Loading…</p>}</div>;
   const n = (v: any, dp = 2) => Number(v).toLocaleString('en-US', { minimumFractionDigits: dp, maximumFractionDigits: dp });
-  const ref = (s: any) => s.job_file_id ? <Link href={`/job-files/${s.job_file_id}`}>{s.job_no ?? s.shipping_ref ?? s.enquiry_ref}</Link> : null;
+  const ref = (s: any) => s.job_file_id ? (seeFiles ? <Link href={`/job-files/${s.job_file_id}`}>{s.job_no ?? s.shipping_ref ?? s.enquiry_ref}</Link> : <span>{s.job_no ?? s.shipping_ref ?? s.enquiry_ref}</span>) : null;
   const owner = (s: any) => s.customer_name ?? s.partner_name ?? s.shipper;
   const upload = async () => {
     if (!upl.file) return;

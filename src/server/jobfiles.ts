@@ -20,7 +20,10 @@ import { ApiError, bad, Db, forbidden, getSetting, notFound, one, q, tx } from '
 import { jobNoProblem } from '../lib/requestRules';
 import { DIRECTIONS, MODES, JF_STATUSES, INCOTERMS, jfStatusName, jfStatusColor, label, milestonePlan, qStatusName, qStatusColor } from '../lib/jobfileRules';
 import { normContainer } from './pro';
-import { stageName, stageColor, nextAction, divisionName, PRE_CONFIRM } from '../lib/commercialRules';
+import { stageName, stageColor, nextAction, divisionName, directionOfDivision, PRE_CONFIRM } from '../lib/commercialRules';
+import { isCurrency } from '../lib/currency';
+import { FIELD_LABEL, incotermMissing, incotermRequired } from '../lib/incotermRules';
+import { CargoLine, cargoTotals, dimsRequired, lineCbm, lineProblem } from '../lib/cargoRules';
 
 const UUID = /^[0-9a-f-]{36}$/i;
 const isUuid = (v: unknown): v is string => typeof v === 'string' && UUID.test(v);
@@ -128,6 +131,11 @@ const FIELDS: Record<string, { label: string; parse: (v: unknown) => unknown }> 
   booking_reference: { label: 'Carrier booking ref.', parse: (v) => txt(v, 80) },
   mbl_mawb: { label: 'MBL / MAWB', parse: (v) => txt(v, 60) }, hbl_hawb: { label: 'HBL / HAWB', parse: (v) => txt(v, 60) },
   incoterm: { label: 'Incoterm', parse: (v) => { if (v && !INCOTERMS.includes(String(v))) throw bad('Choose an Incoterm'); return v || null; } },
+  pickup_address: { label: 'Pickup (loading) address', parse: (v) => txt(v, 500) }, pickup_contact: { label: 'Pickup contact', parse: (v) => txt(v, 160) },
+  named_place: { label: 'Handover place', parse: (v) => txt(v, 300) },
+  delivery_address: { label: 'Delivery address', parse: (v) => txt(v, 500) }, delivery_contact: { label: 'Delivery contact', parse: (v) => txt(v, 160) },
+  cargo_value: { label: 'Cargo value', parse: (v) => num(v, 'Cargo value') },
+  cargo_value_currency: { label: 'Cargo value currency', parse: (v) => { const c = String(txt(v, 3) ?? '').toUpperCase(); if (c && !isCurrency(c)) throw bad('Cargo value currency: AED, USD, EUR, INR or CNY'); return c || null; } },
   etd: { label: 'ETD', parse: (v) => day(v, 'ETD') }, eta: { label: 'ETA', parse: (v) => day(v, 'ETA') },
   atd: { label: 'Actual departure', parse: (v) => day(v, 'Actual departure') }, ata: { label: 'Actual arrival', parse: (v) => day(v, 'Actual arrival') },
   packages: { label: 'Packages', parse: (v) => num(v, 'Packages', true) },
@@ -166,6 +174,50 @@ export async function checklist(f: any, db?: Db) {
   });
 }
 
+// ------------------------------------------------------------ Incoterm details (migration 023)
+const INCOTERM_KEYS = ['incoterm', 'direction', 'needs_transport', 'pickup_address', 'named_place', 'port_of_loading', 'port_of_discharge', 'delivery_address', 'cargo_value', 'cargo_value_currency'];
+/** The Incoterm decides which addresses the enquiry needs. `optionalTerm`: an old enquiry without a term may stay without one. */
+function checkIncoterm(v: Record<string, any>, optionalTerm = false) {
+  if (!v.incoterm && incotermRequired(v.direction) && !optionalTerm)
+    throw new ApiError(400, 'VALIDATION', 'Choose the Incoterm', { fields: { incoterm: 'Choose the Incoterm' } });
+  const miss = incotermMissing(v);
+  if (miss.length) throw new ApiError(400, 'VALIDATION', `${v.incoterm} needs: ${miss.map((k) => FIELD_LABEL[k].toLowerCase()).join(', ')}`,
+    { fields: Object.fromEntries(miss.map((k) => [k, `Needed for ${v.incoterm}`])) });
+}
+
+// ------------------------------------------------------------ cargo lines (migration 023)
+/** Check the cargo lines sent from the form. undefined = not sent (leave as is). */
+function parseCargo(v: unknown): CargoLine[] | undefined {
+  if (v === undefined || v === null) return undefined;
+  if (!Array.isArray(v)) throw bad('Cargo lines are not in the right shape');
+  if (v.length > 200) throw bad('Up to 200 cargo lines');
+  return v.map((l: any, i: number) => {
+    const p = lineProblem(l);
+    if (p) throw new ApiError(400, 'VALIDATION', `Cargo line ${i + 1}: ${p}`, { fields: { cargo_lines: `Line ${i + 1}: ${p}` } });
+    return { package_type: l.package_type, package_other: l.package_type === 'Other' ? txt(l.package_other, 40) : null, pieces: Number(l.pieces),
+      length: Number(l.length), width: Number(l.width), height: Number(l.height), dim_unit: l.dim_unit, weight_kg: Number(l.weight_kg) };
+  });
+}
+const cargoSummary = (lines: any[]) => lines.length
+  ? lines.map((l) => `${l.pieces} ${l.package_type === 'Other' ? l.package_other : l.package_type} ${Number(l.length)}×${Number(l.width)}×${Number(l.height)} ${l.dim_unit}, ${Number(l.weight_kg)} kg`).join('; ')
+  : null;
+/** Replace the shipment's cargo lines (old ones are kept, marked removed) and write the totals onto the shipment. */
+async function saveCargo(db: Db, actor: Actor, fileId: string, lines: CargoLine[], mode: string) {
+  await db.query('update job_file_cargo_lines set removed_at = now(), removed_by = $2 where job_file_id = $1 and removed_at is null', [fileId, actor.id]);
+  for (const [i, l] of lines.entries())
+    await db.query(`insert into job_file_cargo_lines (job_file_id, line_no, package_type, package_other, pieces, length, width, height, dim_unit, weight_kg, cbm, created_by)
+      values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
+      [fileId, i + 1, l.package_type, l.package_other ?? null, l.pieces, l.length, l.width, l.height, l.dim_unit, l.weight_kg, lineCbm(l), actor.id]);
+  if (lines.length) await writeTotals(db, fileId, lines, mode);
+}
+async function writeTotals(db: Db, fileId: string, lines: Partial<CargoLine>[], mode: string) {
+  const t = cargoTotals(lines, mode);
+  await db.query(`update job_files set packages = $2, gross_weight_kg = $3, volume_cbm = $4, chargeable_weight_kg = coalesce($5, chargeable_weight_kg), package_type = $6 where id = $1`,
+    [fileId, t.packages, t.weight, t.cbm, t.chargeable_kg, t.package_type]);
+}
+const liveCargo = (id: string, db?: Db) => q(`select id, line_no, package_type, package_other, pieces, length, width, height, dim_unit, weight_kg, cbm
+  from job_file_cargo_lines where job_file_id = $1 and removed_at is null order by line_no`, [id], db);
+
 // ------------------------------------------------------------ create
 /** Create a Job File. `c` lets a quotation create it inside its own transaction. */
 export async function createJobFile(actor: Actor, b: any, c?: PoolClient, from?: { quotation_id: string }): Promise<{ id: string; job_no: string; enquiry_ref: string }> {
@@ -177,11 +229,18 @@ export async function createJobFile(actor: Actor, b: any, c?: PoolClient, from?:
   const jobNo = enquiry ? null : String(b.job_no).trim();
   const fields: Record<string, string> = {};
   const vals: Record<string, unknown> = {};
+  // Step 4: an enquiry asks only the division; the direction comes from it (the Salesman's division when they have one)
+  if (enquiry && !b.direction && b.division) b = { ...b, direction: directionOfDivision(b.division) ?? undefined };
+  if (enquiry && !b.direction && !b.division && actor.division) b = { ...b, direction: directionOfDivision(actor.division) ?? undefined };
   for (const k of ['customer_id', 'direction', 'mode'])
     if (b[k] === undefined || b[k] === null || b[k] === '') fields[k] = `Choose the ${FIELDS[k].label.toLowerCase()}`;
   if (Object.keys(fields).length) throw new ApiError(400, 'VALIDATION', 'Please fill in the highlighted fields', { fields });
   for (const [k, def] of Object.entries(FIELDS)) if (b[k] !== undefined) vals[k] = def.parse(b[k]);
   if (vals.etd && vals.eta && String(vals.eta) < String(vals.etd)) throw bad('ETA is before ETD');
+  if (enquiry) checkIncoterm(vals);
+  const cargo = parseCargo(b.cargo_lines) ?? [];
+  if (enquiry && dimsRequired(vals.mode as string) && !cargo.length)
+    throw new ApiError(400, 'VALIDATION', 'Add the cargo dimensions (at least one line)', { fields: { cargo_lines: 'Add at least one line: packages, size and weight' } });
 
   const run = async (db: PoolClient) => {
     if (!(await one('select 1 from customers where id = $1 and deleted_at is null', [vals.customer_id], db))) throw bad('Customer not found');
@@ -194,6 +253,14 @@ export async function createJobFile(actor: Actor, b: any, c?: PoolClient, from?:
     // Responsible Salesman, Assigned Coordinator (from the Salesman's mapping) and division — kept apart from Created By
     const people = enquiry || b.salesman_id ? await cm.resolvePeople(actor, b, vals.customer_id as string, vals.direction as string, db)
       : { salesman_id: actor.role_code === 'sales' ? actor.id : null, coordinator_id: actor.role_code === 'coordinator' ? actor.id : null, division: actor.division };
+    if (enquiry) {
+      if (!people.division) throw new ApiError(400, 'VALIDATION', 'Choose the division', { fields: { division: 'Choose the division' } });
+      const dir = directionOfDivision(people.division);   // the direction always matches the division
+      if (b.direction && b.direction !== dir)
+        throw new ApiError(400, 'VALIDATION', `The ${divisionName(people.division)} division handles ${DIRECTIONS.find(([c]) => c === dir)?.[1].toLowerCase()} enquiries — choose the right division`,
+          { fields: { division: 'Does not match the direction' } });
+      vals.direction = dir;
+    }
     Object.assign(vals, people, { enquiry_ref: await cm.newRef(db, 'ENQ', people.division), stage: enquiry ? 'enquiry' : 'handed_over' });
     // the words after the [ENQ] tag in every email subject — fixed now, so the email thread keeps one subject
     const place = (a: unknown, b: unknown) => String(a ?? '').trim() || String(b ?? '').trim();
@@ -215,6 +282,7 @@ export async function createJobFile(actor: Actor, b: any, c?: PoolClient, from?:
     const plan = milestonePlan(f.direction, f.mode, { clearance: f.needs_clearance, transport: f.needs_transport, warehouse: f.needs_warehouse });
     for (const [i, [code, name]] of plan.entries())
       await db.query('insert into job_file_milestones (job_file_id, code, name, sort_order) values ($1,$2,$3,$4)', [f.id, code, name, (i + 1) * 10]);
+    if (cargo.length) await saveCargo(db, actor, f.id, cargo, f.mode);
     const conts = Array.isArray(b.containers) ? b.containers.filter((k: any) => String(k?.container_no ?? '').trim()) : [];
     for (const k of conts)
       await db.query('insert into job_file_containers (job_file_id, container_no, size_type, seal_no) values ($1,$2,$3,$4) on conflict do nothing',
@@ -394,10 +462,10 @@ export async function getJobFile(actor: Actor, id: string) {
   const oldCases = await q(`select id, case_no, subject, status, created_at from cs_cases where job_file_id = $1 order by created_at`, [id]);
   // Part G2: route options, vessel legs, BL drafts
   const rt = await import('./routing');
-  const [routes, legs, blDrafts] = await Promise.all([rt.routesFor(id), rt.legsFor(id), rt.blDraftsFor(id)]);
+  const [routes, legs, blDrafts, cargoLines] = await Promise.all([rt.routesFor(id), rt.legsFor(id), rt.blDraftsFor(id), liveCargo(id)]);
   return {
     ...shape({ ...f, ...extra }), search_text: undefined, quotation_id: quotation ? f.quotation_id : undefined, quotation,
-    prealert, booking, lcl, old_cases: oldCases, routes, legs, bl_drafts: blDrafts, email_subject: (await import('./emails')).threadSubject({ ...f, ...extra }), containers, milestones, events, ...work, checklist: docList, documents, docs_required_to_close: docsRequired,
+    prealert, booking, lcl, old_cases: oldCases, cargo_lines: cargoLines, routes, legs, bl_drafts: blDrafts, email_subject: (await import('./emails')).threadSubject({ ...f, ...extra }), containers, milestones, events, ...work, checklist: docList, documents, docs_required_to_close: docsRequired,
     quotations: quotations?.map((x) => ({ ...x, status_name: qStatusName(x.status), status_color: qStatusColor(x.status) })) ?? null, vendor_requests: vendorRequests,
     closure: { can_close: blockers.length === 0, blockers,
       warnings: milestones.filter((m) => !m.actual_at).map((m) => `Milestone "${m.name}" has no actual date`) },
@@ -429,8 +497,27 @@ export async function updateJobFile(actor: Actor, id: string, b: any) {
         changes.push([k, v]);
     }
     const next = { ...f, ...Object.fromEntries(changes) };
+    if (f.status === 'enquiry' && f.division && changes.some(([k, v]) => k === 'direction' && v !== directionOfDivision(f.division)))
+      throw new ApiError(400, 'VALIDATION', `This enquiry is in the ${divisionName(f.division)} division (it is in the Enquiry Ref), so its direction stays ${DIRECTIONS.find(([c]) => c === directionOfDivision(f.division))?.[1]}.`,
+        { fields: { direction: 'Follows the division' } });
     if (next.etd && next.eta && String(next.eta) < String(next.etd)) throw bad('ETA is before ETD');
-    if (!changes.length) return;
+    // Incoterm details (migration 023): checked at enquiry stage when the term or one of its fields is changed
+    if (f.status === 'enquiry' && changes.some(([k]) => INCOTERM_KEYS.includes(k))) checkIncoterm(next, f.incoterm == null);
+    // cargo lines (migration 023): when the shipment has lines, its totals always come from them
+    const cargo = parseCargo(b.cargo_lines);
+    const oldCargo = await liveCargo(id, c);
+    if (cargo && !cargo.length && oldCargo.length && f.status === 'enquiry' && dimsRequired(next.mode))
+      throw new ApiError(400, 'VALIDATION', 'Keep at least one cargo line', { fields: { cargo_lines: 'Keep at least one line: packages, size and weight' } });
+    const cargoChanged = cargo !== undefined && cargoSummary(cargo) !== cargoSummary(oldCargo);
+    const lines = cargoChanged ? cargo! : oldCargo;
+    if (lines.length) for (const k of ['packages', 'gross_weight_kg', 'volume_cbm', 'chargeable_weight_kg']) {
+      const i = changes.findIndex(([x]) => x === k); if (i >= 0) changes.splice(i, 1);
+    }
+    if (cargoChanged) {
+      await saveCargo(c, actor, id, cargo!, next.mode);
+      await event(c, actor, id, { kind: 'edit', title: 'Cargo dimensions changed', field: 'Cargo', old_value: cargoSummary(oldCargo), new_value: cargoSummary(cargo!) });
+    } else if (lines.length && changes.some(([k]) => k === 'mode')) await writeTotals(c, id, lines, next.mode);
+    if (!changes.length) { if (cargoChanged) await refreshSearch(c, id); return; }
     if (changes.some(([k]) => k === 'customer_id') && !(await one('select 1 from customers where id = $1 and deleted_at is null', [next.customer_id], c)))
       throw bad('Customer not found');
     await c.query(`update job_files set ${changes.map(([k], i) => `${k} = $${i + 2}`).join(', ')}, updated_at = now() where id = $1`,

@@ -3,10 +3,15 @@ import { useEffect, useState } from 'react';
 import { api, fmtDateTime } from '@/components/api';
 import { useMe } from '@/components/Shell';
 import MasterPage from '@/components/MasterPage';
+import { CURRENCIES } from '@/lib/currency';
 
 const FIELDS: [string, string, string, string?][] = [
   ['company_name', 'Company name', 'text'],
-  ['currency', 'Currency code', 'text', 'e.g. AED'],
+  ['currency', 'Company currency', 'currency', 'Transport, PRO and warehouse amounts, and the default for new quotations'],
+  ['fx_USD', '1 USD = ? AED', 'number', 'Exchange rates are used to bring an agent rate into the quotation currency. Leave blank to type the rate each time.'],
+  ['fx_EUR', '1 EUR = ? AED', 'number'],
+  ['fx_INR', '1 INR = ? AED', 'number'],
+  ['fx_CNY', '1 CNY (yuan) = ? AED', 'number'],
   ['vat_rate', 'VAT rate (%)', 'number', 'Applies to jobs created after you change it'],
   ['job_number_prefix', 'Request No. prefix', 'text', 'Automatic Request No. — e.g. TR- gives TR-1001. The Job No. is typed by Operations.'],
   ['timezone', 'Timezone', 'text', 'Asia/Dubai'],
@@ -177,7 +182,8 @@ export default function Settings() {
             <label className="f" key={k}><span>{label}</span>
               {type === 'onoff'
                 ? <select value={String(f[k] ?? true)} onChange={(e) => setF({ ...f, [k]: e.target.value === 'true' })}><option value="true">On</option><option value="false">Off</option></select>
-                : <input type={type} value={f[k] ?? ''} onChange={(e) => setF({ ...f, [k]: e.target.value })} />}
+                : type === 'currency' ? <select value={f[k] ?? 'AED'} onChange={(e) => setF({ ...f, [k]: e.target.value })}>{CURRENCIES.map(([c, n]) => <option key={c} value={c}>{c} — {n}</option>)}</select>
+                : <input type={type} step={type === 'number' && k.startsWith('fx_') ? 'any' : undefined} value={f[k] ?? ''} onChange={(e) => setF({ ...f, [k]: e.target.value })} />}
               {hint && <span className="muted small" style={{ fontWeight: 400, marginTop: 3 }}>{hint}</span>}</label>))}
         </div>
         <div className="form-actions"><button className="btn primary" onClick={() => run(() => api('/api/settings', { method: 'PUT', body: f }), 'Settings saved')}>Save settings</button></div>

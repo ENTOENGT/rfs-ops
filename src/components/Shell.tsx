@@ -14,7 +14,7 @@ import { Icon } from './Icon';
 import { QUICK_CREATE, locate, isOn, visibleModules, NavModule } from '@/lib/navigation';
 
 export interface Me {
-  id: string; full_name: string; email: string; role: string; role_code: string; department: string | null;
+  id: string; full_name: string; email: string; role: string; role_code: string; division?: string | null; department: string | null;
   department_side: string | null; app_only: boolean;
   permissions: string[];
   financial_access: { buyingView: boolean; buyingEdit: boolean; sellingView: boolean; sellingEdit: boolean; profitView: boolean };

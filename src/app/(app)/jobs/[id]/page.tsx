@@ -143,9 +143,10 @@ export default function JobDetail({ params }: { params: { id: string } }) {
       <div className="cols">
         <div>
           <div className="tabs" role="tablist">
-            {[['overview', 'Overview'], ['documents', `Documents (${job.documents.length})`], ['notes', `Notes (${job.notes.length})`], ['activity', `Activity (${job.activity.length})`]].map(([k, l]) =>
+            {[['overview', 'Overview'], ...(job.shipment ? [['shipment', 'Shipment']] : []), ['documents', `Documents (${job.documents.length})`], ['notes', `Notes (${job.notes.length})`], ['activity', `Activity (${job.activity.length})`]].map(([k, l]) =>
               <button key={k} role="tab" aria-selected={tab === k} className={tab === k ? 'on' : ''} onClick={() => setTab(k)}>{l}</button>)}
           </div>
+          {tab === 'shipment' && job.shipment && <ShipmentTab s={job.shipment} jobId={job.id} />}
           {tab === 'overview' && <>
             <div className="panel"><h2>Request</h2><KV rows={[
               ['Job No.', job.job_no], ['Request No.', job.job_number], ['Department', job.department_name], ['Customer', job.customer_name], ['Required', job.slot_from ? `${fmtDate(job.required_date)}, ${slot(job.slot_from, job.slot_to)}` : fmtDate(job.required_date)],
@@ -185,4 +186,44 @@ export default function JobDetail({ params }: { params: { id: string } }) {
       </div>
     </div>
   );
+}
+
+/** Step 5: the shipment this truck job serves — handed over by Commercials. Operational details only, no prices. */
+const SKV = ({ rows }: { rows: [string, any][] }) => (
+  <dl className="kv">{rows.filter(([, v]) => v !== null && v !== undefined && v !== '').map(([k, v]) => <Fragment key={k}><dt>{k}</dt><dd>{v}</dd></Fragment>)}</dl>
+);
+function ShipmentTab({ s, jobId }: { s: any; jobId: string }) {
+  const KV = SKV;
+  const unit: Record<string, string> = { cm: 'cm', in: 'inch', m: 'm' };
+  const mode: Record<string, string> = { sea_fcl: 'Sea FCL', sea_lcl: 'Sea LCL', air: 'Air', road: 'Road' };
+  return <>
+    <div className="panel"><h2>Shipment</h2><KV rows={[
+      ['Shipment', [s.job_no && s.job_no !== s.enquiry_ref ? `Job No. ${s.job_no}` : null, s.shipping_ref, s.enquiry_ref].filter(Boolean).join(' · ')],
+      ['Type', `${s.direction === 'import' ? 'Import' : s.direction === 'export' ? 'Export' : s.direction === 'cross_trade' ? 'Cross-trade' : 'Domestic'} · ${mode[s.mode] ?? s.mode}${s.incoterm ? ` · ${s.incoterm}` : ''}`],
+      ['Route', [s.origin, s.port_of_loading, s.port_of_discharge, s.destination].filter(Boolean).join(' → ') || null],
+      ['Vessel / flight', [s.carrier, s.vessel_flight, s.voyage].filter(Boolean).join(' · ') || null],
+      ['ETA / arrived', [s.eta && fmtDate(s.eta), s.ata && `arrived ${fmtDate(s.ata)}`].filter(Boolean).join(' · ') || null],
+      [s.mode === 'air' ? 'MAWB / HAWB' : 'MBL / HBL', [s.mbl_mawb, s.hbl_hawb].filter(Boolean).join(' / ') || null],
+      ['Containers', s.containers.length ? s.containers.map((k: any) => `${k.container_no}${k.size_type ? ` ${k.size_type}` : ''}${k.seal_no ? ` (seal ${k.seal_no})` : ''}`).join(', ') : null],
+      ['Customs clearance', s.needs_clearance ? 'Needed' : null],
+    ]} /></div>
+    {(s.pickup_address || s.delivery_address) && <div className="panel"><h2>Addresses from the shipment</h2><div className={s.pickup_address && s.delivery_address ? 'grid g2' : ''}>
+      {s.pickup_address && <KV rows={[['Pickup', s.pickup_address], ['Contact', s.pickup_contact]]} />}
+      {s.delivery_address && <KV rows={[['Delivery', s.delivery_address], ['Contact', s.delivery_contact]]} />}
+    </div></div>}
+    <div className="panel"><h2>Cargo</h2>
+      <KV rows={[['Total', [s.packages && `${s.packages} ${(s.package_type ?? 'packages').toLowerCase()}`, s.gross_weight_kg && `${Number(s.gross_weight_kg).toLocaleString()} kg`, s.volume_cbm && `${Number(s.volume_cbm)} CBM`].filter(Boolean).join(' · ') || null],
+        ['Description', s.cargo_description]]} />
+      {s.cargo_lines.length > 0 && <div className="table-wrap"><table className="t"><thead><tr><th>Packages</th><th>Size (L × W × H)</th><th className="num">Weight</th><th className="num">CBM</th></tr></thead>
+        <tbody>{s.cargo_lines.map((l: any) => <tr key={l.line_no}><td>{l.pieces} {(l.package_type === 'Other' ? l.package_other : l.package_type).toLowerCase()}</td>
+          <td>{Number(l.length)} × {Number(l.width)} × {Number(l.height)} {unit[l.dim_unit]}</td><td className="num">{Number(l.weight_kg).toLocaleString()} kg</td><td className="num">{Number(l.cbm).toFixed(3)}</td></tr>)}</tbody></table></div>}
+    </div>
+    <div className="panel"><h2>Shipment documents</h2>
+      {s.documents.length === 0 ? <p className="muted small" style={{ margin: 0 }}>None yet. BL / AWB, delivery order, packing list and customs declaration appear here once Commercials or Operations upload them.</p>
+        : s.documents.map((d: any) => <div key={d.id} className="small" style={{ display: 'flex', gap: 10, padding: '6px 0', borderTop: '1px solid var(--line-soft)' }}>
+          <b style={{ minWidth: 170 }}>{d.doc_name}</b><span className="muted" style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis' }}>{d.file_name}</span>
+          <a href={`/api/jobs/${jobId}/shipment-docs/${d.id}?view=1`} target="_blank" rel="noreferrer">View</a>
+          <a href={`/api/jobs/${jobId}/shipment-docs/${d.id}`}>Download</a></div>)}
+    </div>
+  </>;
 }

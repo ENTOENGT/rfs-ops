@@ -4,13 +4,16 @@ import { useEffect, useState } from 'react';
 import { api, fmtDate, fmtDateTime, fmtMoney } from '@/components/api';
 import { NewVendorRequest } from '@/components/NewVendorRequest';
 import { EmailButton } from '@/components/EmailButton';
+import { useMe } from '@/components/Shell';
 import { CHARGE_SECTIONS, RATE_SOURCES } from '@/lib/commercialRules';
+import { CURRENCIES, CURRENCY_CODES, fxRate } from '@/lib/currency';
 
 const LABEL: Record<string, string> = { quoted: 'Rate received', confirmed: 'Confirmed', in_progress: 'In progress', completed: 'Completed', disputed: 'Problem / dispute', cancelled: 'Cancel', revise: 'Revised rate' };
 const blankCharge = (cur: string) => ({ section: 'freight', description: '', basis: '', quantity: '1', amount: '', currency: cur, exchange_rate: '1' });
 
 /** Full rate entry: charge lines (freight, origin, destination) or one total, and the terms that come with the rate. */
 function RateFields({ s, set, d }: { s: any; set: (v: any) => void; d: any }) {
+  const { lk } = useMe();
   const charges: any[] = s.charges ?? [];
   const total = charges.reduce((t, c) => t + (Number(c.amount) || 0) * (Number(c.quantity) || 0) * (Number(c.exchange_rate) || 0), 0);
   const setCh = (i: number, k: string, v: string) => set({ ...s, charges: charges.map((c, j) => j === i ? { ...c, [k]: v } : c) });
@@ -18,7 +21,9 @@ function RateFields({ s, set, d }: { s: any; set: (v: any) => void; d: any }) {
     <div className="grid g4">
       <label className="f"><span>Rate source</span><select value={s.rate_source ?? ''} onChange={(e) => set({ ...s, rate_source: e.target.value })}>
         {RATE_SOURCES.map(([k, n]) => <option key={k} value={k}>{n}</option>)}</select></label>
-      <label className="f"><span>Currency of the rate</span><input value={s.currency} maxLength={3} onChange={(e) => set({ ...s, currency: e.target.value.toUpperCase() })} /></label>
+      <label className="f"><span>Currency of the rate</span><select value={s.currency} onChange={(e) => set({ ...s, currency: e.target.value,
+        charges: (s.charges ?? []).map((c: any) => ({ ...c, exchange_rate: String(fxRate(c.currency, e.target.value, lk.fx ?? {}) ?? c.exchange_rate) })) })}>
+        {CURRENCIES.map(([c, n]) => <option key={c} value={c}>{c} — {n}</option>)}</select></label>
       <label className="f"><span>Vendor reference</span><input value={s.vendor_reference} onChange={(e) => set({ ...s, vendor_reference: e.target.value })} /></label>
       <label className="f"><span>Valid until</span><input type="date" value={s.rate_valid_until} onChange={(e) => set({ ...s, rate_valid_until: e.target.value })} /></label>
       <label className="f"><span>Line / airline</span><input value={s.carrier} onChange={(e) => set({ ...s, carrier: e.target.value })} /></label>
@@ -39,7 +44,9 @@ function RateFields({ s, set, d }: { s: any; set: (v: any) => void; d: any }) {
           <td><input value={c.basis} onChange={(e) => setCh(i, 'basis', e.target.value)} placeholder="per container" style={{ width: 120 }} /></td>
           <td><input value={c.quantity} onChange={(e) => setCh(i, 'quantity', e.target.value)} style={{ width: 60 }} inputMode="decimal" /></td>
           <td><input value={c.amount} onChange={(e) => setCh(i, 'amount', e.target.value)} style={{ width: 100 }} inputMode="decimal" /></td>
-          <td><input value={c.currency} maxLength={3} onChange={(e) => setCh(i, 'currency', e.target.value.toUpperCase())} style={{ width: 60 }} /></td>
+          <td><select value={c.currency} style={{ width: 86 }} aria-label="Currency" onChange={(e) => { const x = fxRate(e.target.value, s.currency || d.currency, lk.fx ?? {});
+            set({ ...s, charges: charges.map((y: any, j: number) => j === i ? { ...y, currency: e.target.value, exchange_rate: x ? String(x) : y.exchange_rate } : y) }); }}>
+            {CURRENCY_CODES.map((c) => <option key={c}>{c}</option>)}</select></td>
           <td><input value={c.exchange_rate} onChange={(e) => setCh(i, 'exchange_rate', e.target.value)} style={{ width: 80 }} inputMode="decimal" /></td>
           <td><button className="btn small" type="button" onClick={() => set({ ...s, charges: charges.filter((_, j) => j !== i) })}>✕</button></td></tr>)}</tbody>
         <tfoot><tr><td colSpan={4}><b>Total</b></td><td className="num"><b>{total.toFixed(2)}</b></td><td colSpan={3}>{s.currency || d.currency}</td></tr></tfoot></table></div>}

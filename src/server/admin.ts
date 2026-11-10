@@ -50,6 +50,8 @@ export async function lookups(actor: Actor) {
     document_types: await q('select code, name from document_types where is_active and ($1 or not is_commercial) order by name',
       [actor.fin.sellingView && actor.has('documents.view_commercial')]),
     currency: await getSetting('currency', 'AED'),
+    // multi-currency: AED value of 1 USD / EUR / INR / CNY (Settings)
+    fx: Object.fromEntries((await q(`select key, value from settings where key like 'fx\\_%'`)).map((r) => [String(r.key).slice(3), r.value === null ? null : Number(r.value)])),
     timezone: await getSetting('timezone', 'Asia/Dubai'),
     // Commercials (Part E): who can be Salesman / Coordinator on an enquiry
     salesmen: await q(`select u.id, u.full_name name, u.division, u.coordinator_id from users u join roles r on r.id = u.role_id

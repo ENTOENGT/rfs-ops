@@ -41,7 +41,7 @@ function ConfirmModal({ d, onClose, act }: { d: any; onClose: () => void; act: (
     </div></div>;
 }
 
-const HEAD = ['customer_id', 'service_type', 'direction', 'enquiry_reference', 'origin', 'destination', 'cargo_description', 'packages',
+const HEAD = ['currency', 'customer_id', 'service_type', 'direction', 'enquiry_reference', 'origin', 'destination', 'cargo_description', 'packages',
   'gross_weight_kg', 'volume_cbm', 'chargeable_weight_kg', 'valid_until', 'scope', 'exclusions', 'terms', 'additional_remarks', 'payment_terms'];
 
 export default function Quotation({ params }: { params: { id: string } }) {

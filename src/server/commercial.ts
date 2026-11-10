@@ -14,7 +14,7 @@
 import { PoolClient } from 'pg';
 import { Actor } from './auth';
 import { ApiError, audit, bad, Db, forbidden, notFound, one, q, tx } from './db';
-import { STAGE_ORDER, PRE_CONFIRM, stageName, DIVISIONS, PREALERT_CHECKS } from '../lib/commercialRules';
+import { STAGE_ORDER, PRE_CONFIRM, stageName, DIVISIONS, PREALERT_CHECKS, divisionOfDirection } from '../lib/commercialRules';
 import { jobNoProblem } from '../lib/requestRules';
 
 const UUID = /^[0-9a-f-]{36}$/i;
@@ -173,9 +173,11 @@ export async function resolvePeople(actor: Actor, b: any, customerId: string, di
   }
   if (actor.role_code === 'sales' && !coordinatorId)
     throw bad('No Coordinator is mapped to you yet. Ask the Commercials Manager to assign one.');
-  const fromDirection = direction === 'import' ? 'imports' : direction === 'export' ? 'exports' : direction === 'cross_trade' ? 'cross_trade' : null;
-  let division: string | null = s?.division ?? actor.division ?? fromDirection;
-  if (b.division && (actor.has('commercial.manage') || actor.isSuperAdmin || !s?.division)) {
+  // Step 4: one question on the enquiry — the division. Anyone opening the enquiry may pick it (it starts on the Salesman's own);
+  // when only a direction is given, the division follows it.
+  const fromDirection = divisionOfDirection(direction);
+  let division: string | null = fromDirection ?? s?.division ?? actor.division ?? null;
+  if (b.division) {
     if (!DIVISIONS.some(([d]) => d === b.division)) throw bad('Choose the division');
     division = b.division;
   }

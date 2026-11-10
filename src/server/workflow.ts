@@ -10,6 +10,7 @@ import { checkJobNo, getJob, usersWithPermission } from './jobs';
 import { canMove } from './transitions';
 import { jobNoProblem, phoneProblem } from '../lib/requestRules';
 import { jobScope } from './scope';
+import { isCurrency } from '../lib/currency';
 
 const UUID = /^[0-9a-f-]{36}$/i;
 const LOCAL_DT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/;
@@ -362,7 +363,7 @@ export async function updateRequest(actor: Actor, jobId: string, b: any) {
 // ------------------------------------------------------------ settings
 const SETTINGS: Record<string, (v: any) => unknown> = {
   company_name: (v) => { const s = String(v ?? '').trim(); if (!s || s.length > 120) throw bad('Company name is required'); return s; },
-  currency: (v) => { const s = String(v ?? '').trim().toUpperCase(); if (!/^[A-Z]{3}$/.test(s)) throw bad('Currency must be a 3-letter code, e.g. AED'); return s; },
+  currency: (v) => { const s = String(v ?? '').trim().toUpperCase(); if (!isCurrency(s)) throw bad('Currency: AED, USD, EUR, INR or CNY'); return s; },
   vat_rate: (v) => { const n = Number(v); if (!Number.isFinite(n) || n < 0 || n > 100) throw bad('VAT rate must be between 0 and 100'); return n; },
   job_number_prefix: (v) => { const s = String(v ?? '').trim(); if (!/^[A-Za-z0-9-_/]{1,10}$/.test(s)) throw bad('Job prefix: up to 10 letters, numbers or - _ /'); return s; },
   timezone: (v) => { const s = String(v ?? ''); try { new Intl.DateTimeFormat('en', { timeZone: s }); } catch { throw bad('Unknown timezone'); } return s; },
@@ -377,6 +378,10 @@ const SETTINGS: Record<string, (v: any) => unknown> = {
   company_email: (v) => { const s = String(v ?? '').trim(); if (s && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s)) throw bad('Company email is not valid'); return s; },
   company_trn: (v) => { const s = String(v ?? '').trim(); if (s.length > 30) throw bad('TRN: up to 30 characters'); return s; },
   quote_vat_note: (v) => { const s = String(v ?? '').trim(); if (s.length > 300) throw bad('VAT note: up to 300 characters'); return s; },
+  // multi-currency: 1 unit = x AED (blank = not set; then people type the rate themselves)
+  ...Object.fromEntries(['USD', 'EUR', 'INR', 'CNY'].map((c) => [`fx_${c}`, (v: any) => {
+    if (v === '' || v === null || v === undefined) return null;
+    const n = Number(v); if (!Number.isFinite(n) || n <= 0 || n > 100000) throw bad(`${c} rate: a number more than 0 (how many AED for 1 ${c})`); return n; }])),
   quote_validity_days: (v) => { const n = Number(v); if (!Number.isInteger(n) || n < 1 || n > 365) throw bad('Quotation validity must be 1–365 days'); return n; },
 };
 export async function getSettings(actor: Actor) {

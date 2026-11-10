@@ -208,6 +208,9 @@ export async function getJob(actor: Actor, id: string) {
     ready: job.documents.filter((d: any) => d.is_request_doc && !d.expired).length,
     expired: job.documents.filter((d: any) => d.is_request_doc && d.expired).length,
   };
+  // Step 5: the shipment behind this truck job (operational details only — no prices, no commercial documents)
+  const link = await one('select job_file_id from transport_requests where id = $1', [id]);
+  job.shipment = await (await import('./handover')).shipmentForTransport(link?.job_file_id ?? null);
   const pod = await one(`select p.pod_date, p.received_by, p.remarks, p.verified_at, p.rejection_reason, v.full_name verified_by_name
       from job_pod p left join users v on v.id = p.verified_by where p.job_id = $1`, [id]);
   job.pod = pod ? pick(pod, ['pod_date', 'received_by', 'remarks', 'verified_at', 'rejection_reason', 'verified_by_name']) : null;

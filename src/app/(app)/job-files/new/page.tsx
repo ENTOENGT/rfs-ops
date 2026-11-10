@@ -6,11 +6,12 @@ import { api } from '@/components/api';
 import { useMe } from '@/components/Shell';
 import { JobFileFields } from '@/components/JobFileForm';
 import { CONTAINER_TYPES } from '@/lib/jobfileRules';
+import { blankLine, typedLines } from '@/lib/cargoRules';
 
 export default function NewJobFile() {
   const { can } = useMe();
   const router = useRouter();
-  const [f, setF] = useState<any>({ direction: 'import', mode: 'sea_fcl', status: 'enquiry' });
+  const [f, setF] = useState<any>({ mode: 'sea_fcl', status: 'enquiry', cargo_lines: [blankLine()] });
   const [conts, setConts] = useState<{ container_no: string; size_type: string; seal_no: string }[]>([{ container_no: '', size_type: '40HC', seal_no: '' }]);
   const [fe, setFe] = useState<Record<string, string>>({});
   const [err, setErr] = useState<{ m: string; id?: string } | null>(null);
@@ -20,7 +21,7 @@ export default function NewJobFile() {
   const save = async () => {
     setErr(null); setFe({}); setBusy(true);
     try {
-      const r = await api('/api/job-files', { body: { ...f, containers: containersNeeded ? conts.filter((k) => k.container_no.trim()) : [] } });
+      const r = await api('/api/job-files', { body: { ...f, cargo_lines: typedLines(f.cargo_lines), containers: containersNeeded ? conts.filter((k) => k.container_no.trim()) : [] } });
       router.push(`/job-files/${r.id}`);
     } catch (e: any) {
       setBusy(false);
@@ -35,7 +36,7 @@ export default function NewJobFile() {
       {err && <div className="msg err">{err.m} {err.id && <Link href={`/job-files/${err.id}`}>Open it</Link>}</div>}
       <div className="panel"><h2>What is it?</h2><div style={{ display: 'flex', gap: 22, flexWrap: 'wrap' }}>
         {[['enquiry', 'Customer enquiry — rates, quotation and booking first'], ['open', 'Operational job — Job No. from the ERP already given, no quotation needed']].map(([v, t]) =>
-          <label key={v} className="check"><input type="radio" name="jf_kind" checked={f.status === v} onChange={() => setF({ ...f, status: v })} /> {t}</label>)}</div>
+          <label key={v} className="check"><input type="radio" name="jf_kind" checked={f.status === v} onChange={() => setF({ ...f, status: v, direction: v === 'enquiry' ? f.direction : f.direction || 'import' })} /> {t}</label>)}</div>
         {f.status === 'enquiry' && <p className="muted small" style={{ marginBottom: 0 }}>The system gives it an Enquiry Ref now. The Shipping Ref comes when the customer confirms,
           and the Job No. from the ERP when the pre-alert is verified and the job is handed over to Operations — all on this one record.</p>}</div>
       <JobFileFields f={f} setF={(v) => { setF(v); setFe({}); }} fe={fe} isNew />

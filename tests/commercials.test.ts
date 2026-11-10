@@ -72,13 +72,13 @@ test('2. Customers: a Salesman sees own (and unowned) customers; creating one ma
   assert.deepEqual(await names(agent), []);
   assert.equal((await names(ops)).length, 3, 'Operations keeps seeing every customer');
   assert.deepEqual((await cm.customerOwners(mgr, fresh)).owners.map((o: any) => [o.full_name, o.is_main]), [['Sam Sales', true]]);
-  await rejects(createJobFile(sales, { customer_id: custB, direction: 'import', mode: 'sea_fcl', status: 'enquiry' }), 'VALIDATION', /another Salesman/);
+  await rejects(createJobFile(sales, { customer_id: custB, direction: 'import', mode: 'sea_fcl', status: 'enquiry', incoterm: 'EXW', pickup_address: 'Seller warehouse', delivery_address: 'Customer warehouse, Dubai' }), 'VALIDATION', /another Salesman/);
 });
 
 test('3. Enquiry by a Coordinator: picks the Salesman; Coordinator comes from the mapping; three people kept apart', async () => {
-  await rejects(createJobFile(coord, { customer_id: custA, direction: 'import', mode: 'sea_fcl', status: 'enquiry' }), 'VALIDATION', /Salesman/);
+  await rejects(createJobFile(coord, { customer_id: custA, direction: 'import', mode: 'sea_fcl', status: 'enquiry', incoterm: 'EXW', pickup_address: 'Seller warehouse', delivery_address: 'Customer warehouse, Dubai' }), 'VALIDATION', /Salesman/);
   const f = await createJobFile(coord, { customer_id: custA, salesman_id: sales.id, direction: 'import', mode: 'sea_fcl', status: 'enquiry',
-    origin: 'Shanghai', destination: 'Jebel Ali', incoterm: 'FOB', cargo_description: 'Tiles, 1x40HC', job_no: 'IGNORED-1' });
+    origin: 'Shanghai', destination: 'Jebel Ali', incoterm: 'FOB', port_of_loading: 'CNSHA', port_of_discharge: 'AEJEA', cargo_description: 'Tiles, 1x40HC', job_no: 'IGNORED-1' });
   fileId = f.id; enq = f.enquiry_ref;
   const g = await getJobFile(coord, fileId);
   assert.deepEqual([g.created_by_name, g.salesman_name, g.coordinator_name, g.division, g.job_no], ['Cora Coord', 'Sam Sales', 'Cora Coord', 'imports', null]);
@@ -208,23 +208,24 @@ test('7. Operational job: Job No. from the ERP on the SAME record, no duplicates
 test('8. History cannot be changed or deleted; lost enquiries; manager can create the job without a pre-alert, with a reason', async () => {
   await assert.rejects(q(`update job_file_events set title = 'x' where job_file_id = $1`, [fileId]), /history/);
   await assert.rejects(q(`delete from quotation_events where quotation_id = $1`, [quote]), /history/);
-  const l = await createJobFile(sales, { customer_id: fresh, direction: 'export', mode: 'air', status: 'enquiry' });
+  const l = await createJobFile(sales, { customer_id: fresh, direction: 'export', mode: 'air', status: 'enquiry', incoterm: 'EXW', pickup_address: 'Seller warehouse', delivery_address: 'Customer warehouse, Dubai', cargo_lines: [{ package_type: 'Cartons', pieces: 10, length: 50, width: 40, height: 30, dim_unit: 'cm', weight_kg: 200 }] });
   await rejects(cm.markLost(sales, l.id, {}), 'VALIDATION');
   await cm.markLost(sales, l.id, { reason: 'Customer booked with another forwarder' });
   assert.deepEqual([(await getJobFile(sales, l.id)).stage, (await getJobFile(sales, l.id)).status], ['lost', 'cancelled']);
   // road job, no pre-alert: only the Commercials Manager, with a reason
-  const r = await createJobFile(sales, { customer_id: fresh, direction: 'export', mode: 'road', status: 'enquiry' });
+  const r = await createJobFile(sales, { customer_id: fresh, direction: 'export', mode: 'road', status: 'enquiry', incoterm: 'EXW', pickup_address: 'Seller warehouse', delivery_address: 'Customer warehouse, Dubai', cargo_lines: [{ package_type: 'Cartons', pieces: 10, length: 50, width: 40, height: 30, dim_unit: 'cm', weight_kg: 200 }] });
   const x = await qt.createQuotation(sales, { customer_id: fresh, service_type: 'road', job_file_id: r.id, lines: [{ description: 'Truck', charge_unit: 'trip', quantity: '1', cost_rate: '1000', sell_rate: '1500' }] });
   await qt.quotationAction(sales, x.id, { action: 'submit' });
   await qt.quotationAction(sales, x.id, { action: 'accept', evidence_note: 'Confirmed on WhatsApp by the buyer' });
   await rejects(cm.createOperationalJob(coord, r.id, { job_no: 'EXP-1' }), 'STAGE');   // a Coordinator can't skip the pre-alert
   await rejects(cm.createOperationalJob(mgr, r.id, { job_no: 'EXP-1' }), 'VALIDATION', /why/);
-  await cm.createOperationalJob(mgr, r.id, { job_no: 'EXP-1', skip_prealert_reason: 'Road job — no pre-alert' });
+  // an export enquiry is in the Exports division now (step 4), so the BL rule applies too
+  await cm.createOperationalJob(mgr, r.id, { job_no: 'EXP-1', skip_prealert_reason: 'Road job — no pre-alert', bl_override_reason: 'Road job — CMR, no BL' });
   assert.equal((await getJobFile(mgr, r.id)).stage, 'handed_over');
 });
 
 test('9. Overview: counts by stage, division, Salesman and Coordinator; Salesman approvals waiting', async () => {
-  const f = await createJobFile(sales, { customer_id: fresh, direction: 'import', mode: 'sea_lcl', status: 'enquiry' });
+  const f = await createJobFile(sales, { customer_id: fresh, direction: 'import', mode: 'sea_lcl', status: 'enquiry', incoterm: 'EXW', pickup_address: 'Seller warehouse', delivery_address: 'Customer warehouse, Dubai', cargo_lines: [{ package_type: 'Cartons', pieces: 10, length: 50, width: 40, height: 30, dim_unit: 'cm', weight_kg: 200 }] });
   const o = await cm.commercialOverview(mgr, {});
   const t = Object.fromEntries(o.tiles.map((x: any) => [x.key, x.count]));
   assert.equal(t.c_enquiry, 1); assert.equal(t.c_handed_over, 2);

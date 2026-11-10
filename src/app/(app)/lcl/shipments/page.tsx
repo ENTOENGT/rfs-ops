@@ -3,6 +3,7 @@ import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
 import { Suspense, useEffect, useState } from 'react';
 import { api, fmtDate } from '@/components/api';
+import { useMe } from '@/components/Shell';
 import { DataTable, Col } from '@/components/DataTable';
 import { OWNER_TYPES, receivingColor } from '@/lib/lclRules';
 
@@ -11,6 +12,8 @@ const VIEWS: [string, string, string][] = [['all', 'All house shipments', 'House
   ['discrepancy', 'Received with differences', 'Cargo with differences'], ['undelivered', 'Arrived, not delivered', 'Arrived, not delivered']];
 
 function Shipments() {
+  const { me } = useMe();
+  const seeFiles = me.permissions.some((p) => p.startsWith('jobfiles.'));   // the LCL Team sees the reference, not the shipment page
   const sp = useSearchParams();
   const fromUrl = () => ({ view: sp.get('view') ?? 'all', page: '1' });
   const [f, setF] = useState<Record<string, string>>(fromUrl);
@@ -36,7 +39,7 @@ function Shipments() {
     { key: 'shipper', label: 'Shipper', hidden: true }, { key: 'consignee', label: 'Consignee' },
     { key: 'salesman_name', label: 'Salesman', hidden: true }, { key: 'coordinator_name', label: 'Coordinator', hidden: true },
     { key: 'shipment', label: 'Shipment', text: (r) => r.job_no ?? r.shipping_ref ?? r.enquiry_ref ?? '',
-      render: (r) => r.job_file_id ? <Link href={`/job-files/${r.job_file_id}`}>{r.job_no ?? r.shipping_ref ?? r.enquiry_ref}</Link> : '—' },
+      render: (r) => r.job_file_id ? (seeFiles ? <Link href={`/job-files/${r.job_file_id}`}>{r.job_no ?? r.shipping_ref ?? r.enquiry_ref}</Link> : <span>{r.job_no ?? r.shipping_ref ?? r.enquiry_ref}</span>) : '—' },
     { key: 'packages', label: 'Pkgs', num: true }, { key: 'received_packages', label: 'Received', num: true },
     { key: 'outstanding_packages', label: 'Outstanding', num: true, hidden: f.view !== 'pending_receiving' },
     { key: 'gross_weight_kg', label: 'Kg', num: true, hidden: true }, { key: 'volume_cbm', label: 'CBM', num: true },

@@ -34,7 +34,7 @@ before(async () => {
   f1 = (await createJobFile(admin, { job_no: 'EXP-L1', customer_id: cust, direction: 'export', mode: 'sea_lcl', shipper: 'Desert Retail', consignee: 'Buyer A',
     cargo_description: 'Dates, 40 cartons', packages: 40, gross_weight_kg: '800', volume_cbm: '4.5', hbl_hawb: 'RFS-HBL-001', salesman_id: sales.id })).id;
   f2 = (await createJobFile(admin, { job_no: 'EXP-L2', customer_id: cust2, direction: 'export', mode: 'sea_lcl', cargo_description: 'Spices', packages: 10, gross_weight_kg: '300', volume_cbm: '1.2' })).id;
-  enq = (await createJobFile(sales, { customer_id: cust, direction: 'export', mode: 'sea_lcl', status: 'enquiry' })).id;
+  enq = (await createJobFile(sales, { customer_id: cust, direction: 'export', mode: 'sea_lcl', status: 'enquiry', incoterm: 'EXW', pickup_address: 'Seller warehouse', delivery_address: 'Customer warehouse, Dubai', cargo_lines: [{ package_type: 'Cartons', pieces: 10, length: 50, width: 40, height: 30, dim_unit: 'cm', weight_kg: 200 }] })).id;
 });
 
 test('1. Create a consolidation: one container, booking and MBL; only LCL managers', async () => {

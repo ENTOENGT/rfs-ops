@@ -42,14 +42,14 @@ function LocationFields({ p, f, set, lk, fe }: { p: 'pickup' | 'delivery'; f: an
   );
 }
 
-export default function RequestForm({ job }: { job?: any }) {
+export default function RequestForm({ job, prefill }: { job?: any; prefill?: any }) {
   const { me, can, lk } = useMe();
   const router = useRouter();
   const EDIT_KEYS = ['job_no', 'department_id', 'required_date', 'slot_from', 'slot_to', 'priority', 'customer_id', 'customer_reference', 'email_subject', 'boe_number',
     'shipment_number', 'booking_reference', 'requested_vehicle_type_id', 'pickup_name', 'pickup_address', 'pickup_contact_person',
     'pickup_contact_number', 'delivery_name', 'delivery_address', 'delivery_contact_person', 'delivery_contact_number', 'cargo_description',
     'cargo_type', 'packages', 'weight_kg', 'volume_cbm', 'pallets', 'temperature_requirement', 'special_handling', 'special_instructions'];
-  const initial = job ? Object.fromEntries(EDIT_KEYS.map((k) => [k, k.startsWith('slot_') && job[k] ? job[k].slice(0, 5) : job[k] ?? ''])) : { priority: 'normal' };
+  const initial = job ? Object.fromEntries(EDIT_KEYS.map((k) => [k, k.startsWith('slot_') && job[k] ? job[k].slice(0, 5) : job[k] ?? ''])) : { priority: 'normal', ...Object.fromEntries(Object.entries(prefill ?? {}).filter(([k, v]) => EDIT_KEYS.includes(k) && v !== '' && v !== null)) };
   const [f, setF] = useState<any>(initial);
   const [err, setErr] = useState('');
   const [dupe, setDupe] = useState('');

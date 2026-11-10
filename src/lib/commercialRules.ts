@@ -2,6 +2,9 @@
 
 export const DIVISIONS: [string, string][] = [['imports', 'Imports'], ['exports', 'Exports'], ['cross_trade', 'Cross Trade']];
 export const divisionName = (c: string | null | undefined) => DIVISIONS.find(([d]) => d === c)?.[1] ?? '—';
+/** Step 4: on an enquiry the division is the one question — Imports team = import, Exports team = export, Cross Trade = cross-trade. */
+export const directionOfDivision = (d: string | null | undefined) => d === 'imports' ? 'import' : d === 'exports' ? 'export' : d === 'cross_trade' ? 'cross_trade' : null;
+export const divisionOfDirection = (d: string | null | undefined) => d === 'import' ? 'imports' : d === 'export' ? 'exports' : d === 'cross_trade' ? 'cross_trade' : null;
 
 /** code, name, colour, next action (what has to happen next, in plain words) */
 export const STAGES: [string, string, string, string][] = [

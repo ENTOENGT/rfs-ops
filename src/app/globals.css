@@ -658,3 +658,40 @@ table.t, .kpi b, .stat-n, .num, .bar b, .funnel-n, .pager { font-variant-numeric
 .tab-more .menu-pop { position: absolute; right: 0; top: calc(100% + 4px); background: var(--surface); border: 1px solid var(--line); border-radius: 12px; box-shadow: var(--shadow-lg); padding: 6px; min-width: 210px; z-index: 30; display: flex; flex-direction: column; }
 .tab-more .menu-pop button { all: unset; cursor: pointer; padding: 9px 12px; border-radius: 8px; font-size: 13.5px; font-weight: 600; color: var(--ink-2); display: flex; justify-content: space-between; gap: 10px; }
 .tab-more .menu-pop button:hover, .tab-more .menu-pop button.on { background: var(--navy-50); color: var(--navy-800); }
+
+/* Cargo lines (migration 023) */
+.cargo-lines { display: flex; flex-direction: column; gap: 8px; }
+.cargo-row { display: grid; grid-template-columns: minmax(150px, 1.6fr) repeat(4, minmax(70px, .8fr)) minmax(80px, .7fr) minmax(90px, .9fr) 70px 36px; gap: 8px; align-items: center; }
+.cargo-headrow span { font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); font-weight: 600; }
+.cargo-type { display: flex; gap: 6px; }
+.cargo-type select { flex: 1; min-width: 0; }
+.cargo-type input { flex: 1; min-width: 0; }
+.cargo-row b.num { text-align: right; font-size: 13.5px; }
+.cargo-totals { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 14px; }
+.cargo-totals > div { background: var(--navy-50); border-radius: 10px; padding: 10px 14px; min-width: 150px; }
+.cargo-totals span { display: block; font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); font-weight: 600; }
+.cargo-totals b { font-size: 16px; font-variant-numeric: tabular-nums; }
+.cargo-totals small { display: block; color: var(--muted); font-size: 11.5px; }
+.cargo-view { margin-top: 12px; }
+@media (max-width: 1100px) {
+  .cargo-headrow { display: none; }
+  .cargo-row { grid-template-columns: repeat(4, 1fr); padding: 10px; border: 1px solid var(--line); border-radius: 10px; }
+  .cargo-type { grid-column: span 4; }
+}
+.cl { display: block; min-width: 0; }
+.cl i, .cl-i { display: none; }
+@media (max-width: 1100px) {
+  .cl i, .cl-i { display: block; font-style: normal; font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); font-weight: 600; margin-bottom: 3px; }
+  .cl-i { display: inline; }
+  .cargo-row b.num { text-align: left; align-self: end; padding-bottom: 10px; }
+}
+
+/* Incoterm and addresses (migration 023) */
+.terms-top { display: flex; gap: 18px; align-items: flex-start; flex-wrap: wrap; }
+.terms-top > .f { flex: 0 0 260px; }
+.terms-info { flex: 1; min-width: 260px; background: var(--navy-50); border-radius: 10px; padding: 10px 14px; display: flex; flex-direction: column; gap: 3px; font-size: 13.5px; }
+.terms-info b { color: var(--navy-800); }
+.terms-scope { font-weight: 600; }
+.terms-note { color: var(--warn); font-weight: 600; }
+.terms-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 14px; margin-top: 14px; }
+.terms-addr { display: flex; flex-direction: column; gap: 8px; }

@@ -9,6 +9,7 @@ import { Actor } from './auth';
 import { ApiError, bad, Db, forbidden, notFound, one, q, tx } from './db';
 import { toFils, fromFils } from '../lib/finance';
 import { RATE_SOURCES, CHARGE_SECTIONS, rateSourceName } from '../lib/commercialRules';
+import { isCurrency } from '../lib/currency';
 
 const UUID = /^[0-9a-f-]{36}$/i;
 const isUuid = (v: unknown): v is string => typeof v === 'string' && UUID.test(v);
@@ -202,7 +203,7 @@ function parseCharges(raw: unknown) {
     const qty = String(l.quantity ?? '1').trim() || '1';
     if (!/^\d+(\.\d{1,3})?$/.test(qty) || Number(qty) <= 0) throw bad(`${n}: quantity must be more than 0`);
     const cur = String(l.currency ?? '').trim().toUpperCase() || 'AED';
-    if (!/^[A-Z]{3}$/.test(cur)) throw bad(`${n}: currency is 3 letters, e.g. USD`);
+    if (!isCurrency(cur)) throw bad(`${n}: currency is AED, USD, EUR, INR or CNY`);
     const xr = String(l.exchange_rate ?? '1').trim() || '1';
     if (!/^\d+(\.\d{1,6})?$/.test(xr) || Number(xr) <= 0) throw bad(`${n}: exchange rate must be more than 0`);
     total += Math.round(Number(qty) * Number(xr) * toFils(amount));
@@ -224,7 +225,7 @@ function rateDetailSets(b: any, put: (col: string, v: unknown) => void) {
     if (b[k] !== undefined) put(k, txt(b[k], max));
   if (b.etd !== undefined) { if (b.etd && !/^\d{4}-\d{2}-\d{2}$/.test(b.etd)) throw bad('ETD is not a valid date'); put('etd', b.etd || null); }
   if (b.rate_source !== undefined && b.rate_source) { if (!RATE_SOURCES.some(([k]) => k === b.rate_source)) throw bad('Choose where the rate comes from'); put('rate_source', b.rate_source); }
-  if (b.currency !== undefined && b.currency) { const cur = String(b.currency).trim().toUpperCase(); if (!/^[A-Z]{3}$/.test(cur)) throw bad('Currency is 3 letters'); put('currency', cur); }
+  if (b.currency !== undefined && b.currency) { const cur = String(b.currency).trim().toUpperCase(); if (!isCurrency(cur)) throw bad('Rate currency: AED, USD, EUR, INR or CNY'); put('currency', cur); }
 }
 async function saveCharges(c: Db, id: string, version: number, lines: any[]) {
   await c.query('delete from vendor_rate_charges where request_id = $1 and rate_version = $2', [id, version]);

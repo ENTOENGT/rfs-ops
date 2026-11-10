@@ -113,6 +113,25 @@ export async function homeDashboard(actor: Actor) {
         (select count(*)::int from consolidation_shipments s join consolidations c on c.id = s.consolidation_id where s.removed_at is null and c.status in ('open','ready') and s.receiving_status in ('expected','partial')) expected,
         (select count(*)::int from consolidation_shipments s join consolidations c on c.id = s.consolidation_id where s.removed_at is null and c.status not in ('closed','cancelled') and s.receiving_status = 'discrepancy' and s.cargo_verified_at is null) diffs,
         (select count(*)::int from consolidations where status in ('ready','stuffing')) stuffing`) : { expected: 0, diffs: 0, stuffing: 0 };
+    // Step 6: the LCL Team gets its own section — consolidations from waiting shipments to arrival
+    if (role === 'lcl_team') {
+      const x = await one(`select
+          (select count(*)::int from job_files f where f.deleted_at is null and f.mode = 'sea_lcl' and f.status not in ('closed','cancelled')
+             and (f.stage is null or f.stage not in ('enquiry','rates_requested','rates_received','quotation_draft','pending_approval','sent_to_customer','lost','cancelled'))
+             and not exists (select 1 from consolidation_shipments s where s.job_file_id = f.id and s.removed_at is null)) waiting,
+          (select count(*)::int from consolidations where status in ('open','ready')) open,
+          (select count(*)::int from consolidations where status in ('dispatched','departed')) transit,
+          (select count(*)::int from consolidations where status = 'arrived') arrived`);
+      sections.push({ key: 'lcl', title: 'LCL', cards: [
+        { key: 'waiting', label: 'Confirmed LCL shipments not in a container', count: x.waiting, href: '/lcl/new', icon: 'inbox', tone: 'warn' },
+        { key: 'open', label: 'Open consolidations', count: x.open, href: '/lcl', icon: 'boxes' },
+        { key: 'expected', label: 'Cargo expected at the warehouse', count: l.expected, href: '/lcl/shipments?view=pending_receiving', icon: 'warehouse' },
+        { key: 'diffs', label: 'Cargo discrepancies', count: l.diffs, href: '/lcl/shipments?view=pending_receiving', icon: 'alert', tone: 'danger' },
+        { key: 'stuffing', label: 'Awaiting stuffing', count: l.stuffing, href: '/lcl?view=stuffing', icon: 'boxes', tone: 'teal' },
+        { key: 'transit', label: 'Containers in transit', count: x.transit, href: '/lcl?view=in_transit', icon: 'ship' },
+        { key: 'arrived', label: 'Arrived, to deliver and close', count: x.arrived, href: '/lcl', icon: 'anchor', tone: 'ok' },
+      ] });
+    } else
     sections.push({ key: 'warehouse', title: 'Warehouse', cards: [
       { key: 'expected', label: 'Expected cargo', count: g.expected + l.expected, href: lcl ? '/lcl/shipments?view=pending_receiving' : '/warehouse/receipts', icon: 'boxes',
         hint: [wh && `${g.expected} goods receipts`, lcl && `${l.expected} LCL shipments`].filter(Boolean).join(', ') },

@@ -1,5 +1,6 @@
 'use client';
 import { useMe } from './Shell';
+import { CURRENCIES, fxRate } from '@/lib/currency';
 import { routeLabel } from '@/lib/routingRules';
 import { fmtMoney } from './api';
 import { SERVICE_TYPES, DIRECTIONS, CHARGE_UNITS } from '@/lib/jobfileRules';
@@ -53,12 +54,20 @@ export function QuoteFields({ f, setF, fe = {}, minMargin, vendorRates = [], job
     return n;
   }) });
   const t = totals(lines);
-  const cur = lk.currency ?? 'AED';
+  const cur = f.currency || lk.currency || 'AED';
   const rates = vendorRates.filter((r) => r.quoted_cost !== null && r.quoted_cost !== undefined && r.status !== 'cancelled');
   const useRate = (r: any) => {
     const w = cheaperThan(rates, r);
     if (w && !confirm(`${w}\n\nUse ${r.vendor_name}'s rate anyway?`)) return;
-    const line = { ...emptyLine(), description: `${r.service === 'rate' ? 'Freight' : r.service} — ${r.vendor_name}`, cost_rate: r.quoted_cost, margin_type: sellingView ? 'percent' : '', margin_value: '',
+    // an agent rate in another currency is brought into the quotation currency with the rate from Settings (or one typed now)
+    let cost = String(r.quoted_cost), note = '';
+    if (r.currency && r.currency !== cur) {
+      let x = fxRate(r.currency, cur, lk.fx ?? {});
+      if (!x) { const typed = prompt(`${r.vendor_name}'s rate is in ${r.currency}. How many ${cur} for 1 ${r.currency}?`); x = Number(typed); if (!(x > 0)) return; }
+      cost = (Math.round(Number(r.quoted_cost) * x * 100) / 100).toFixed(2);
+      note = ` (${r.currency} ${Number(r.quoted_cost).toLocaleString()} @ ${x})`;
+    }
+    const line = { ...emptyLine(), description: `${r.service === 'rate' ? 'Freight' : r.service} — ${r.vendor_name}${note}`, cost_rate: cost, margin_type: sellingView ? 'percent' : '', margin_value: '',
       sell_rate: '', vendor_request_id: r.id, route_id: r.route_id ?? '' };
     const blank = lines.length === 1 && !lines[0].description && !lines[0].cost_rate && !lines[0].sell_rate;
     setF({ ...f, lines: blank ? [line] : [...lines, line] });
@@ -75,6 +84,9 @@ export function QuoteFields({ f, setF, fe = {}, minMargin, vendorRates = [], job
           {SERVICE_TYPES.map(([c, n]) => <option key={c} value={c}>{n}</option>)}</select><Err m={fe.service_type} /></label>
       <label className="f"><span>Direction</span><select value={f.direction ?? 'import'} onChange={set('direction')}>
         {DIRECTIONS.map(([c, n]) => <option key={c} value={c}>{n}</option>)}</select></label>
+      <label className="f"><span>Currency</span><select value={cur} onChange={set('currency')}>
+        {CURRENCIES.map(([c, n]) => <option key={c} value={c}>{c} — {n}</option>)}</select>
+        {lines.some((l) => l.cost_rate || l.sell_rate) && <span className="muted small" style={{ fontWeight: 400 }}>Changing it does not convert amounts already typed.</span>}</label>
       <label className="f"><span>Rates valid until</span><input type="date" value={f.valid_until ?? ''} onChange={set('valid_until')} /></label>
       <label className="f"><span>From</span><input value={f.origin ?? ''} onChange={set('origin')} /></label>
       <label className="f"><span>To</span><input value={f.destination ?? ''} onChange={set('destination')} /></label>

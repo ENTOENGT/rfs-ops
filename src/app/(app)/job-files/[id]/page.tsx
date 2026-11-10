@@ -10,12 +10,14 @@ import { JobFileFields } from '@/components/JobFileForm';
 import JobFileDocs from '@/components/JobFileDocs';
 import { CONTAINER_TYPES, JF_STATUSES, label, DIRECTIONS, MODES } from '@/lib/jobfileRules';
 import { PRE_CONFIRM } from '@/lib/commercialRules';
+import { typedLines, DIM_UNITS } from '@/lib/cargoRules';
+import { INCOTERM_INFO } from '@/lib/incotermRules';
 import { StageHeader, RatesAndQuotes, BookingPanel, PrealertPanel, HandoverPanel, LclPanel } from '@/components/CommercialPanels';
 
 const RUN_STATUS: Record<string, string> = { pending: 'Waiting', assigned: 'Assigned', collected: 'Collected', delivered: 'Delivered', failed: 'Could not complete', cancelled: 'Cancelled' };
 const EDIT_KEYS = ['customer_id', 'direction', 'mode', 'needs_clearance', 'needs_transport', 'needs_warehouse', 'customer_reference', 'shipper', 'consignee',
   'notify_party', 'origin', 'destination', 'port_of_loading', 'port_of_discharge', 'carrier', 'vessel_flight', 'voyage', 'booking_reference', 'mbl_mawb',
-  'hbl_hawb', 'incoterm', 'etd', 'eta', 'atd', 'ata', 'packages', 'gross_weight_kg', 'volume_cbm', 'chargeable_weight_kg', 'cargo_description', 'remarks'];
+  'hbl_hawb', 'incoterm', 'pickup_address', 'pickup_contact', 'named_place', 'delivery_address', 'delivery_contact', 'cargo_value', 'cargo_value_currency', 'etd', 'eta', 'atd', 'ata', 'packages', 'gross_weight_kg', 'volume_cbm', 'chargeable_weight_kg', 'cargo_description', 'remarks'];
 
 function Milestones({ d, act }: { d: any; act: (b: any) => Promise<unknown> }) {
   const [planned, setPlanned] = useState<Record<string, string>>({});
@@ -82,7 +84,7 @@ export default function JobFile({ params }: { params: { id: string } }) {
   };
   const saveEdit = async () => {
     setErr('');
-    try { setD(await api(`/api/job-files/${params.id}`, { method: 'PATCH', body: Object.fromEntries(EDIT_KEYS.map((k) => [k, edit[k] ?? null])) })); setEdit(null); setOk('Saved'); }
+    try { setD(await api(`/api/job-files/${params.id}`, { method: 'PATCH', body: { ...Object.fromEntries(EDIT_KEYS.map((k) => [k, edit[k] ?? null])), cargo_lines: typedLines(edit.cargo_lines) } })); setEdit(null); setOk('Saved'); }
     catch (e: any) { setErr(e.message); window.scrollTo(0, 0); }
   };
   if (!d) return <div className="page">{err ? <div className="msg err">{err}</div> : <p className="muted">Loading…</p>}</div>;
@@ -138,7 +140,7 @@ export default function JobFile({ params }: { params: { id: string } }) {
         {d.can.status && open && d.status !== 'enquiry' && <select value={d.status} onChange={(e) => act({ action: 'status', status: e.target.value }, 'Status changed')} style={{ width: 'auto' }} aria-label="Status">
           {active.map(([c, n]) => <option key={c} value={c}>{n}</option>)}</select>}
         {d.can.edit && !edit && d.status !== 'cancelled' && d.stage !== 'lost' && <EmailButton kind="job_file" id={d.id} label="Email customer" onLogged={() => { load(); setEmailsKey((k) => k + 1); }} />}
-        {d.can.edit && !edit && <button className="btn" onClick={() => setEdit({ ...d })}>Edit</button>}
+        {d.can.edit && !edit && <button className="btn" onClick={() => setEdit({ ...d, cargo_lines: (d.cargo_lines ?? []).map((l: any) => ({ ...l, length: Number(l.length), width: Number(l.width), height: Number(l.height), weight_kg: Number(l.weight_kg) })) })}>Edit</button>}
         {d.can.lost && <button className="btn" onClick={() => { const reason = prompt('Mark this enquiry as lost? Give the reason:'); if (reason) act({ action: 'lost', reason }, 'Marked as lost'); }}>Lost</button>}
         {d.can.close && open && d.status !== 'enquiry' && <button className="btn primary" disabled={!d.closure.can_close} title={d.closure.can_close ? '' : 'See "Before it can close"'}
           onClick={() => confirm(`Close Job ${d.job_no}?`) && act({ action: 'status', status: 'closed' }, 'Job File closed')}>Close Job File</button>}
@@ -177,18 +179,28 @@ export default function JobFile({ params }: { params: { id: string } }) {
             <div className="panel"><h2>Shipment</h2><dl className="kv">
               {kv('Customer', d.customer_name)}{kv('Type', `${label(DIRECTIONS, d.direction)} · ${label(MODES, d.mode)}`)}
               {kv('Services', [d.needs_clearance && 'Customs clearance', d.needs_transport && 'Transport', d.needs_warehouse && 'Warehouse'].filter(Boolean).join(', '))}
-              {kv('Customer reference', d.customer_reference)}{kv('Incoterm', d.incoterm)}
+              {kv('Customer reference', d.customer_reference)}{kv('Incoterm', d.incoterm && `${d.incoterm} — ${INCOTERM_INFO[d.incoterm]?.name ?? ''}`)}
+              {d.pickup_address && kv('Pickup address', [d.pickup_address, d.pickup_contact].filter(Boolean).join(' · '))}
+              {d.named_place && kv('Handover place', d.named_place)}
+              {d.delivery_address && kv('Delivery address', [d.delivery_address, d.delivery_contact].filter(Boolean).join(' · '))}
+              {d.cargo_value && kv('Cargo value', `${d.cargo_value_currency ?? ''} ${Number(d.cargo_value).toLocaleString()}`)}
               {kv('Shipper', d.shipper)}{kv('Consignee', d.consignee)}{kv('Notify party', d.notify_party)}
               {kv('Route', [d.origin, d.port_of_loading, d.port_of_discharge, d.destination].filter(Boolean).join(' → '))}
-              {kv('Carrier', [d.carrier, d.vessel_flight, d.voyage].filter(Boolean).join(' · '))}
-              {kv('Booking ref.', d.booking_reference)}{kv(d.mode === 'air' ? 'MAWB / HAWB' : 'MBL / HBL', [d.mbl_mawb, d.hbl_hawb].filter(Boolean).join(' / '))}
-              {kv('ETD / actual', `${fmtDate(d.etd)} / ${fmtDate(d.atd)}`)}{kv('ETA / actual', `${fmtDate(d.eta)} / ${fmtDate(d.ata)}`)}
-              {kv('Cargo', [d.packages && `${d.packages} pkgs`, d.gross_weight_kg && `${Number(d.gross_weight_kg).toLocaleString()} kg`,
+              {(d.status !== 'enquiry' || d.carrier || d.vessel_flight) && kv('Carrier', [d.carrier, d.vessel_flight, d.voyage].filter(Boolean).join(' · '))}
+              {(d.status !== 'enquiry' || d.booking_reference) && kv('Booking ref.', d.booking_reference)}
+              {(d.status !== 'enquiry' || d.mbl_mawb || d.hbl_hawb) && kv(d.mode === 'air' ? 'MAWB / HAWB' : 'MBL / HBL', [d.mbl_mawb, d.hbl_hawb].filter(Boolean).join(' / '))}
+              {(d.status !== 'enquiry' || d.etd || d.eta) && <>{kv('ETD / actual', `${fmtDate(d.etd)} / ${fmtDate(d.atd)}`)}{kv('ETA / actual', `${fmtDate(d.eta)} / ${fmtDate(d.ata)}`)}</>}
+              {kv('Cargo', [d.packages && `${d.packages} ${(d.package_type ?? 'pkgs').toLowerCase()}`, d.gross_weight_kg && `${Number(d.gross_weight_kg).toLocaleString()} kg`,
                 d.volume_cbm && `${d.volume_cbm} CBM`, d.chargeable_weight_kg && `chargeable ${Number(d.chargeable_weight_kg).toLocaleString()} kg`].filter(Boolean).join(' · '))}
               {kv('Description', d.cargo_description)}{kv('Remarks', d.remarks)}
               {kv('Department', d.department_name)}{kv('Created', `${fmtDateTime(d.created_at)} by ${d.created_by_name}`)}
               {d.quotation && kv('Quotation', <Link href={`/quotations/${d.quotation.id}`}>{d.quotation.quote_no}</Link>)}
-            </dl></div>
+            </dl>
+              {d.cargo_lines?.length > 0 && <table className="t cargo-view"><thead><tr><th>Packages</th><th>Size (L × W × H)</th><th className="num">Weight</th><th className="num">CBM</th></tr></thead>
+                <tbody>{d.cargo_lines.map((l: any) => <tr key={l.id}><td>{l.pieces} {(l.package_type === 'Other' ? l.package_other : l.package_type).toLowerCase()}</td>
+                  <td>{Number(l.length)} × {Number(l.width)} × {Number(l.height)} {DIM_UNITS.find((u) => u[0] === l.dim_unit)?.[1]}</td>
+                  <td className="num">{Number(l.weight_kg).toLocaleString()} kg</td><td className="num">{Number(l.cbm).toFixed(3)}</td></tr>)}</tbody></table>}
+            </div>
             <div className="panel"><h2>Containers</h2>
               {d.containers.length === 0 && <p className="muted small">No containers.</p>}
               {d.containers.map((k: any) => <div key={k.id} className="small" style={{ display: 'flex', gap: 10, alignItems: 'center', padding: '4px 0' }}>
@@ -231,7 +243,8 @@ export default function JobFile({ params }: { params: { id: string } }) {
               {d.trips.map((t: any) => <div key={t.id} className="small" style={{ padding: '4px 0' }}>
                 <Link href={`/jobs/${t.id}`}><b>{t.job_number}</b></Link> <span className="badge" style={{ background: t.status_color }}>{t.status_name}</span>
                 <div className="muted">{fmtDate(t.required_date)} · {t.pickup_name} → {t.delivery_name}</div></div>)}
-              {d.can.request_transport && d.job_no && <p className="small" style={{ marginBottom: 0 }}><Link href="/requests/new">New transport request</Link> — type Job No. <b>{d.job_no}</b> and it appears here.</p>}
+              {d.can.request_transport && d.job_no && <div style={{ marginTop: 8 }}><Link className="btn primary small" href={`/requests/new?job_file=${d.id}`}>Request transport</Link>
+                <p className="muted small" style={{ margin: '6px 0 0' }}>Opens a transport request already filled in from this shipment: Job No., pickup, delivery and contact, cargo and containers. The transport team also sees the shipment's BL / DO / packing list on the job.</p></div>}
             </div>
             <div className="panel"><h2>Messenger runs</h2>
               {d.runs.length === 0 && <p className="muted small">None. Runs linked to one of the truck trips above show here.</p>}

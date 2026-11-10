@@ -210,3 +210,22 @@ test('Customer copy (print / Excel): only once approved, selling only — never 
   await q('update quotations set valid_until = $2 where id = $1', [x.id, D(-1)]);
   await rejects(qt.customerCopy(sales, x.id), 'QUOTE_EXPIRED');
 });
+
+// ---------------------------------------------------------------- multi-currency (migration 023)
+test('quotations can be in AED, USD, EUR, INR or CNY; exchange rates live in Settings', async () => {
+  const { fxRate } = await import('../src/lib/currency');
+  assert.equal(fxRate('USD', 'AED', { USD: 3.6725 }), 3.6725);
+  assert.equal(fxRate('AED', 'USD', { USD: 3.6725 }), 0.272294);
+  assert.equal(fxRate('EUR', 'USD', { USD: 3.6725, EUR: 4.0 }), 1.089176);
+  assert.equal(fxRate('CNY', 'AED', { USD: 3.6725 }), null, 'no CNY rate set');
+  const usd = await qt.createQuotation(sales, quote({ currency: 'usd' }));
+  assert.equal((await qt.getQuotation(sales, usd.id)).currency, 'USD');
+  assert.equal((await qt.getQuotation(sales, (await qt.createQuotation(sales, quote())).id)).currency, 'AED', 'default: the company currency');
+  await rejects(qt.createQuotation(sales, quote({ currency: 'GBP' })), 'VALIDATION', /AED, USD, EUR, INR or CNY/);
+  const e = await qt.updateQuotation(sales, usd.id, { currency: 'CNY' });
+  assert.equal(e.currency, 'CNY');
+  await saveSettings(admin, { fx_EUR: '4.05', fx_CNY: '', currency: 'AED' });
+  assert.equal(Number((await one("select value from settings where key = 'fx_EUR'")).value), 4.05);
+  await rejects(saveSettings(admin, { fx_INR: '-1' }), 'VALIDATION', /INR rate/);
+  await rejects(saveSettings(admin, { currency: 'GBP' }), 'VALIDATION');
+});

@@ -42,7 +42,7 @@ export default function Dashboard() {
   const maxW = Math.max(1, ...(h?.weekly ?? []).map((w: any) => w.count));
   const maxP = Math.max(1, ...(h?.pipeline ?? []).map((p: any) => p.count));
   const primary = can('jobfiles.create') ? { href: '/job-files/new', label: 'New enquiry' } : can('quotes.create') ? { href: '/quotations/new', label: 'New quotation' }
-    : can('warehouse.receive') ? { href: '/warehouse/receipts/new', label: 'New goods receipt' } : can('jobs.create') ? { href: '/requests/new', label: 'New transport request' } : null;
+    : can('warehouse.receive') ? { href: '/warehouse/receipts/new', label: 'New goods receipt' } : can('jobs.create') ? { href: '/requests/new', label: 'New transport request' } : can('lcl.manage') ? { href: '/lcl/new', label: 'New consolidation' } : null;
   const today = new Date().toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
   const nothing = h && !h.sections.length && !can('jobs.view') && !rc;
   return (

@@ -46,7 +46,7 @@ before(async () => {
 });
 
 test('1–2. One enquiry China → Dubai with three loading ports under the same Enquiry Ref', async () => {
-  const f = await createJobFile(sales, { customer_id: cust, direction: 'import', mode: 'sea_fcl', status: 'enquiry', origin: 'Shanghai', port_of_loading: 'CNSHA',
+  const f = await createJobFile(sales, { customer_id: cust, direction: 'import', mode: 'sea_fcl', status: 'enquiry', incoterm: 'EXW', pickup_address: 'Seller warehouse', delivery_address: 'Customer warehouse, Dubai', origin: 'Shanghai', port_of_loading: 'CNSHA',
     destination: 'Dubai', port_of_discharge: 'AEJEA', cargo_description: 'Ceramic tiles' });
   fileId = f.id; enq = f.enquiry_ref;
   await rejects(rt.routeAction(coord, fileId, { step: 'add' }), 'VALIDATION', /loading port/);
@@ -198,7 +198,7 @@ test('20. Handover continues as before; Exports need the BL confirmed (manager c
   const xs = await mkUser(admin, 'Ed Exports', 'sales', undefined, { division: 'exports', coordinator_id: coord.id });
   const xm = await mkUser(admin, 'Ella ExpMgr', 'commercials_manager', undefined, { division: 'exports' });
   const cx = (await createMaster(admin, 'customers', { name: 'Nairobi Traders' })).id;
-  const ex = await createJobFile(xs, { customer_id: cx, direction: 'export', mode: 'sea_fcl', status: 'enquiry', origin: 'Jebel Ali', destination: 'Mombasa' });
+  const ex = await createJobFile(xs, { customer_id: cx, direction: 'export', mode: 'sea_fcl', status: 'enquiry', incoterm: 'EXW', pickup_address: 'Seller warehouse', delivery_address: 'Customer warehouse, Dubai', origin: 'Jebel Ali', destination: 'Mombasa' });
   await q(`update job_files set stage = 'prealert_verified' where id = $1`, [ex.id]);
   await rejects(cm.createOperationalJob(coord, ex.id, { job_no: 'EXP-26-0001' }), 'BL_NOT_CONFIRMED');
   await rejects(cm.createOperationalJob(xm, ex.id, { job_no: 'EXP-26-0001' }), 'VALIDATION', /BL draft is not confirmed/);

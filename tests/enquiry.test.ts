@@ -30,7 +30,7 @@ before(async () => {
 });
 
 test('1. The enquiry opens the shipment record with its Enquiry Ref — the Job No. comes later from the ERP', async () => {
-  const f = await createJobFile(sales, { customer_id: customer, direction: 'import', mode: 'sea_fcl', status: 'enquiry',
+  const f = await createJobFile(sales, { customer_id: customer, direction: 'import', mode: 'sea_fcl', status: 'enquiry', incoterm: 'EXW', pickup_address: 'Seller warehouse', delivery_address: 'Customer warehouse, Dubai',
     origin: 'Shanghai', destination: 'Jebel Ali', cargo_description: 'Furniture, 2x40HC' });
   fileId = f.id; enqRef = f.enquiry_ref;
   assert.match(enqRef, /^ENQ-(IMP-|EXP-|CTR-)?\d{2}-\d{5}$/);
@@ -65,7 +65,7 @@ test('3. The quotation is made on the same Job No., with the vendor rate as its 
     margin_type: 'percent', margin_value: '20', vendor_request_id: rateId };
   await rejects(qt.createQuotation(sales, { customer_id: other, service_type: 'sea_fcl', job_file_id: fileId, lines: [line] }), 'VALIDATION', /another customer/);
   // a vendor rate from another Job No. can't be used
-  const f2 = await createJobFile(sales, { customer_id: customer, direction: 'import', mode: 'sea_fcl', status: 'enquiry' });
+  const f2 = await createJobFile(sales, { customer_id: customer, direction: 'import', mode: 'sea_fcl', status: 'enquiry', incoterm: 'EXW', pickup_address: 'Seller warehouse', delivery_address: 'Customer warehouse, Dubai' });
   await rejects(qt.createQuotation(sales, { customer_id: customer, service_type: 'sea_fcl', job_file_id: f2.id, lines: [line] }), 'VALIDATION', /another Job No/);
   const x = await qt.createQuotation(sales, { customer_id: customer, service_type: 'sea_fcl', job_no: enqRef, origin: 'Shanghai', destination: 'Jebel Ali',
     lines: [line, { description: 'Documentation', charge_unit: 'shipment', quantity: '1', cost_rate: '0', sell_rate: '150' }] });
@@ -111,7 +111,7 @@ test('6. One rate request to several vendors: compare, lowest marked, warning wh
   const cma = (await createMaster(mgr, 'vendors', { name: 'CMA CGM', vendor_type: 'shipping_line' })).id;
   const mae = (await createMaster(mgr, 'vendors', { name: 'Maersk', vendor_type: 'shipping_line' })).id;
   const one3 = (await createMaster(mgr, 'vendors', { name: 'ONE', vendor_type: 'shipping_line' })).id;
-  const f = await createJobFile(sales, { customer_id: customer, direction: 'import', mode: 'sea_fcl', status: 'enquiry' });
+  const f = await createJobFile(sales, { customer_id: customer, direction: 'import', mode: 'sea_fcl', status: 'enquiry', incoterm: 'EXW', pickup_address: 'Seller warehouse', delivery_address: 'Customer warehouse, Dubai' });
   await rejects(vr.createVendorRequest(sales, { vendor_ids: [vendor, cma], service: 'booking', job_file_id: f.id, description: 'x' }), 'VALIDATION', /rate requests/);
   const r = await vr.createVendorRequest(sales, { vendor_ids: [vendor, cma, mae], service: 'rate', job_file_id: f.id, description: '1x40HC Ningbo → Jebel Ali', needed_by: D(1) });
   assert.equal(r.ids.length, 3); assert.ok(r.rate_group);

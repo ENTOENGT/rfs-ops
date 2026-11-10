@@ -617,6 +617,15 @@ Only the look and the navigation changed. Every URL, permission check, API and w
 - **Tables** (`DataTable`): record count, Excel/CSV export, column chooser, row action menu (⋯). Quotations list has Search / Customer / Service / Status / date filters; cost and margin stay hidden unless the person may see them.
 - **Styles** (`src/app/globals.css`): colour, spacing, radius and shadow tokens at the top (navy primary, teal, gold accent from the logo); old variable names map to the new ones so every page picked up the new look.
 
+## 15m. Enquiry details, currencies, Transport handover, LCL Team (migration 023)
+
+- **Cargo lines** (`job_file_cargo_lines`, `src/lib/cargoRules.ts`): package type, pieces, L × W × H in cm / inch / m, weight per line. Packages, weight, CBM, chargeable weight (air 167 kg/CBM, road 333) and W/M (LCL) are worked out from the lines and written onto the shipment. Required on new LCL / air / road enquiries; optional for FCL. Old lines are kept, marked removed.
+- **Incoterm rules** (`src/lib/incotermRules.ts`): the term and the direction decide which of pickup address, handover place, port of loading / discharge, delivery address and cargo value are required. The Incoterm itself is required on new commercial enquiries. Checked on the server at creation and whenever the term or one of its fields changes.
+- **Enquiry form**: no carrier, vessel, voyage, booking, BL or dates — they come from booking / vessel / pre-alert. One question for the team: the **division**; the direction follows it and cannot drift (it is in the Enquiry Ref).
+- **Currencies** (`src/lib/currency.ts`): AED, USD, EUR, INR, CNY on quotations, agent rates, charge lines and cargo value. Settings hold "1 unit = x AED" (`fx_USD` … `fx_CNY`); an agent rate in another currency is converted into the quotation currency when used. Transport, PRO, messenger and warehouse stay in the company currency.
+- **Handover to Transport** (`src/server/handover.ts`): "Request transport" on the shipment opens a request filled in from it; the truck job has a **Shipment** tab with references, route, vessel, containers, addresses, cargo lines and the operational documents (BL / AWB / CMR, DO, packing list, customs declaration, POD) through `/api/jobs/[id]/shipment-docs/[docId]`. Never prices, never the commercial invoice.
+- **LCL Team**: department `lcl` and role `lcl_team` with lcl.view / manage / receive / stuff only; its menu is Dashboard, LCL Management and the LCL reports; dashboard section "LCL".
+
 ## 16. Phase status
 
 | Phase | Status |
@@ -644,5 +653,6 @@ Only the look and the navigation changed. Every URL, permission check, API and w
 | Part G1 — group notifications, quotation terms and email templates, one subject per shipment, email history, Customer Service retired, login page (migration 020) | Done |
 | Part G2 — route options per enquiry, rates and quotation per option, booking details, vessel legs, BL draft cycle, final BL (migrations 021, 022) | Done |
 | UI redesign — module rail + page panel, global search, quick create, role dashboards, tabbed shipment record, modern tables (no migration) | Done |
+| Enquiry details — cargo lines, Incoterm rules, shorter enquiry form, division only, currencies, Transport handover, LCL Team (migration 023) | Done |
 | Freight + 3PL — remaining phases: see `docs/FREIGHT_3PL_PLAN.md` | Planned |
 | 7 Email notifications · 8 Saved views, column prefs, live ops table, performance | Planned |

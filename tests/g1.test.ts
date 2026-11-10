@@ -42,7 +42,7 @@ before(async () => {
 });
 
 test('1. New enquiry: Enquiry Ref carries the division; the email subject is fixed; the handling group is told (not the one who did it)', async () => {
-  const f = await createJobFile(sales, { customer_id: cust, direction: 'import', mode: 'sea_fcl', status: 'enquiry', origin: 'Shanghai', destination: 'Jebel Ali', cargo_description: 'Tiles' });
+  const f = await createJobFile(sales, { customer_id: cust, direction: 'import', mode: 'sea_fcl', status: 'enquiry', incoterm: 'EXW', pickup_address: 'Seller warehouse', delivery_address: 'Customer warehouse, Dubai', origin: 'Shanghai', destination: 'Jebel Ali', cargo_description: 'Tiles' });
   fileId = f.id; enq = f.enquiry_ref;
   assert.match(enq, /^ENQ-IMP-\d{2}-\d{5}$/);
   const g = await getJobFile(sales, fileId);
