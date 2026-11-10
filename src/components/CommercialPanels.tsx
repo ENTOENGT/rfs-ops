@@ -10,7 +10,7 @@ import { api, fmtDate, fmtDateTime, fmtMoney } from './api';
 import { useMe } from './Shell';
 import { EmailButton } from './EmailButton';
 import { NewVendorRequest } from './NewVendorRequest';
-import { STAGES, PRE_CONFIRM, PREALERT_CHECKS, divisionName, rateSourceName } from '@/lib/commercialRules';
+import { STAGES, PRE_CONFIRM, PREALERT_CHECKS, divisionName, rateSourceName, stageName } from '@/lib/commercialRules';
 import { routeLabel, BL_BEFORE_HANDOVER } from '@/lib/routingRules';
 
 /** Upload a file to this shipment's documents; returns the new document's id. */
@@ -23,27 +23,36 @@ export async function uploadToShipment(fileId: string, file: File, docType: stri
   return done.uploaded_document_id;
 }
 
-const MAIN = STAGES.filter(([c]) => !['lost', 'cancelled', 'booking_confirmed'].includes(c));
-/** The three numbers, the people, and where the shipment stands. */
+/** The 13 stages grouped into 5 steps for the progress line (UI redesign); the exact stage shows under the current step. */
+const PHASES: [string, string[]][] = [
+  ['Enquiry', ['enquiry', 'rates_requested', 'rates_received']],
+  ['Quotation', ['quotation_draft', 'pending_approval', 'sent_to_customer']],
+  ['Booking', ['customer_confirmed', 'booking_requested', 'booking_confirmed']],
+  ['Pre-alert', ['prealert_awaited', 'prealert_received', 'prealert_verified']],
+  ['Handover', ['handed_over']],
+];
+/** The numbers, the people, and where the shipment stands. */
 export function StageHeader({ d, act }: { d: any; act?: (b: any, done?: string) => Promise<any> }) {
   const { can, lk } = useMe();
   const [re, setRe] = useState<any>(null);
   if (!d.enquiry_ref) return null;
-  const idx = MAIN.findIndex(([c]) => c === d.stage);
+  const done = d.stage === 'handed_over';
+  const at = PHASES.findIndex(([, st]) => st.includes(d.stage));
   const canReassign = act && can('commercial.manage') && !['handed_over', 'lost', 'cancelled'].includes(d.stage);
+  const stopped = ['lost', 'cancelled'].includes(d.stage);
+  const full = STAGES.filter(([c]) => !['lost', 'cancelled'].includes(c)).map(([c, n]) => n).join(' → ');
   return (
-    <div className="panel" style={{ padding: '10px 14px' }}>
-      <div className="refs">
-        <span>Enquiry Ref <b>{d.enquiry_ref}</b></span>
-        <span>Shipping Ref <b>{d.shipping_ref ?? '—'}</b></span>
-        <span>Job No. <b>{d.job_no ?? 'not yet (from the ERP at handover)'}</b></span>
-        <span>Division <b>{divisionName(d.division)}</b></span>
-        <span>Salesman <b>{d.salesman_name ?? '—'}</b></span>
-        <span>Coordinator <b>{d.coordinator_name ?? '—'}</b></span>
-        <span className="muted">Created by {d.created_by_name}</span>
-        {canReassign && !re && <button className="linkish" onClick={() => setRe({ salesman_id: d.salesman_id ?? '', coordinator_id: d.coordinator_id ?? '', reason: '' })}>Reassign</button>}
+    <div className="panel rec-head">
+      <div className="rec-info">
+        {d.job_no && d.job_no !== d.enquiry_ref ? <div><span>Enquiry Ref</span><b>{d.enquiry_ref}</b></div> : null}
+        <div><span>Shipping Ref</span><b>{d.shipping_ref ?? '—'}</b></div>
+        <div><span>Job No.</span>{d.job_no && d.job_no !== d.enquiry_ref ? <b>{d.job_no}</b> : <b className="muted">After handover</b>}</div>
+        <div><span>Division</span><b>{divisionName(d.division)}</b></div>
+        <div><span>Salesman</span><b>{d.salesman_name ?? '—'}</b></div>
+        <div><span>Coordinator</span><b>{d.coordinator_name ?? '—'}</b></div>
+        {canReassign && !re && <button className="linkish small" style={{ alignSelf: 'flex-end' }} onClick={() => setRe({ salesman_id: d.salesman_id ?? '', coordinator_id: d.coordinator_id ?? '', reason: '' })}>Reassign</button>}
       </div>
-      {re && <div className="grid g4" style={{ marginTop: 8 }}>
+      {re && <div className="grid g4" style={{ marginTop: 12 }}>
         <label className="f"><span>Salesman</span><select value={re.salesman_id} onChange={(e) => setRe({ ...re, salesman_id: e.target.value })}><option value="">—</option>
           {(lk.salesmen ?? []).map((u: any) => <option key={u.id} value={u.id}>{u.name}</option>)}</select></label>
         <label className="f"><span>Coordinator</span><select value={re.coordinator_id} onChange={(e) => setRe({ ...re, coordinator_id: e.target.value })}><option value="">—</option>
@@ -52,11 +61,20 @@ export function StageHeader({ d, act }: { d: any; act?: (b: any, done?: string) 
         <div style={{ display: 'flex', gap: 6, alignItems: 'end' }}><button className="btn small" onClick={() => setRe(null)}>Cancel</button>
           <button className="btn small primary" disabled={!re.reason.trim()} onClick={async () => { if (await act!({ action: 'reassign', ...re, salesman_id: re.salesman_id || null, coordinator_id: re.coordinator_id || null }, 'Reassigned — both people were told.')) setRe(null); }}>Save</button></div>
       </div>}
-      {['lost', 'cancelled'].includes(d.stage) ? <div className="msg warn" style={{ margin: '8px 0 0' }}>{d.stage === 'lost' ? 'Lost' : 'Cancelled'}: {d.cancel_reason}</div>
-        : <>
-          <div className="stage-track" aria-label="Progress">{MAIN.map(([c, n], i) => <span key={c} className={i < idx ? 'done' : i === idx ? 'now' : ''}>{n}</span>)}</div>
-          {d.stage !== 'handed_over' && <p className="small" style={{ margin: '4px 0 0' }}>Next: <b>{d.next_action}</b></p>}
-        </>}
+      {stopped ? <div className="msg warn" style={{ margin: '14px 0 0' }}>{d.stage === 'lost' ? 'Lost' : 'Cancelled'}: {d.cancel_reason}</div>
+        : <div className="rec-progress">
+          <ol className="steps" aria-label={`Progress: ${stageName(d.stage)}`} title={full}>
+            {PHASES.map(([name], i) => {
+              const cls = done || i < at ? 'done' : i === at ? 'now' : 'todo';
+              return <li key={name} className={cls}>
+                <span className="step-dot">{cls === 'done' ? '✓' : i + 1}</span>
+                <span className="step-name">{name}</span>
+                {cls === 'now' && <span className="step-sub">{stageName(d.stage)}</span>}
+              </li>;
+            })}
+          </ol>
+          <div className={`next-box${done ? ' ok' : ''}`}><span>{done ? 'Done' : 'Next step'}</span><b>{done ? 'Handed over to Operations' : d.next_action}</b></div>
+        </div>}
     </div>
   );
 }

@@ -146,6 +146,9 @@ export async function listQuotations(actor: Actor, p: Record<string, string>) {
   else if (p.status === 'open') w += ` and x.status in ('draft','pending_approval','approved','sent')`;
   else if (p.status && !['confirmed', 'closed_out'].includes(p.status)) w += ` and x.status = ${add(p.status)}`;
   if (p.service_type) w += ` and x.service_type = ${add(p.service_type)}`;
+  // UI redesign: date range on the quotation date
+  for (const [k, op] of [['from', '>='], ['to', '<=']] as const)
+    if (p[k]) { if (!/^\d{4}-\d{2}-\d{2}$/.test(p[k])) throw bad('Invalid date'); w += ` and (x.created_at at time zone 'Asia/Dubai')::date ${op} ${add(p[k])}`; }
   if (p.my_approval === '1') w += ` and x.status = 'pending_approval' and x.salesman_decision is null and x.salesman_id = ${add(actor.id)}`;
   if (p.job_file_id) { if (!isUuid(p.job_file_id)) throw bad('Invalid filter'); w += ` and x.job_file_id = ${add(p.job_file_id)}`; }
   if (p.status === 'confirmed') w += ` and x.status = 'accepted'`;

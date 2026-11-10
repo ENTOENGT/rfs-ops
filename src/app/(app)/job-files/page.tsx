@@ -9,7 +9,9 @@ import { DIRECTIONS, MODES, JF_STATUSES } from '@/lib/jobfileRules';
 function JobFiles() {
   const { can, lk } = useMe();
   const sp = useSearchParams();
-  const [f, setF] = useState<Record<string, string>>(() => ({ view: sp.get('view') ?? 'open', page: '1' }));
+  const fromUrl = () => ({ view: sp.get('status') ? '' : sp.get('view') ?? 'open', ...(sp.get('status') ? { status: sp.get('status')! } : {}), page: '1' });
+  const [f, setF] = useState<Record<string, string>>(fromUrl);
+  useEffect(() => { setF(fromUrl()); }, [sp]);  // eslint-disable-line react-hooks/exhaustive-deps
   const [tiles, setTiles] = useState<any[]>([]);
   const [data, setData] = useState<any>(null);
   const [err, setErr] = useState('');

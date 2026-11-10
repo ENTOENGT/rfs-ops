@@ -9,6 +9,7 @@ import { useMe } from '@/components/Shell';
 import { JobFileFields } from '@/components/JobFileForm';
 import JobFileDocs from '@/components/JobFileDocs';
 import { CONTAINER_TYPES, JF_STATUSES, label, DIRECTIONS, MODES } from '@/lib/jobfileRules';
+import { PRE_CONFIRM } from '@/lib/commercialRules';
 import { StageHeader, RatesAndQuotes, BookingPanel, PrealertPanel, HandoverPanel, LclPanel } from '@/components/CommercialPanels';
 
 const RUN_STATUS: Record<string, string> = { pending: 'Waiting', assigned: 'Assigned', collected: 'Collected', delivered: 'Delivered', failed: 'Could not complete', cancelled: 'Cancelled' };
@@ -42,6 +43,16 @@ function Milestones({ d, act }: { d: any; act: (b: any) => Promise<unknown> }) {
   );
 }
 
+/** The tab that holds the next piece of work for the current stage. */
+function defaultTab(d: any, show: Record<string, boolean>) {
+  const st = d.status === 'enquiry' ? d.stage : null;
+  const want = st === 'enquiry' ? (show.routing && !(d.routes?.length) ? 'routing' : 'rates')
+    : ['rates_requested', 'rates_received', 'quotation_draft', 'pending_approval', 'sent_to_customer'].includes(st) ? 'rates'
+    : ['customer_confirmed', 'booking_requested'].includes(st) ? 'booking'
+    : st === 'booking_confirmed' ? 'vessel' : 'overview';
+  return show[want] ? want : 'overview';
+}
+
 export default function JobFile({ params }: { params: { id: string } }) {
   const { can } = useMe();
   const [d, setD] = useState<any>(null);
@@ -51,6 +62,17 @@ export default function JobFile({ params }: { params: { id: string } }) {
   const [cont, setCont] = useState({ container_no: '', size_type: '40HC', seal_no: '' });
   const [note, setNote] = useState('');
   const [emailsKey, setEmailsKey] = useState(0);
+  const [tabSel, setTabSel] = useState<string | null>(null);
+  const [more, setMore] = useState(false);
+  const [room, setRoom] = useState(7);
+  useEffect(() => {
+    const fit = () => setRoom(window.innerWidth >= 1400 ? 8 : window.innerWidth >= 1000 ? 6 : window.innerWidth >= 760 ? 5 : 3);
+    const close = (e: MouseEvent) => { if (!(e.target as HTMLElement).closest?.('.tab-more')) setMore(false); };
+    fit(); window.addEventListener('resize', fit); document.addEventListener('mousedown', close);
+    return () => { window.removeEventListener('resize', fit); document.removeEventListener('mousedown', close); };
+  }, []);
+  useEffect(() => { const h = window.location.hash.slice(1); if (h) setTabSel(h); }, []);
+  const pickTab = (k: string) => { setTabSel(k); try { window.history.replaceState(null, '', `#${k}`); } catch { /* ignore */ } };
   const load = () => api(`/api/job-files/${params.id}`).then(setD).catch((e) => setErr(e.message));
   useEffect(() => { load(); }, [params.id]);
   const act = async (b: any, done?: string) => {
@@ -67,15 +89,45 @@ export default function JobFile({ params }: { params: { id: string } }) {
   const active = JF_STATUSES.filter(([c]) => !['closed', 'cancelled'].includes(c));
   const open = !['closed', 'cancelled'].includes(d.status);
   const kv = (k: string, v: any) => <><dt>{k}</dt><dd>{v || v === 0 ? v : '—'}</dd></>;
-  const commercialPanels = <>
-    <HandoverPanel d={d} act={act} />
-    <PrealertPanel d={d} act={act} onError={(m) => { setErr(m); window.scrollTo(0, 0); }} />
-    <BlPanel d={d} act={act} />
-    <VesselPanel d={d} act={act} />
-    <BookingPanel d={d} act={act} />
-    <RoutesPanel d={d} act={act} />
-    {(d.status === 'enquiry' || (d.quotations?.length ?? 0) > 0 || (d.vendor_requests?.length ?? 0) > 0) && <RatesAndQuotes d={d} reload={load} />}
-  </>;
+  // UI redesign: the record is split into tabs; a tab only shows when its panel has something for this stage and this person
+  const after = !PRE_CONFIRM.includes(d.stage ?? 'enquiry') && !['lost', 'cancelled'].includes(d.stage);
+  const n = (a: any[] | null | undefined) => a?.length ?? 0;
+  const show: Record<string, boolean> = {
+    overview: true,
+    routing: !!d.enquiry_ref && (n(d.routes) > 0 || (d.can.edit && PRE_CONFIRM.includes(d.stage ?? ''))),
+    rates: !(d.quotations === null && d.vendor_requests === null) && (d.status === 'enquiry' || n(d.quotations) > 0 || n(d.vendor_requests) > 0),
+    emails: can('emails.view'),
+    booking: !!(d.can.book || d.can.confirm_booking || d.booking),
+    vessel: !!d.enquiry_ref && after && d.mode !== 'road',
+    bl: !!d.enquiry_ref && after && d.mode !== 'road',
+    documents: true,
+    services: d.status !== 'enquiry' || n(d.trips) + n(d.pro) + n(d.runs) > 0,
+    milestones: n(d.milestones) > 0,
+    history: true,
+  };
+  const tabs = [
+    { key: 'overview', label: 'Overview' },
+    { key: 'routing', label: 'Routing options', count: n(d.routes) },
+    { key: 'rates', label: 'Rates & quotation', count: n(d.vendor_requests) + n(d.quotations) },
+    { key: 'emails', label: 'Emails' },
+    { key: 'booking', label: 'Booking' },
+    { key: 'vessel', label: 'Vessel details', count: n(d.legs) },
+    { key: 'bl', label: 'BL documents', count: n(d.bl_drafts) },
+    { key: 'documents', label: 'Documents', count: (d.checklist ?? []).filter((c: any) => ['missing', 'rejected'].includes(c.status)).length, warn: true },
+    { key: 'services', label: 'Transport & customs', count: n(d.trips) + n(d.pro) + n(d.runs) },
+    { key: 'milestones', label: 'Milestones' },
+    { key: 'history', label: 'Activity', count: n(d.events) },
+  ].filter((t) => show[t.key]);
+  const tab = tabs.some((t) => t.key === tabSel) ? tabSel! : defaultTab(d, show);
+  // one row of tabs: the less used ones (and anything that doesn't fit) go under "More"
+  const later = ['milestones', 'history', ...(PRE_CONFIRM.includes(d.stage ?? '') ? [] : ['routing'])];
+  const ranked = [...tabs.filter((t) => !later.includes(t.key)), ...tabs.filter((t) => later.includes(t.key))];
+  const fits = ranked.length <= room ? ranked.length : room - 1;
+  const front = new Set(ranked.slice(0, fits).map((t) => t.key));
+  const shown = tabs.filter((t) => front.has(t.key));
+  const extra = tabs.filter((t) => !front.has(t.key));
+  const extraOn = extra.find((t) => t.key === tab);
+  const badge = (t: any) => t.count ? <span className={`count${t.warn ? ' warn' : ''}`} title={t.warn ? 'missing' : undefined}>{t.count}</span> : null;
   return (
     <div className="page">
       <div className="page-head">
@@ -101,88 +153,116 @@ export default function JobFile({ params }: { params: { id: string } }) {
       {d.service_instructions && <div className="msg">Customer's standing instructions: {d.service_instructions}</div>}
 
       {!edit && <StageHeader d={d} act={act} />}
-      {/* while in Commercials these come first; once handed over they move below the operational sections */}
-      {!edit && d.status === 'enquiry' && commercialPanels}
       {edit ? <>
         <JobFileFields f={edit} setF={setEdit} />
         <div className="form-actions"><button className="btn" onClick={() => setEdit(null)}>Cancel</button>
           <button className="btn primary" onClick={saveEdit}>Save changes</button></div>
-      </> : <div className="cols">
-        <div>
-          <div className="panel"><h2>Shipment</h2><dl className="kv">
-            {kv('Customer', d.customer_name)}{kv('Type', `${label(DIRECTIONS, d.direction)} · ${label(MODES, d.mode)}`)}
-            {kv('Services', [d.needs_clearance && 'Customs clearance', d.needs_transport && 'Transport', d.needs_warehouse && 'Warehouse'].filter(Boolean).join(', '))}
-            {kv('Customer reference', d.customer_reference)}{kv('Incoterm', d.incoterm)}
-            {kv('Shipper', d.shipper)}{kv('Consignee', d.consignee)}{kv('Notify party', d.notify_party)}
-            {kv('Route', [d.origin, d.port_of_loading, d.port_of_discharge, d.destination].filter(Boolean).join(' → '))}
-            {kv('Carrier', [d.carrier, d.vessel_flight, d.voyage].filter(Boolean).join(' · '))}
-            {kv('Booking ref.', d.booking_reference)}{kv(d.mode === 'air' ? 'MAWB / HAWB' : 'MBL / HBL', [d.mbl_mawb, d.hbl_hawb].filter(Boolean).join(' / '))}
-            {kv('ETD / actual', `${fmtDate(d.etd)} / ${fmtDate(d.atd)}`)}{kv('ETA / actual', `${fmtDate(d.eta)} / ${fmtDate(d.ata)}`)}
-            {kv('Cargo', [d.packages && `${d.packages} pkgs`, d.gross_weight_kg && `${Number(d.gross_weight_kg).toLocaleString()} kg`,
-              d.volume_cbm && `${d.volume_cbm} CBM`, d.chargeable_weight_kg && `chargeable ${Number(d.chargeable_weight_kg).toLocaleString()} kg`].filter(Boolean).join(' · '))}
-            {kv('Description', d.cargo_description)}{kv('Remarks', d.remarks)}
-            {kv('Department', d.department_name)}{kv('Created', `${fmtDateTime(d.created_at)} by ${d.created_by_name}`)}
-            {d.quotation && kv('Quotation', <Link href={`/quotations/${d.quotation.id}`}>{d.quotation.quote_no}</Link>)}
-          </dl></div>
-          <JobFileDocs d={d} onChange={(v) => { setD(v); setErr(''); }} onError={(m) => { setErr(m); window.scrollTo(0, 0); }} />
-          {can('emails.view') && <EmailsPanel key={emailsKey} d={d} onSaved={load} />}
-          {d.old_cases?.length > 0 && <div className="panel"><h2>Earlier customer service cases</h2>
-            <p className="muted small" style={{ marginTop: 0 }}>Customer Service is no longer a separate team; these are kept for reference.</p>
-            {d.old_cases.map((k: any) => <div key={k.id} className="small"><Link href={`/cases/${k.id}`}>{k.case_no}</Link> — {k.subject} <span className="muted">({k.status}, {fmtDate(k.created_at)})</span></div>)}</div>}
-          <Milestones d={d} act={act} />
-          <div className="panel"><h2>Containers</h2>
-            {d.containers.length === 0 && <p className="muted small">No containers.</p>}
-            {d.containers.map((k: any) => <div key={k.id} className="small" style={{ display: 'flex', gap: 10, alignItems: 'center', padding: '4px 0' }}>
-              <b>{k.container_no}</b><span>{k.size_type}</span>{k.seal_no && <span className="muted">seal {k.seal_no}</span>}<span className="spacer" />
-              {d.can.edit && <button className="linkish" onClick={() => confirm(`Remove ${k.container_no}?`) && act({ action: 'container', remove: true, container_id: k.id })}>Remove</button>}
-            </div>)}
-            {d.can.edit && <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
-              <input value={cont.container_no} onChange={(e) => setCont({ ...cont, container_no: e.target.value.toUpperCase() })} placeholder="Container no." style={{ flex: 2 }} />
-              <select value={cont.size_type} onChange={(e) => setCont({ ...cont, size_type: e.target.value })} style={{ flex: 1 }}>{CONTAINER_TYPES.map((t) => <option key={t}>{t}</option>)}</select>
-              <input value={cont.seal_no} onChange={(e) => setCont({ ...cont, seal_no: e.target.value })} placeholder="Seal no." style={{ flex: 1 }} />
-              <button className="btn small" disabled={!cont.container_no.trim()} onClick={async () => { await act({ action: 'container', ...cont }); setCont({ ...cont, container_no: '', seal_no: '' }); }}>Add</button>
-            </div>}
-          </div>
-        </div>
-        <div>
-          {d.mode === 'sea_lcl' && <LclPanel d={d} />}
-          {open && d.status !== 'enquiry' && <div className={`panel${d.closure.can_close ? '' : ' warnbox'}`}><h2>Before it can close</h2>
-            {d.closure.can_close ? <p className="small" style={{ margin: 0 }}>✓ All linked work is finished. It can be closed.</p>
-              : <ul className="small" style={{ margin: 0, paddingLeft: 18 }}>{d.closure.blockers.map((b: string) => <li key={b}>{b}</li>)}</ul>}
-            {d.closure.warnings.length > 0 && <p className="muted small" style={{ marginBottom: 0 }}>Not blocking: {d.closure.warnings.length} milestone(s) without an actual date.</p>}
+      </> : <>
+        <div className="tabs rec-tabs" role="tablist" aria-label="Sections of this record">
+          {shown.map((t) => <button key={t.key} role="tab" aria-selected={tab === t.key} className={tab === t.key ? 'on' : ''} onClick={() => pickTab(t.key)}>
+            {t.label}{badge(t)}</button>)}
+          {extra.length > 0 && <div className="tab-more">
+            <button className={extraOn ? 'on' : ''} aria-haspopup="menu" aria-expanded={more} onClick={() => setMore(!more)}>{extraOn ? extraOn.label : 'More'} ▾</button>
+            {more && <div className="menu-pop" role="menu">{extra.map((t) => <button key={t.key} role="menuitem" className={tab === t.key ? 'on' : ''}
+              onClick={() => { pickTab(t.key); setMore(false); }}><span>{t.label}</span>{badge(t)}</button>)}</div>}
           </div>}
-          <div className="panel"><h2>Truck trips</h2>
-            {d.trips.length === 0 && <p className="muted small">None yet.{d.needs_transport && ' Transport is needed for this shipment.'}</p>}
-            {d.trips.map((t: any) => <div key={t.id} className="small" style={{ padding: '4px 0' }}>
-              <Link href={`/jobs/${t.id}`}><b>{t.job_number}</b></Link> <span className="badge" style={{ background: t.status_color }}>{t.status_name}</span>
-              <div className="muted">{fmtDate(t.required_date)} · {t.pickup_name} → {t.delivery_name}</div></div>)}
-            {d.can.request_transport && d.job_no && <p className="small" style={{ marginBottom: 0 }}><Link href="/requests/new">New transport request</Link> — type Job No. <b>{d.job_no}</b> and it appears here.</p>}
-          </div>
-          <div className="panel"><h2>PRO / customs clearance</h2>
-            {d.pro.length === 0 && <p className="muted small">None yet.{d.needs_clearance && ' Clearance is needed for this shipment.'}</p>}
-            {d.pro.map((r: any) => <div key={r.id} className="small" style={{ padding: '4px 0' }}>
-              <Link href={`/pro/${r.id}`}><b>{r.request_no}</b></Link> <span className="badge" style={{ background: r.status_color }}>{r.status_name}</span>
-              <div className="muted">{r.uae_location} · required {fmtDate(r.required_date)}</div></div>)}
-            {d.can.request_pro && d.job_no && <p className="small" style={{ marginBottom: 0 }}><Link href="/pro/new">New PRO request</Link> — type Job No. <b>{d.job_no}</b> and it appears here.</p>}
-          </div>
-          <div className="panel"><h2>Messenger runs</h2>
-            {d.runs.length === 0 && <p className="muted small">None. Runs linked to one of the truck trips above show here.</p>}
-            {d.runs.map((m: any) => <div key={m.id} className="small" style={{ padding: '4px 0' }}>
-              <Link href={`/runs/${m.id}`}><b>{m.run_number}</b></Link> <span className="badge outline">{RUN_STATUS[m.status] ?? m.status}</span>
-              <div className="muted">{fmtDate(m.required_date)} · {m.documents}</div></div>)}
-          </div>
-          <div className="panel"><h2>Activity history</h2>
-            <div style={{ display: 'flex', gap: 6, marginBottom: 10 }}>
-              <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="Add a note…" style={{ flex: 1 }} />
-              <button className="btn small" disabled={!note.trim()} onClick={async () => { await act({ action: 'note', body: note }); setNote(''); }}>Add</button></div>
-            {[...d.events].reverse().map((e: any) => <div key={e.id} className="small" style={{ padding: '5px 0', borderTop: '1px solid var(--line-soft)' }}>
-              <b>{e.title}</b>{e.old_value && e.new_value ? <>: {e.old_value} → {e.new_value}</> : e.new_value ? <>: {e.new_value}</> : null}
-              {e.remarks && <div>Remarks: {e.remarks}</div>}
-              <div className="muted">{fmtDateTime(e.at)} · {e.user_name}</div></div>)}
-          </div>
         </div>
-      </div>}
-      {!edit && d.status !== 'enquiry' && <><h2 style={{ margin: '18px 0 8px' }}>Commercial record</h2>{commercialPanels}</>}
+
+        {tab === 'overview' && <div className="tab-panel">
+          <HandoverPanel d={d} act={act} />
+          <PrealertPanel d={d} act={act} onError={(m) => { setErr(m); window.scrollTo(0, 0); }} />
+        </div>}
+        {tab === 'overview' && <div className="cols tab-panel">
+          <div>
+            <div className="panel"><h2>Shipment</h2><dl className="kv">
+              {kv('Customer', d.customer_name)}{kv('Type', `${label(DIRECTIONS, d.direction)} · ${label(MODES, d.mode)}`)}
+              {kv('Services', [d.needs_clearance && 'Customs clearance', d.needs_transport && 'Transport', d.needs_warehouse && 'Warehouse'].filter(Boolean).join(', '))}
+              {kv('Customer reference', d.customer_reference)}{kv('Incoterm', d.incoterm)}
+              {kv('Shipper', d.shipper)}{kv('Consignee', d.consignee)}{kv('Notify party', d.notify_party)}
+              {kv('Route', [d.origin, d.port_of_loading, d.port_of_discharge, d.destination].filter(Boolean).join(' → '))}
+              {kv('Carrier', [d.carrier, d.vessel_flight, d.voyage].filter(Boolean).join(' · '))}
+              {kv('Booking ref.', d.booking_reference)}{kv(d.mode === 'air' ? 'MAWB / HAWB' : 'MBL / HBL', [d.mbl_mawb, d.hbl_hawb].filter(Boolean).join(' / '))}
+              {kv('ETD / actual', `${fmtDate(d.etd)} / ${fmtDate(d.atd)}`)}{kv('ETA / actual', `${fmtDate(d.eta)} / ${fmtDate(d.ata)}`)}
+              {kv('Cargo', [d.packages && `${d.packages} pkgs`, d.gross_weight_kg && `${Number(d.gross_weight_kg).toLocaleString()} kg`,
+                d.volume_cbm && `${d.volume_cbm} CBM`, d.chargeable_weight_kg && `chargeable ${Number(d.chargeable_weight_kg).toLocaleString()} kg`].filter(Boolean).join(' · '))}
+              {kv('Description', d.cargo_description)}{kv('Remarks', d.remarks)}
+              {kv('Department', d.department_name)}{kv('Created', `${fmtDateTime(d.created_at)} by ${d.created_by_name}`)}
+              {d.quotation && kv('Quotation', <Link href={`/quotations/${d.quotation.id}`}>{d.quotation.quote_no}</Link>)}
+            </dl></div>
+            <div className="panel"><h2>Containers</h2>
+              {d.containers.length === 0 && <p className="muted small">No containers.</p>}
+              {d.containers.map((k: any) => <div key={k.id} className="small" style={{ display: 'flex', gap: 10, alignItems: 'center', padding: '4px 0' }}>
+                <b>{k.container_no}</b><span>{k.size_type}</span>{k.seal_no && <span className="muted">seal {k.seal_no}</span>}<span className="spacer" />
+                {d.can.edit && <button className="linkish" onClick={() => confirm(`Remove ${k.container_no}?`) && act({ action: 'container', remove: true, container_id: k.id })}>Remove</button>}
+              </div>)}
+              {d.can.edit && <div style={{ display: 'flex', gap: 8, marginTop: 8, flexWrap: 'wrap' }}>
+                <input value={cont.container_no} onChange={(e) => setCont({ ...cont, container_no: e.target.value.toUpperCase() })} placeholder="Container no." style={{ flex: 2, minWidth: 140 }} />
+                <select value={cont.size_type} onChange={(e) => setCont({ ...cont, size_type: e.target.value })} style={{ flex: 1, minWidth: 100 }}>{CONTAINER_TYPES.map((t) => <option key={t}>{t}</option>)}</select>
+                <input value={cont.seal_no} onChange={(e) => setCont({ ...cont, seal_no: e.target.value })} placeholder="Seal no." style={{ flex: 1, minWidth: 100 }} />
+                <button className="btn small" disabled={!cont.container_no.trim()} onClick={async () => { await act({ action: 'container', ...cont }); setCont({ ...cont, container_no: '', seal_no: '' }); }}>Add</button>
+              </div>}
+            </div>
+          </div>
+          <div>
+            {d.mode === 'sea_lcl' && <LclPanel d={d} />}
+            {open && d.status !== 'enquiry' && <div className={`panel${d.closure.can_close ? '' : ' warnbox'}`}><h2>Before it can close</h2>
+              {d.closure.can_close ? <p className="small" style={{ margin: 0 }}>✓ All linked work is finished. It can be closed.</p>
+                : <ul className="small" style={{ margin: 0, paddingLeft: 18 }}>{d.closure.blockers.map((b: string) => <li key={b}>{b}</li>)}</ul>}
+              {d.closure.warnings.length > 0 && <p className="muted small" style={{ marginBottom: 0 }}>Not blocking: {d.closure.warnings.length} milestone(s) without an actual date.</p>}
+            </div>}
+            {d.old_cases?.length > 0 && <div className="panel"><h2>Earlier customer service cases</h2>
+              <p className="muted small" style={{ marginTop: 0 }}>Customer Service is no longer a separate team; these are kept for reference.</p>
+              {d.old_cases.map((k: any) => <div key={k.id} className="small"><Link href={`/cases/${k.id}`}>{k.case_no}</Link> — {k.subject} <span className="muted">({k.status}, {fmtDate(k.created_at)})</span></div>)}</div>}
+          </div>
+        </div>}
+
+        {tab === 'routing' && <div className="tab-panel"><RoutesPanel d={d} act={act} /></div>}
+        {tab === 'rates' && <div className="tab-panel"><RatesAndQuotes d={d} reload={load} /></div>}
+        {tab === 'emails' && <div className="tab-panel"><EmailsPanel key={emailsKey} d={d} onSaved={load} /></div>}
+        {tab === 'booking' && <div className="tab-panel"><BookingPanel d={d} act={act} /></div>}
+        {tab === 'vessel' && <div className="tab-panel"><VesselPanel d={d} act={act} /></div>}
+        {tab === 'bl' && <div className="tab-panel"><BlPanel d={d} act={act} /></div>}
+        {tab === 'documents' && <div className="tab-panel"><JobFileDocs d={d} onChange={(v) => { setD(v); setErr(''); }} onError={(m) => { setErr(m); window.scrollTo(0, 0); }} /></div>}
+
+        {tab === 'services' && <div className="cols tab-panel">
+          <div>
+            <div className="panel"><h2>Truck trips</h2>
+              {d.trips.length === 0 && <p className="muted small">None yet.{d.needs_transport && ' Transport is needed for this shipment.'}</p>}
+              {d.trips.map((t: any) => <div key={t.id} className="small" style={{ padding: '4px 0' }}>
+                <Link href={`/jobs/${t.id}`}><b>{t.job_number}</b></Link> <span className="badge" style={{ background: t.status_color }}>{t.status_name}</span>
+                <div className="muted">{fmtDate(t.required_date)} · {t.pickup_name} → {t.delivery_name}</div></div>)}
+              {d.can.request_transport && d.job_no && <p className="small" style={{ marginBottom: 0 }}><Link href="/requests/new">New transport request</Link> — type Job No. <b>{d.job_no}</b> and it appears here.</p>}
+            </div>
+            <div className="panel"><h2>Messenger runs</h2>
+              {d.runs.length === 0 && <p className="muted small">None. Runs linked to one of the truck trips above show here.</p>}
+              {d.runs.map((m: any) => <div key={m.id} className="small" style={{ padding: '4px 0' }}>
+                <Link href={`/runs/${m.id}`}><b>{m.run_number}</b></Link> <span className="badge outline">{RUN_STATUS[m.status] ?? m.status}</span>
+                <div className="muted">{fmtDate(m.required_date)} · {m.documents}</div></div>)}
+            </div>
+          </div>
+          <div>
+            <div className="panel"><h2>PRO / customs clearance</h2>
+              {d.pro.length === 0 && <p className="muted small">None yet.{d.needs_clearance && ' Clearance is needed for this shipment.'}</p>}
+              {d.pro.map((r: any) => <div key={r.id} className="small" style={{ padding: '4px 0' }}>
+                <Link href={`/pro/${r.id}`}><b>{r.request_no}</b></Link> <span className="badge" style={{ background: r.status_color }}>{r.status_name}</span>
+                <div className="muted">{r.uae_location} · required {fmtDate(r.required_date)}</div></div>)}
+              {d.can.request_pro && d.job_no && <p className="small" style={{ marginBottom: 0 }}><Link href="/pro/new">New PRO request</Link> — type Job No. <b>{d.job_no}</b> and it appears here.</p>}
+            </div>
+          </div>
+        </div>}
+
+        {tab === 'milestones' && <div className="tab-panel"><Milestones d={d} act={act} /></div>}
+
+        {tab === 'history' && <div className="tab-panel"><div className="panel"><h2>Activity history</h2>
+          <div style={{ display: 'flex', gap: 6, marginBottom: 10 }}>
+            <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="Add a note…" style={{ flex: 1 }} />
+            <button className="btn small" disabled={!note.trim()} onClick={async () => { await act({ action: 'note', body: note }); setNote(''); }}>Add</button></div>
+          {[...d.events].reverse().map((e: any) => <div key={e.id} className="small" style={{ padding: '7px 0', borderTop: '1px solid var(--line-soft)' }}>
+            <b>{e.title}</b>{e.old_value && e.new_value ? <>: {e.old_value} → {e.new_value}</> : e.new_value ? <>: {e.new_value}</> : null}
+            {e.remarks && <div>Remarks: {e.remarks}</div>}
+            <div className="muted">{fmtDateTime(e.at)} · {e.user_name}</div></div>)}
+        </div></div>}
+      </>}
     </div>
   );
 }

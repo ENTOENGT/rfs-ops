@@ -256,6 +256,13 @@ export const COMMERCIAL_VIEWS: Record<string, string> = {
   c_booking: `f.stage = 'booking_requested'`, c_prealert: `f.stage in ('booking_confirmed','prealert_awaited','prealert_received')`,
   c_prealert_received: `f.stage = 'prealert_received'`, c_awaiting_job: `f.stage = 'prealert_verified'`,
   c_handed_over: `f.stage = 'handed_over' and f.handed_over_at is not null`, c_lost: `f.stage in ('lost','cancelled')`,
+  // UI redesign: dashboard and Bookings menu views (Part G2 data)
+  c_pending_quotes: `f.stage in ('rates_requested','rates_received','quotation_draft','pending_approval')`,
+  c_active: `f.stage in ('customer_confirmed','booking_requested','booking_confirmed','prealert_awaited','prealert_received','prealert_verified')`,
+  c_vessel_pending: `f.stage in ('booking_confirmed','prealert_awaited','prealert_received','prealert_verified') and f.mode <> 'road' and f.vessel_status <> 'verified'`,
+  c_bl_customer: `f.bl_status in ('sent_to_customer','revised_sent') and f.stage not in ('lost','cancelled')`,
+  c_bl_correction: `f.bl_status in ('correction_required','correction_sent','revised_received') and f.stage not in ('lost','cancelled')`,
+  c_cust_pending: `(f.stage = 'sent_to_customer' or f.bl_status in ('sent_to_customer','revised_sent'))`,
 };
 function filterSql(actor: Actor, p: Record<string, string>, params: unknown[]) {
   const add = (v: unknown) => { params.push(v); return `$${params.length}`; };

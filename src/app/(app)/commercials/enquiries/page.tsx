@@ -13,6 +13,8 @@ const VIEW_NAME: Record<string, string> = {
   c_approval: 'Quotations pending approval', c_sent: 'Quotations with customers', c_confirmed: 'Customer confirmed — to book', c_booking: 'Booking confirmation pending',
   c_prealert: 'Awaiting pre-alert', c_prealert_received: 'Pre-alert to verify', c_awaiting_job: 'Awaiting operational job creation',
   c_handed_over: 'Handed over to Operations', c_lost: 'Lost / cancelled',
+  c_pending_quotes: 'Quotations to prepare', c_active: 'Active shipments', c_vessel_pending: 'Vessel details pending',
+  c_bl_customer: 'BL drafts with customers', c_bl_correction: 'BL drafts being corrected', c_cust_pending: 'Waiting for customer confirmation',
 };
 // what the columns "Rate", "Quotation" and "Customer" say, from the stage
 const order = STAGES.map((s) => s[0]);

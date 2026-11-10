@@ -4,7 +4,28 @@
  * browser), sticky header, row actions, and export of the current filter to CSV or Excel. Secondary details belong
  * on the detail page, not in extra columns.
  */
-import { ReactNode, useEffect, useState } from 'react';
+import Link from 'next/link';
+import { ReactNode, useEffect, useRef, useState } from 'react';
+import { Icon } from './Icon';
+
+export type RowAction = { label: string; href?: string; onClick?: () => void; danger?: boolean };
+/** The "⋯" menu at the end of a row. */
+function RowMenu({ items }: { items: RowAction[] }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const click = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false); };
+    document.addEventListener('mousedown', click); return () => document.removeEventListener('mousedown', click);
+  }, [open]);
+  if (!items.length) return null;
+  return <div ref={ref} style={{ position: 'relative', display: 'inline-block' }}>
+    <button className="icon-btn sm" aria-label="Actions" aria-expanded={open} onClick={() => setOpen(!open)}><Icon name="dots" /></button>
+    {open && <div className="dropdown menu pop-right" role="menu">{items.map((a) => a.href
+      ? <Link key={a.label} href={a.href} role="menuitem" onClick={() => setOpen(false)} style={a.danger ? { color: 'var(--danger)' } : undefined}>{a.label}</Link>
+      : <button key={a.label} role="menuitem" onClick={() => { setOpen(false); a.onClick?.(); }} style={a.danger ? { color: 'var(--danger)' } : undefined}>{a.label}</button>)}</div>}
+  </div>;
+}
 
 export type Col<T> = {
   key: string; label: string;
@@ -17,10 +38,11 @@ export type Col<T> = {
 };
 
 export function DataTable<T extends { id: string }>({ id, cols, rows, total, page, pageSize, sort, dir, onSort, onPage, empty = 'Nothing here.',
-  rowClass, exportAll, exportName }: {
+  rowClass, exportAll, exportName, actions, title }: {
   id: string; cols: Col<T>[]; rows: T[] | null; total: number; page: number; pageSize: number;
   sort?: string; dir?: 'asc' | 'desc'; onSort?: (key: string, dir: 'asc' | 'desc') => void; onPage: (p: number) => void;
   empty?: string; rowClass?: (r: T) => string; exportAll?: () => Promise<T[]>; exportName?: string;
+  /** the row's "⋯" menu (UI redesign) */ actions?: (r: T) => RowAction[]; title?: string;
 }) {
   const [shown, setShown] = useState<string[] | null>(null);
   const [pick, setPick] = useState(false);
@@ -67,11 +89,12 @@ export function DataTable<T extends { id: string }>({ id, cols, rows, total, pag
   return (
     <div className="panel flush dt">
       <div className="dt-bar">
-        <span className="muted small">{rows ? `${total} ${total === 1 ? 'row' : 'rows'}` : 'Loading…'}</span>
+        {title && <b style={{ fontSize: 14 }}>{title}</b>}
+        <span className="muted small">{rows ? `${total.toLocaleString()} ${total === 1 ? 'record' : 'records'}` : 'Loading…'}</span>
         <span className="spacer" />
-        {exportAll && <><button className="btn small" disabled={!!busy || !total} onClick={() => download('xlsx')}>{busy === 'xlsx' ? 'Preparing…' : 'Excel'}</button>
+        {exportAll && <><button className="btn small" disabled={!!busy || !total} onClick={() => download('xlsx')}>{busy === 'xlsx' ? 'Preparing…' : 'Export Excel'}</button>
           <button className="btn small" disabled={!!busy || !total} onClick={() => download('csv')}>{busy === 'csv' ? 'Preparing…' : 'CSV'}</button></>}
-        <span className="dt-cols"><button className="btn small" onClick={() => setPick(!pick)} aria-expanded={pick}>Columns</button>
+        <span className="dt-cols"><button className="btn small" onClick={() => setPick(!pick)} aria-expanded={pick}><Icon name="panel" size={15} />Columns</button>
           {pick && <div className="dt-pick" role="dialog" aria-label="Choose columns">
             {cols.filter((c) => !c.always).map((c) => <label key={c.key} className="check">
               <input type="checkbox" checked={visible.some((v) => v.key === c.key)} onChange={() => toggle(c.key)} /> {c.label}</label>)}
@@ -84,12 +107,13 @@ export function DataTable<T extends { id: string }>({ id, cols, rows, total, pag
             aria-sort={on ? (dir === 'desc' ? 'descending' : 'ascending') : undefined}>
             {c.sort && onSort ? <button className="dt-sort" onClick={() => onSort(c.sort!, on && dir === 'asc' ? 'desc' : 'asc')}>
               {c.label}<span aria-hidden>{on ? (dir === 'desc' ? ' ▼' : ' ▲') : ''}</span></button> : c.label}</th>;
-        })}</tr></thead>
+        })}{actions && <th className="dt-act"><span className="sr-only">Actions</span></th>}</tr></thead>
         <tbody>
-          {rows?.map((r) => <tr key={r.id} className={rowClass?.(r) ?? ''}>{visible.map((c) => <td key={c.key} className={c.num ? 'num' : ''}>{c.render ? c.render(r) : String(val(c, r) || '—')}</td>)}</tr>)}
-          {rows && rows.length === 0 && <tr><td colSpan={visible.length} className="muted" style={{ padding: 24, textAlign: 'center' }}>{empty}</td></tr>}
+          {rows?.map((r) => <tr key={r.id} className={rowClass?.(r) ?? ''}>{visible.map((c) => <td key={c.key} className={c.num ? 'num' : ''}>{c.render ? c.render(r) : String(val(c, r) || '—')}</td>)}
+            {actions && <td className="dt-act"><RowMenu items={actions(r)} /></td>}</tr>)}
+          {rows && rows.length === 0 && <tr><td colSpan={visible.length + (actions ? 1 : 0)} className="muted" style={{ padding: 36, textAlign: 'center' }}>{empty}</td></tr>}
         </tbody></table></div>
-      <div className="pager"><span className="spacer" />
+      <div className="pager"><span>{rows && total > 0 ? `${(page - 1) * pageSize + 1}–${Math.min(total, page * pageSize)} of ${total.toLocaleString()}` : ''}</span><span className="spacer" />
         <button className="btn small" disabled={page <= 1} onClick={() => onPage(page - 1)}>Previous</button>
         <span>Page {page} of {pages}</span>
         <button className="btn small" disabled={page >= pages} onClick={() => onPage(page + 1)}>Next</button></div>

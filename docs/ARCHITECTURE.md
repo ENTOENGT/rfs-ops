@@ -605,6 +605,18 @@ quotations within validity; every print / download is written to the quotation h
   Commercials Manager can override with a reason (`handover_override_reason`, plus a history line).
 - **Storage (021):** the file bucket accepts .eml / .msg.
 
+## 15l. UI redesign (no migration)
+
+Only the look and the navigation changed. Every URL, permission check, API and workflow is the same.
+
+- **Frame** (`src/components/Shell.tsx`): navy left rail with the module headers only; clicking a module opens its pages in a second panel (`.subnav`), which can be hidden. The rail can be collapsed to icons (forced at ≤1280px) and becomes a drawer at ≤900px. People on the phone app (drivers, messengers, PRO) keep their phone frame.
+- **Menu** (`src/lib/navigation.ts`): one list of modules → pages, each with the permission it needs. `visibleModules` hides what a person can't open; `locate` finds the module and page for the current URL and keeps the module the record was opened from.
+- **Header**: breadcrumb, global search (`/api/search`, `src/server/search.ts` — every group uses the same scope as its list page), **+ New** (quick create, by permission), notifications, settings, profile.
+- **Dashboard** (`/api/home`, `src/server/home.ts`): role sections (Commercials Manager, Coordinator, Salesman, Agent Coordinator, Warehouse, Operations) with counts of real records, each card opening the matching list; "Needs your attention", enquiries per week, pipeline, recent activity. Read-only.
+- **Shipment record**: a header with the numbers and people in one row, a 5-step progress line (Enquiry → Quotation → Booking → Pre-alert → Handover; the exact stage under the current step, all 13 on hover) and a Next step box; then one row of tabs (the rest under More): (Overview, Routing options, Rates & quotation, Emails, Booking, Vessel details, BL documents, Documents, Transport & customs, Milestones, Activity). A tab only shows when its panel applies to the stage and the person; it opens on the tab with the next piece of work. `#tab` in the URL opens a tab directly.
+- **Tables** (`DataTable`): record count, Excel/CSV export, column chooser, row action menu (⋯). Quotations list has Search / Customer / Service / Status / date filters; cost and margin stay hidden unless the person may see them.
+- **Styles** (`src/app/globals.css`): colour, spacing, radius and shadow tokens at the top (navy primary, teal, gold accent from the logo); old variable names map to the new ones so every page picked up the new look.
+
 ## 16. Phase status
 
 | Phase | Status |
@@ -631,5 +643,6 @@ quotations within validity; every print / download is written to the quotation h
 | Part F — LCL consolidation: containers, house shipments/HBLs, cargo receiving, stuffing, dispatch, LCL registers and reports (migration 019) | Done |
 | Part G1 — group notifications, quotation terms and email templates, one subject per shipment, email history, Customer Service retired, login page (migration 020) | Done |
 | Part G2 — route options per enquiry, rates and quotation per option, booking details, vessel legs, BL draft cycle, final BL (migrations 021, 022) | Done |
+| UI redesign — module rail + page panel, global search, quick create, role dashboards, tabbed shipment record, modern tables (no migration) | Done |
 | Freight + 3PL — remaining phases: see `docs/FREIGHT_3PL_PLAN.md` | Planned |
 | 7 Email notifications · 8 Saved views, column prefs, live ops table, performance | Planned |
