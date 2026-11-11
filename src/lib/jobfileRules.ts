@@ -1,7 +1,11 @@
 // Labels and lists for Job Files and quotations — shared by the screens and the server.
 
 export const DIRECTIONS: [string, string][] = [['import', 'Import'], ['export', 'Export'], ['cross_trade', 'Cross-trade'], ['domestic', 'Domestic']];
-export const MODES: [string, string][] = [['sea_fcl', 'Sea FCL'], ['sea_lcl', 'Sea LCL'], ['air', 'Air'], ['road', 'Road / land']];
+export const MODES: [string, string][] = [['sea_fcl', 'Sea FCL'], ['sea_lcl', 'Sea LCL'], ['air', 'Air'], ['road', 'Road / land'], ['courier', 'Courier'], ['other', 'Others']];
+/** Modes with no vessel / flight, booking legs or BL draft (migration 024 added courier and others). */
+export const noVessel = (m: string | null | undefined) => ['road', 'courier', 'other'].includes(String(m));
+/** Modes with no ports or airports of their own: courier goes door to door, "others" is whatever the job is. */
+export const noPorts = (m: string | null | undefined) => ['courier', 'other'].includes(String(m));
 export const JF_STATUSES: [string, string, string][] = [
   // code, name, colour
   ['enquiry', 'Enquiry / quoting', '#8A94A6'], ['open', 'Open', '#5B6B82'], ['booked', 'Booked', '#2B6CB0'], ['in_transit', 'In transit', '#553C9A'],
@@ -38,6 +42,10 @@ export const qStatusColor = (c: string) => Q_STATUSES.find((s) => s[0] === c)?.[
 export function milestonePlan(direction: string, mode: string, needs: { clearance: boolean; transport: boolean; warehouse: boolean }): [string, string][] {
   const out: [string, string][] = [];
   const air = mode === 'air', road = mode === 'road';
+  if (mode === 'courier' || mode === 'other') {
+    const fin: [string, string] = needs.warehouse ? ['warehouse_received', 'Received in warehouse'] : ['delivered', 'Delivered to consignee'];
+    return [['collected', mode === 'courier' ? 'Picked up by the courier' : 'Started'], ...(needs.clearance ? [['customs_cleared', 'Customs cleared'] as [string, string]] : []), fin];
+  }
   const finalStep: [string, string] = needs.warehouse ? ['warehouse_received', 'Received in warehouse'] : ['delivered', 'Delivered to consignee'];
   if (direction === 'domestic' || (road && direction !== 'export' && direction !== 'import')) {
     out.push(['collected', 'Cargo collected']);

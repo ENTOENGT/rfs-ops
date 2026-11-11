@@ -27,7 +27,7 @@ export const FIELD_LABEL: Record<IncotermField, string> = {
 };
 
 /** What the enquiry needs for this term and direction, plus one line saying what our job covers. */
-export function incotermNeeds(term: string | null | undefined, direction: string | null | undefined, needsTransport?: boolean) {
+export function incotermNeeds(term: string | null | undefined, direction: string | null | undefined, needsTransport?: boolean, mode?: string | null) {
   const t = String(term ?? '').toUpperCase();
   const imp = direction === 'import';
   const need = new Set<IncotermField>();
@@ -51,14 +51,17 @@ export function incotermNeeds(term: string | null | undefined, direction: string
     else if (['CIF', 'CIP'].includes(t)) { need.add('port_of_loading').add('port_of_discharge').add('cargo_value'); scope = 'We ship it to destination and arrange insurance.'; }
     else { need.add('port_of_loading').add('port_of_discharge').add('delivery_address'); scope = 'Door delivery at destination through our agent.'; if (t === 'DDP') notes.push('Import clearance and duty at destination are on the seller — ask the agent to quote them.'); if (t === 'DPU') notes.push('Unloading at the delivery address is included.'); }
   }
+  // courier and "others" have no ports of their own (migration 024)
+  if (mode === 'courier' || mode === 'other') { need.delete('port_of_loading'); need.delete('port_of_discharge'); }
   return { need, scope, notes };
 }
 
 /** The required fields that are still empty. */
 export function incotermMissing(f: Record<string, any>) {
-  const { need } = incotermNeeds(f.incoterm, f.direction, !!f.needs_transport);
+  const { need } = incotermNeeds(f.incoterm, f.direction, !!f.needs_transport, f.mode);
   const blank = (v: unknown) => v === null || v === undefined || String(v).trim() === '';
   return [...need].filter((k) => k === 'cargo_value' ? !(Number(f.cargo_value) > 0) || blank(f.cargo_value_currency) : blank(f[k]));
 }
 /** New commercial enquiries must say the Incoterm (domestic jobs have none). */
-export const incotermRequired = (direction: string | null | undefined) => !!direction && direction !== 'domestic';
+/** Courier and "others" jobs may go without one (migration 024). */
+export const incotermRequired = (direction: string | null | undefined, mode?: string | null) => !!direction && direction !== 'domestic' && mode !== 'courier' && mode !== 'other';

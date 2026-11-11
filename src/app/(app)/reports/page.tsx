@@ -6,6 +6,7 @@ import { Suspense, useEffect, useState } from 'react';
 import { api, fmtDate, fmtDateTime } from '@/components/api';
 import { useMe } from '@/components/Shell';
 import { period, PERIODS } from '@/lib/period';
+import { DIVISIONS, STAGES } from '@/lib/commercialRules';
 
 function Reports() {
   const { me, can, lk } = useMe();
@@ -22,9 +23,16 @@ function Reports() {
   const [from, to] = pkey === 'custom' ? custom : period(pkey, lk.timezone);
   const isPod = key === 'pod_pending';
   const def = list.find((r) => r.key === key);
+  const [more, setMore] = useState(false);
+  const ORDER = ['Commercial', 'Shipments', 'Transport', 'Finance', 'Customs (PRO)', 'Warehouse', 'Other'];
+  const groups: [string, any[]][] = ORDER.map((g) => [g, list.filter((r) => (r.category ?? 'Other') === g)
+    .sort((x, y) => Number(y.kind === 'commercial') - Number(x.kind === 'commercial'))] as [string, any[]]).filter(([, rs]) => rs.length > 0);
+  const short = (t: string) => t.replace(' report', '').replace(' Report', '');
+  const active = Object.entries(f).filter(([k, v]) => v && !['page', 'sort', 'dir', 'q'].includes(k)).length;
+  const hasMore = !!def && def.kind !== 'group';
 
   useEffect(() => { if (def?.kind === 'pro' && !proCfg) api('/api/pro/config').then(setProCfg).catch(() => {}); }, [def?.kind]);
-  useEffect(() => { api('/api/reports').then((l) => { setList(l); if (!key && l[0]) setKey(l[0].key); }).catch((e) => setErr(e.message)); }, []);
+  useEffect(() => { api('/api/reports').then((l) => { setList(l); if (!key && l[0]) setKey((l.find((r: any) => r.kind === 'commercial') ?? l[0]).key); }).catch((e) => setErr(e.message)); }, []);
   const qs = (extra: Record<string, string> = {}) => new URLSearchParams(Object.entries({
     ...(isPod ? {} : { from, to }), ...f, ...extra }).filter(([, v]) => v)).toString();
   useEffect(() => {
@@ -68,22 +76,59 @@ function Reports() {
           <span className="muted">Generated {new Date().toLocaleString('en-GB')} by {me.full_name}</span></div>
       </div>
 
-      <div className="page-head no-print"><h1>Reports</h1></div>
-      <div className="no-print" style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 12 }}>
-        {list.map((r) => <button key={r.key} className={`btn${r.key === key ? ' primary' : ''}`} title={r.description}
-          onClick={() => { setKey(r.key); setF({ page: '1' }); }}>{r.title.replace(' report', '').replace(' Report', '')}</button>)}
-      </div>
-      {def && <p className="muted small no-print" style={{ marginTop: 0 }}>{def.description}</p>}
+      <div className="page-head no-print"><div><h1>Reports</h1><p className="muted" style={{ margin: '4px 0 0' }}>Pick a report on the left, choose the period, export to Excel or print.</p></div></div>
+      <div className="rep-layout">
+        {/* report picker: grouped by area instead of one long row of buttons */}
+        <nav className="rep-nav no-print" aria-label="Reports">
+          <select className="rep-nav-select" value={key} aria-label="Report" onChange={(e) => { setKey(e.target.value); setF({ page: '1' }); setMore(false); }}>
+            {groups.map(([g, rs]) => <optgroup key={g} label={g}>{rs.map((r: any) => <option key={r.key} value={r.key}>{short(r.title)}</option>)}</optgroup>)}
+          </select>
+          {groups.map(([g, rs]) => <div key={g} className="rep-group"><span>{g}</span>
+            {rs.map((r: any) => <button key={r.key} className={r.key === key ? 'on' : ''} title={r.description}
+              onClick={() => { setKey(r.key); setF({ page: '1' }); setMore(false); }}>{short(r.title)}</button>)}
+            {g === 'Shipments' && (can('lcl.view') || can('lcl.manage')) && <Link href="/lcl/reports">LCL reports ↗</Link>}
+          </div>)}
+          {!groups.some(([g]) => g === 'Shipments') && (can('lcl.view') || can('lcl.manage')) && <div className="rep-group"><span>LCL</span><Link href="/lcl/reports">LCL reports ↗</Link></div>}
+        </nav>
+        <div className="rep-main">
+      {def && <div className="rep-head no-print"><div><h2>{def.title}</h2><p className="muted small">{def.description}</p></div>
+        <span className="spacer" />
+        {can('reports.export') && data && <>
+          <a className="btn small" href={`/api/reports/${key}?${qs({ format: 'xlsx', page: '' })}`}>Export Excel</a>
+          <a className="btn small" href={`/api/reports/${key}?${qs({ format: 'csv', page: '' })}`}>CSV</a>
+        </>}
+        {data && <button className="btn small" onClick={print}>Print / PDF</button>}
+      </div>}
 
-      <div className="panel no-print" style={{ marginBottom: 12 }}>
-        <div className="grid g4">
-          {!isPod && <label className="f"><span>Period</span>
+      <div className="panel no-print rep-filters">
+        <div className="rep-filter-row">
+          {!isPod && !def?.noPeriod && <label className="f"><span>Period</span>
             <select value={pkey} onChange={(e) => setPkey(e.target.value)}>{PERIODS.map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select></label>}
           {!isPod && pkey === 'custom' && <>
             <label className="f"><span>From</span><input type="date" value={custom[0]} onChange={(e) => setCustom([e.target.value, custom[1]])} /></label>
             <label className="f"><span>To</span><input type="date" value={custom[1]} onChange={(e) => setCustom([custom[0], e.target.value])} /></label>
           </>}
-          <label className="f"><span>Search</span><input value={f.q ?? ''} onChange={set('q')} placeholder={def?.kind === 'group' ? 'Name…' : 'Job No., BOE, driver, vehicle, customer…'} /></label>
+          <label className="f grow"><span>Search</span><input value={f.q ?? ''} onChange={set('q')} placeholder={def?.kind === 'group' || def?.kind === 'commercial' ? 'Name, reference…' : 'Job No., BOE, driver, vehicle, customer…'} /></label>
+          {hasMore && <button className={`btn small${more ? ' primary' : ''}`} style={{ alignSelf: 'end', marginBottom: 2 }} onClick={() => setMore(!more)}>
+            Filters{active ? ` (${active})` : ''} {more ? '▴' : '▾'}</button>}
+          {(active > 0 || f.q) && <button className="btn small ghost" style={{ alignSelf: 'end', marginBottom: 2 }} onClick={() => setF({ page: '1' })}>Clear</button>}
+        </div>
+        {!isPod && <p className="muted small" style={{ margin: '8px 0 0' }}>{def?.noPeriod ? 'Shows things as they are now.' : `${fmtDate(from)} – ${fmtDate(to)}`}</p>}
+        {more && <div className="grid g4" style={{ marginTop: 12 }}>
+          {def?.kind === 'commercial' && <>
+            <label className="f"><span>Division</span><select value={f.division ?? ''} onChange={set('division')}><option value="">All</option>
+              {DIVISIONS.map(([c, n]) => <option key={c} value={c}>{n}</option>)}</select></label>
+            <label className="f"><span>Mode</span><select value={f.mode ?? ''} onChange={set('mode')}><option value="">All</option>
+              {MODES.map(([c, n]) => <option key={c} value={c}>{n}</option>)}</select></label>
+            {(lk.salesmen?.length ?? 0) > 0 && me.role_code !== 'sales' && <label className="f"><span>Salesman</span><select value={f.salesman_id ?? ''} onChange={set('salesman_id')}><option value="">All</option>
+              {lk.salesmen.map((u: any) => <option key={u.id} value={u.id}>{u.name}</option>)}</select></label>}
+            {(lk.coordinators?.length ?? 0) > 0 && me.role_code !== 'coordinator' && <label className="f"><span>Coordinator</span><select value={f.coordinator_id ?? ''} onChange={set('coordinator_id')}><option value="">All</option>
+              {lk.coordinators.map((u: any) => <option key={u.id} value={u.id}>{u.name}</option>)}</select></label>}
+            <label className="f"><span>Customer</span><select value={f.customer_id ?? ''} onChange={set('customer_id')}><option value="">All</option>
+              {lk.customers.map((c: any) => <option key={c.id} value={c.id}>{c.name}</option>)}</select></label>
+            {key === 'enquiry_tracking' && <label className="f"><span>Stage</span><select value={f.stage ?? ''} onChange={set('stage')}><option value="">All</option>
+              {STAGES.map(([c, n]) => <option key={c} value={c}>{n}</option>)}</select></label>}
+          </>}
           {def?.kind === 'pro' && <>
             <label className="f"><span>Job No.</span><input value={f.job_no ?? ''} onChange={set('job_no')} /></label>
             <label className="f"><span>Container</span><input value={f.container ?? ''} onChange={set('container')} /></label>
@@ -165,16 +210,7 @@ function Reports() {
             {!isPod && <label className="f"><span>Status</span><select value={f.status ?? ''} onChange={set('status')}><option value="">All</option>
               {lk.job_statuses.map((s: any) => <option key={s.code} value={s.code}>{s.name}</option>)}</select></label>}
           </>}
-        </div>
-        <div style={{ display: 'flex', gap: 8, marginTop: 12, flexWrap: 'wrap', alignItems: 'center' }}>
-          <button className="btn small" onClick={() => setF({ page: '1' })}>Clear filters</button>
-          <span style={{ flex: 1 }} />
-          {can('reports.export') && data && <>
-            <a className="btn" href={`/api/reports/${key}?${qs({ format: 'xlsx', page: '' })}`}>Export Excel</a>
-            <a className="btn" href={`/api/reports/${key}?${qs({ format: 'csv', page: '' })}`}>Export CSV</a>
-          </>}
-          {data && <button className="btn" onClick={print}>Print / PDF</button>}
-        </div>
+        </div>}
       </div>
 
       {err && <div className="msg err">{err}</div>}
@@ -186,7 +222,7 @@ function Reports() {
             {c.type === 'money' && <span className="muted small"> {cur}</span>}</th>)}</tr></thead>
           <tbody>
             {shown.rows.map((r: any, i: number) => <tr key={i}>{shown.columns.map((c: any, k: number) => <td key={c.key} className={numeric(c) ? 'num' : ''}
-              style={c.key === 'gross_profit' && Number(r[c.key]) < 0 ? { color: 'var(--danger)' } : undefined}>
+              style={['gross_profit', 'won_profit', 'quote_profit'].includes(c.key) && Number(r[c.key]) < 0 ? { color: 'var(--danger)' } : undefined}>
               {(k === 0 && (shown.report.kind === 'jobs' || shown.report.kind === 'jobfile')) || (c.key === 'job_no' && shown.report.kind === 'messenger') ? <b>{r[c.key] ?? '—'}</b> : fmt(c, r[c.key])}</td>)}</tr>)}
             {shown.rows.length === 0 && <tr><td colSpan={shown.columns.length} className="muted" style={{ padding: 24, textAlign: 'center' }}>
               {isPod ? 'No PODs outstanding. 🎉' : 'Nothing matches these filters.'}</td></tr>}
@@ -203,6 +239,8 @@ function Reports() {
         </div>}
       </div>}
       {isPod && shown && shown.rows.length > 0 && <p className="muted small no-print">Open a job from the <Link href="/jobs?action_required=pod">Jobs list</Link> to upload its POD.</p>}
+        </div>
+      </div>
     </div>
   );
 }

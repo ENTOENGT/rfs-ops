@@ -4,10 +4,10 @@
  */
 export const PACKAGE_TYPES = ['Cartons', 'Pallets', 'Crates', 'Wooden boxes', 'Drums', 'Bags', 'Bales', 'Rolls', 'Bundles', 'Pieces', 'Loose', 'Other'];
 export const DIM_UNITS: [string, string, number][] = [['cm', 'cm', 0.01], ['in', 'inch', 0.0254], ['m', 'm', 1]];
-/** Air: 1 CBM = 167 kg (the usual 6000 divisor). Road: 1 CBM = 333 kg. */
-export const VOLUMETRIC_KG_PER_CBM: Record<string, number> = { air: 167, road: 333 };
-/** Full-container enquiries are priced per container, so their dimensions are optional; every other mode needs them. */
-export const dimsRequired = (mode: string | null | undefined) => !!mode && mode !== 'sea_fcl';
+/** Air: 1 CBM = 167 kg (the usual 6000 divisor). Road: 1 CBM = 333 kg. Courier: 1 CBM = 200 kg (5000 divisor). */
+export const VOLUMETRIC_KG_PER_CBM: Record<string, number> = { air: 167, road: 333, courier: 200 };   // courier: the 5000 divisor
+/** Full-container enquiries are priced per container and "Others" may not be cargo at all, so their dimensions are optional. */
+export const dimsRequired = (mode: string | null | undefined) => !!mode && !['sea_fcl', 'other'].includes(mode);
 
 export type CargoLine = { package_type: string; package_other?: string | null; pieces: number | string; length: number | string; width: number | string;
   height: number | string; dim_unit: string; weight_kg: number | string };

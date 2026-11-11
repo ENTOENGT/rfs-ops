@@ -17,7 +17,7 @@ import { jobScope } from './scope';
 type ColType = 'text' | 'date' | 'datetime' | 'money' | 'int' | 'pct' | 'qty';
 type Need = 'cost' | 'revenue' | 'profit';
 interface Col { key: string; label: string; type: ColType; needs?: Need; width?: number; sort?: string }
-interface ReportDef { key: string; title: string; description: string; costDescription?: string; kind: 'jobs' | 'group' | 'messenger' | 'pro' | 'rental' | 'jobfile' | 'warehouse' | 'cases' | 'vendors'; noPeriod?: boolean; proCharges?: boolean; cols: Col[]; group?: 'by_driver' | 'by_vehicle' | 'by_customer' | 'by_department'; podPending?: boolean; needsAny?: Need[] }
+interface ReportDef { key: string; title: string; description: string; costDescription?: string; kind: 'jobs' | 'group' | 'messenger' | 'pro' | 'rental' | 'jobfile' | 'warehouse' | 'cases' | 'vendors' | 'commercial'; category?: string; noPeriod?: boolean; proCharges?: boolean; cols: Col[]; group?: 'by_driver' | 'by_vehicle' | 'by_customer' | 'by_department'; podPending?: boolean; needsAny?: Need[] }
 
 const JOB_BASE: Col[] = [
   { key: 'job_no', label: 'Job No.', type: 'text', width: 14, sort: 'upper(t.job_no)' },
@@ -99,6 +99,59 @@ export const REPORTS: Record<string, ReportDef> = {
       { key: 'ship_to_name', label: 'Ship to', type: 'text', width: 22 }, { key: 'sku_code', label: 'SKU', type: 'text', width: 14 },
       { key: 'sku_name', label: 'Product', type: 'text', width: 24 }, { key: 'qty', label: 'Qty', type: 'qty', width: 10 },
       { key: 'packages', label: 'Packages', type: 'int', width: 9 }, { key: 'dispatch_reference', label: 'Vehicle / AWB', type: 'text', width: 18 }] },
+  // Commercial reports (migration 024) — period = the date the enquiry was opened; money in the company currency
+  salesman_performance: { key: 'salesman_performance', title: 'Salesman performance', kind: 'commercial', category: 'Commercial',
+    description: 'Per Salesman: enquiries, quoted, confirmed and confirmed %, not confirmed with the reasons, volume (CBM, tonnes, TEU), days to quote, confirmed sales and profit or loss.',
+    cols: [{ key: 'name', label: 'Salesman', type: 'text', width: 22, sort: 'x' }, { key: 'enquiries', label: 'Enquiries', type: 'int', width: 10, sort: 'x' },
+      { key: 'quoted', label: 'Quoted', type: 'int', width: 9, sort: 'x' }, { key: 'waiting_approval', label: 'Waiting approval', type: 'int', width: 10 },
+      { key: 'waiting_customer', label: 'Waiting customer', type: 'int', width: 10 }, { key: 'confirmed', label: 'Confirmed', type: 'int', width: 10, sort: 'x' },
+      { key: 'confirmed_pct', label: 'Confirmed %', type: 'pct', width: 10, sort: 'x' },
+      { key: 'handed_over', label: 'Handed over', type: 'int', width: 10 },
+      { key: 'not_confirmed', label: 'Not confirmed', type: 'int', width: 10, sort: 'x' }, { key: 'lost_reasons', label: 'Why not confirmed', type: 'text', width: 34 },
+      { key: 'open', label: 'Still open', type: 'int', width: 9 }, { key: 'conversion_pct', label: 'Quoted → confirmed %', type: 'pct', width: 12, sort: 'x' },
+      { key: 'win_pct', label: 'Win rate %', type: 'pct', width: 10, sort: 'x' }, { key: 'days_to_quote', label: 'Avg days to quote', type: 'qty', width: 11, sort: 'x' },
+      { key: 'won_cbm', label: 'Confirmed CBM', type: 'qty', width: 11, sort: 'x' }, { key: 'won_tonnes', label: 'Confirmed tonnes', type: 'qty', width: 11 },
+      { key: 'won_teu', label: 'Confirmed TEU', type: 'int', width: 9 },
+      { key: 'won_sales', label: 'Confirmed sales', type: 'money', needs: 'revenue', width: 14, sort: 'x' }, { key: 'won_profit', label: 'Profit / loss', type: 'money', needs: 'profit', width: 14, sort: 'x' },
+      { key: 'margin_pct', label: 'Margin %', type: 'pct', needs: 'profit', width: 9 }] },
+  coordinator_performance: { key: 'coordinator_performance', title: 'Coordinator performance', kind: 'commercial', category: 'Commercial',
+    description: 'Per Coordinator: enquiries, agent rate requests and replies, days to quote, follow-ups, bookings, BL corrections, confirmed %, not confirmed with the reasons, volume and profit or loss.',
+    cols: [{ key: 'name', label: 'Coordinator', type: 'text', width: 22, sort: 'x' }, { key: 'enquiries', label: 'Enquiries', type: 'int', width: 10, sort: 'x' },
+      { key: 'rate_requests', label: 'Rate requests', type: 'int', width: 10, sort: 'x' }, { key: 'rates_received', label: 'Rates received', type: 'int', width: 10 },
+      { key: 'agent_days', label: 'Avg agent reply (days)', type: 'qty', width: 12, sort: 'x' }, { key: 'quoted', label: 'Quoted', type: 'int', width: 9, sort: 'x' },
+      { key: 'days_to_quote', label: 'Avg days to quote', type: 'qty', width: 11, sort: 'x' }, { key: 'waiting_customer', label: 'Customer follow-ups', type: 'int', width: 11 },
+      { key: 'booking_open', label: 'Booking follow-ups', type: 'int', width: 11 }, { key: 'bl_corrections', label: 'BL corrections open', type: 'int', width: 11 },
+      { key: 'confirmed', label: 'Confirmed', type: 'int', width: 10, sort: 'x' }, { key: 'confirmed_pct', label: 'Confirmed %', type: 'pct', width: 10, sort: 'x' },
+      { key: 'handed_over', label: 'Handed over', type: 'int', width: 10, sort: 'x' },
+      { key: 'not_confirmed', label: 'Not confirmed', type: 'int', width: 10, sort: 'x' }, { key: 'lost_reasons', label: 'Why not confirmed', type: 'text', width: 34 },
+      { key: 'open', label: 'Still open', type: 'int', width: 9 },
+      { key: 'win_pct', label: 'Win rate %', type: 'pct', width: 10, sort: 'x' },
+      { key: 'won_cbm', label: 'Confirmed CBM', type: 'qty', width: 11, sort: 'x' }, { key: 'won_tonnes', label: 'Confirmed tonnes', type: 'qty', width: 11 },
+      { key: 'won_teu', label: 'Confirmed TEU', type: 'int', width: 9 },
+      { key: 'won_sales', label: 'Confirmed sales', type: 'money', needs: 'revenue', width: 14, sort: 'x' }, { key: 'won_profit', label: 'Profit / loss', type: 'money', needs: 'profit', width: 14, sort: 'x' }] },
+  enquiry_tracking: { key: 'enquiry_tracking', title: 'Enquiry tracking', kind: 'commercial', category: 'Commercial',
+    description: 'Every enquiry with Salesman, Coordinator, stage, days open, days to quote, quotation, result and Job No.',
+    cols: [{ key: 'enquiry_ref', label: 'Enquiry Ref', type: 'text', width: 16, sort: 'x' }, { key: 'created_at', label: 'Opened', type: 'datetime', width: 17, sort: 'x' },
+      { key: 'division_name', label: 'Division', type: 'text', width: 11 }, { key: 'type', label: 'Type', type: 'text', width: 12, sort: 'x' },
+      { key: 'customer_name', label: 'Customer', type: 'text', width: 22, sort: 'x' }, { key: 'salesman_name', label: 'Salesman', type: 'text', width: 16, sort: 'x' },
+      { key: 'coordinator_name', label: 'Coordinator', type: 'text', width: 16, sort: 'x' }, { key: 'route', label: 'Route', type: 'text', width: 24 },
+      { key: 'stage_name', label: 'Stage', type: 'text', width: 18, sort: 'x' }, { key: 'days_open', label: 'Days open', type: 'int', width: 9, sort: 'x' },
+      { key: 'rate_requests', label: 'Rate requests', type: 'int', width: 9 }, { key: 'days_to_quote', label: 'Days to quote', type: 'qty', width: 9, sort: 'x' },
+      { key: 'volume_cbm', label: 'CBM', type: 'qty', width: 9 }, { key: 'weight_kg', label: 'Weight kg', type: 'qty', width: 10 },
+      { key: 'containers', label: 'Containers', type: 'int', width: 9 },
+      { key: 'quote_no', label: 'Quotation', type: 'text', width: 12 }, { key: 'quote_total', label: 'Quoted', type: 'money', needs: 'revenue', width: 13, sort: 'x' },
+      { key: 'quote_profit', label: 'Profit / loss', type: 'money', needs: 'profit', width: 12, sort: 'x' }, { key: 'result', label: 'Result / reason', type: 'text', width: 26 },
+      { key: 'job_no', label: 'Job No.', type: 'text', width: 13 }, { key: 'handed_over_at', label: 'Handed over', type: 'datetime', width: 17 }] },
+  shipment_types: { key: 'shipment_types', title: 'Shipments by type', kind: 'commercial', category: 'Commercial',
+    description: 'One line per shipment type (FCL / Air / LCL export and import, Cross Trade, Road Freight, Courier, Others) with a total — like the monthly sheet.',
+    cols: [{ key: 'type', label: 'Type', type: 'text', width: 18 }, { key: 'enquiries', label: 'Enquiries', type: 'int', width: 10 },
+      { key: 'quoted', label: 'Quoted', type: 'int', width: 9 }, { key: 'confirmed', label: 'Confirmed', type: 'int', width: 10 },
+      { key: 'confirmed_pct', label: 'Confirmed %', type: 'pct', width: 10 }, { key: 'handed_over', label: 'Handed over', type: 'int', width: 10 },
+      { key: 'not_confirmed', label: 'Not confirmed', type: 'int', width: 10 }, { key: 'lost_reasons', label: 'Why not confirmed', type: 'text', width: 34 },
+      { key: 'open', label: 'Still open', type: 'int', width: 9 }, { key: 'win_pct', label: 'Win rate %', type: 'pct', width: 10 },
+      { key: 'won_cbm', label: 'Confirmed CBM', type: 'qty', width: 11 }, { key: 'won_tonnes', label: 'Confirmed tonnes', type: 'qty', width: 11 },
+      { key: 'won_teu', label: 'Confirmed TEU', type: 'int', width: 9 },
+      { key: 'won_sales', label: 'Confirmed sales', type: 'money', needs: 'revenue', width: 14 }, { key: 'won_profit', label: 'Profit / loss', type: 'money', needs: 'profit', width: 14 }] },
   // Freight + 3PL (migration 013): one row per Job File, no prices
   jobfiles: { key: 'jobfiles', title: 'Job File register', kind: 'jobfile',
     description: 'Every Job File (shipment): direction, mode, route, BL/AWB, ETD/ETA, services and status. Period = date created.',
@@ -123,7 +176,7 @@ export const REPORTS: Record<string, ReportDef> = {
       { key: 'status_name', label: 'Status', type: 'text', width: 14 }],
   },
   financial: {
-    key: 'financial', title: 'Financial report', kind: 'jobs', needsAny: ['cost', 'revenue'],
+    key: 'financial', title: 'Financial report', kind: 'jobs', category: 'Finance', needsAny: ['cost', 'revenue'],
     description: 'Revenue, cost and profit per job. Transport users get a cost-only version.',
     costDescription: 'Transport cost per job.',
     cols: [...JOB_BASE,
@@ -282,6 +335,12 @@ async function reportActor(actor: Actor): Promise<Actor> {
   return { ...actor, fin: { ...actor.fin, sellingView: false, sellingEdit: false, profitView: false } };
 }
 
+/** Commercial performance (Salesman / Coordinator, enquiries, types) is for the commercial side and managers who see
+ *  quotations — not for Transport, PRO or Warehouse, even where they can open the Job File register. */
+const commercialSide = (a: Actor) => a.isSuperAdmin || ['commercial.manage', 'jobfiles.view_assigned', 'quotes.view', 'quotes.create'].some((x) => a.has(x as any));
+/** Groups for the report picker (UI redesign): one short list per area instead of one long row of buttons. */
+const CATEGORY: Record<string, string> = { commercial: 'Commercial', jobfile: 'Shipments', vendors: 'Commercial', cases: 'Other',
+  jobs: 'Transport', group: 'Transport', messenger: 'Transport', rental: 'Transport', pro: 'Customs (PRO)', warehouse: 'Warehouse' };
 export async function reportList(realActor: Actor) {
   if (!realActor.has('reports.view')) throw forbidden();
   const actor = await reportActor(realActor);
@@ -291,8 +350,9 @@ export async function reportList(realActor: Actor) {
     .filter((r) => r.kind !== 'cases' || actor.isSuperAdmin || actor.has('cases.view_all') || actor.has('cases.manage'))
     .filter((r) => r.kind !== 'vendors' || actor.isSuperAdmin || actor.has('vendors.requests') || actor.has('vendors.manage'))
     .filter((r) => r.kind !== 'warehouse' || ['warehouse.view', 'warehouse.receive', 'warehouse.dispatch', 'warehouse.configure', 'warehouse.orders.create'].some((x) => actor.has(x as any)))
+    .filter((r) => r.kind !== 'commercial' || commercialSide(actor))
     .filter((r) => r.kind !== 'jobfile' || ['jobfiles.view_all', 'jobfiles.view_department', 'jobfiles.create', 'jobfiles.edit'].some((x) => actor.has(x as any)))
-    .map((r) => ({ key: r.key, title: r.title, kind: r.kind,
+    .map((r) => ({ key: r.key, title: r.title, kind: r.kind, category: r.category ?? CATEGORY[r.kind] ?? 'Other', noPeriod: !!r.noPeriod || !!r.podPending,
       // Describe only what this person will actually see
       description: r.needsAny && !actor.fin.sellingView && r.costDescription ? r.costDescription : r.description }));
 }
@@ -317,7 +377,8 @@ export async function runReport(realActor: Actor, key: string, p: Record<string,
   if (p.from && p.to && p.to < p.from) throw bad('The end date is before the start date');
   const FILTER_KEYS = ['from', 'to', 'q', 'department_id', 'customer_id', 'driver_id', 'vehicle_id', 'status',
     'type', 'job_no', 'request_no', 'requested_by', 'assigned_by', 'messenger_id', 'delivery',
-    'container', 'authority_id', 'assigned_to', 'port', 'priority', 'payment_status', 'subcontractor_id', 'direction', 'mode', 'warehouse_id', 'days'];
+    'container', 'authority_id', 'assigned_to', 'port', 'priority', 'payment_status', 'subcontractor_id', 'direction', 'mode', 'warehouse_id', 'days',
+    'division', 'salesman_id', 'coordinator_id', 'stage'];
   const filters = Object.fromEntries(Object.entries(p).filter(([k, v]) => v && FILTER_KEYS.includes(k)));
 
   if (def.kind === 'messenger') return messengerReport(actor, def, cols, colsOut, p, opts);
@@ -339,6 +400,12 @@ export async function runReport(realActor: Actor, key: string, p: Record<string,
     const { warehouseReport, canSeeWarehouse } = await import('./warehouse');
     if (!canSeeWarehouse(actor)) throw forbidden();
     return warehouseReport(actor, def, cols, colsOut, p, opts) as any;
+  }
+  if (def.kind === 'commercial') {
+    const { canSeeJobFiles } = await import('./jobfiles');
+    if (!canSeeJobFiles(actor) || !commercialSide(actor)) throw forbidden();
+    const { commercialReport } = await import('./commercialReports');
+    return commercialReport(actor, def, cols, colsOut, p, opts) as any;
   }
   if (def.kind === 'jobfile') {
     const { jobFileReport, canSeeJobFiles } = await import('./jobfiles');

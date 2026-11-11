@@ -695,3 +695,26 @@ table.t, .kpi b, .stat-n, .num, .bar b, .funnel-n, .pager { font-variant-numeric
 .terms-note { color: var(--warn); font-weight: 600; }
 .terms-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 14px; margin-top: 14px; }
 .terms-addr { display: flex; flex-direction: column; gap: 8px; }
+
+/* Reports (redesign): grouped picker on the left, one compact filter row, more filters on demand */
+.rep-layout { display: grid; grid-template-columns: 230px minmax(0, 1fr); gap: 20px; align-items: start; }
+.rep-nav { position: sticky; top: calc(var(--top-h) + 16px); background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 10px; display: flex; flex-direction: column; gap: 10px; max-height: calc(100vh - var(--top-h) - 40px); overflow: auto; }
+.rep-nav-select { display: none; }
+.rep-group { display: flex; flex-direction: column; gap: 1px; }
+.rep-group > span { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); font-weight: 700; padding: 6px 10px 4px; }
+.rep-group button, .rep-group a { all: unset; cursor: pointer; padding: 7px 10px; border-radius: 8px; font-size: 13.5px; font-weight: 500; color: var(--ink-2, #3a4656); }
+.rep-group button:hover, .rep-group a:hover { background: var(--navy-50); }
+.rep-group button.on { background: var(--navy-800); color: #fff; font-weight: 600; }
+.rep-head { display: flex; align-items: flex-start; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
+.rep-head h2 { margin: 0; font-size: 19px; }
+.rep-head p { margin: 4px 0 0; max-width: 640px; }
+.rep-filters { margin-bottom: 12px; }
+.rep-filter-row { display: flex; gap: 12px; flex-wrap: wrap; align-items: flex-start; }
+.rep-filter-row > .f { width: 180px; }
+.rep-filter-row > .f.grow { flex: 1; min-width: 200px; width: auto; }
+@media (max-width: 1100px) {
+  .rep-layout { grid-template-columns: minmax(0, 1fr); }
+  .rep-nav { position: static; max-height: none; padding: 0; border: 0; background: none; }
+  .rep-nav-select { display: block; }
+  .rep-group { display: none; }
+}

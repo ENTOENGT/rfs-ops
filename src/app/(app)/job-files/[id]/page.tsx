@@ -11,6 +11,7 @@ import JobFileDocs from '@/components/JobFileDocs';
 import { CONTAINER_TYPES, JF_STATUSES, label, DIRECTIONS, MODES } from '@/lib/jobfileRules';
 import { PRE_CONFIRM } from '@/lib/commercialRules';
 import { typedLines, DIM_UNITS } from '@/lib/cargoRules';
+import { noVessel } from '@/lib/jobfileRules';
 import { INCOTERM_INFO } from '@/lib/incotermRules';
 import { StageHeader, RatesAndQuotes, BookingPanel, PrealertPanel, HandoverPanel, LclPanel } from '@/components/CommercialPanels';
 
@@ -100,8 +101,8 @@ export default function JobFile({ params }: { params: { id: string } }) {
     rates: !(d.quotations === null && d.vendor_requests === null) && (d.status === 'enquiry' || n(d.quotations) > 0 || n(d.vendor_requests) > 0),
     emails: can('emails.view'),
     booking: !!(d.can.book || d.can.confirm_booking || d.booking),
-    vessel: !!d.enquiry_ref && after && d.mode !== 'road',
-    bl: !!d.enquiry_ref && after && d.mode !== 'road',
+    vessel: !!d.enquiry_ref && after && !noVessel(d.mode),
+    bl: !!d.enquiry_ref && after && !noVessel(d.mode),
     documents: true,
     services: d.status !== 'enquiry' || n(d.trips) + n(d.pro) + n(d.runs) > 0,
     milestones: n(d.milestones) > 0,

@@ -6,6 +6,7 @@ import { EmailButton } from '@/components/EmailButton';
 import { uploadToShipment } from '@/components/CommercialPanels';
 import { PRE_CONFIRM } from '@/lib/commercialRules';
 import { BL_WITH_CUSTOMER, blStatusColor, blStatusName, routeLabel, vesselStatusName } from '@/lib/routingRules';
+import { noVessel } from '@/lib/jobfileRules';
 
 type Act = (b: any, done?: string) => Promise<unknown>;
 const blank = { origin_country: '', origin_city: '', pol: '', destination_city: '', pod: '', final_delivery: '', mode: '', cargo_description: '', notes: '' };
@@ -51,7 +52,7 @@ export function VesselPanel({ d, act }: { d: any; act: Act }) {
   const legs0 = (d.legs ?? []).map((l: any) => ({ ...l, etd: l.etd?.slice?.(0, 10) ?? '', eta: l.eta?.slice?.(0, 10) ?? '' }));
   const [f, setF] = useState<any>(null);
   const after = !PRE_CONFIRM.includes(d.stage ?? 'enquiry') && d.stage !== 'lost' && d.stage !== 'cancelled';
-  if (!d.enquiry_ref || !after || d.mode === 'road') return null;
+  if (!d.enquiry_ref || !after || noVessel(d.mode)) return null;
   const start = () => {
     const legs = legs0.length ? [...legs0] : [{ vessel: d.vessel_flight ?? '', voyage: d.voyage ?? '', from_port: d.port_of_loading ?? '', to_port: d.port_of_discharge ?? '', etd: '', eta: '' }];
     // a via shipment always shows a line for the connecting vessel
@@ -101,7 +102,7 @@ export function BlPanel({ d, act }: { d: any; act: Act }) {
   const [txt, setTxt] = useState('');
   const [busy, setBusy] = useState(false);
   const after = !PRE_CONFIRM.includes(d.stage ?? 'enquiry') && !['lost', 'cancelled'].includes(d.stage);
-  if (!d.enquiry_ref || !after || d.mode === 'road') return null;
+  if (!d.enquiry_ref || !after || noVessel(d.mode)) return null;
   const drafts: any[] = d.bl_drafts ?? [];
   const cur = drafts[0];
   const st = d.bl_status;

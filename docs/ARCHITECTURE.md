@@ -626,6 +626,12 @@ Only the look and the navigation changed. Every URL, permission check, API and w
 - **Handover to Transport** (`src/server/handover.ts`): "Request transport" on the shipment opens a request filled in from it; the truck job has a **Shipment** tab with references, route, vessel, containers, addresses, cargo lines and the operational documents (BL / AWB / CMR, DO, packing list, customs declaration, POD) through `/api/jobs/[id]/shipment-docs/[docId]`. Never prices, never the commercial invoice.
 - **LCL Team**: department `lcl` and role `lcl_team` with lcl.view / manage / receive / stuff only; its menu is Dashboard, LCL Management and the LCL reports; dashboard section "LCL".
 
+## 15n. Courier / Others, Reports page, commercial reports (migration 024)
+
+- **Modes** Courier and Others (migration 024 widens the check). No vessel / BL steps, no ports; Incoterm optional; courier volumetric 200 kg/CBM (5000 divisor); dimensions optional for Others.
+- **Reports page**: reports grouped by area in a list on the left (a single dropdown on tablets), one filter row (Period — today, yesterday, this / last week, this / last month, this / last year, custom — and Search), the rest under "Filters".
+- **Commercial reports** (`src/server/commercialReports.ts`; period = date the enquiry was opened; scope = the Enquiries list): Salesman performance and Coordinator performance (enquiries, quoted, confirmed and confirmed %, not confirmed with reasons, volume CBM / tonnes / TEU, days to quote, agent replies, follow-ups, confirmed sales and profit / loss in the company currency), Enquiry tracking (one row per enquiry), Shipments by type (FCL / Air / LCL export and import, Cross Trade, Road Freight, Courier, Others + total). Only for the commercial side and managers who see quotations; money columns follow the selling / profit rights.
+
 ## 16. Phase status
 
 | Phase | Status |
@@ -654,5 +660,6 @@ Only the look and the navigation changed. Every URL, permission check, API and w
 | Part G2 — route options per enquiry, rates and quotation per option, booking details, vessel legs, BL draft cycle, final BL (migrations 021, 022) | Done |
 | UI redesign — module rail + page panel, global search, quick create, role dashboards, tabbed shipment record, modern tables (no migration) | Done |
 | Enquiry details — cargo lines, Incoterm rules, shorter enquiry form, division only, currencies, Transport handover, LCL Team (migration 023) | Done |
+| Courier / Others modes, Reports page regrouped, Salesman / Coordinator / Enquiry / Shipment-type reports (migration 024) | Done |
 | Freight + 3PL — remaining phases: see `docs/FREIGHT_3PL_PLAN.md` | Planned |
 | 7 Email notifications · 8 Saved views, column prefs, live ops table, performance | Planned |

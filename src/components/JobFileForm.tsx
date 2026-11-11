@@ -2,7 +2,7 @@
 import { useEffect } from 'react';
 import { useMe } from './Shell';
 import { DIVISIONS, directionOfDivision, divisionName } from '@/lib/commercialRules';
-import { DIRECTIONS, MODES, INCOTERMS, label } from '@/lib/jobfileRules';
+import { DIRECTIONS, MODES, INCOTERMS, label, noPorts } from '@/lib/jobfileRules';
 import { INCOTERM_INFO, incotermNeeds, incotermRequired } from '@/lib/incotermRules';
 import { CURRENCIES } from '@/lib/currency';
 import { PACKAGE_TYPES, DIM_UNITS, blankLine, cargoTotals, dimsRequired, lineCbm, typedLines } from '@/lib/cargoRules';
@@ -28,7 +28,8 @@ export function JobFileFields({ f, setF, fe = {}, isNew }: { f: any; setF: (v: a
   const air = f.mode === 'air', road = f.mode === 'road';
   // Step 3: at enquiry stage the customer doesn't choose the carrier — vessel, booking, BL and dates come later from booking / pre-alert
   const enq = f.status === 'enquiry';
-  const terms = incotermNeeds(f.incoterm, f.direction, !!f.needs_transport);
+  const terms = incotermNeeds(f.incoterm, f.direction, !!f.needs_transport, f.mode);
+  const portless = noPorts(f.mode);
   const own = lk.my_department?.side === 'operations';
   const tick = (k: string, text: string) => (
     <label className="small" style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
@@ -80,10 +81,12 @@ export function JobFileFields({ f, setF, fe = {}, isNew }: { f: any; setF: (v: a
     </div></div>
     <div className="panel"><h2>{enq ? 'Route' : 'Route and carrier'}</h2><div className="grid g3">
       <label className="f"><span>Origin (city / country)</span><input value={f.origin ?? ''} onChange={set('origin')} /></label>
+      {!portless && <>
       <label className={`f${fe.port_of_loading ? ' bad' : ''}`}><span>{air ? 'Airport of departure' : road ? 'Loading point' : 'Port of loading'}{terms.need.has('port_of_loading') && <em> *</em>}</span>
         <input value={f.port_of_loading ?? ''} onChange={set('port_of_loading')} /><Err m={fe.port_of_loading} /></label>
       <label className={`f${fe.port_of_discharge ? ' bad' : ''}`}><span>{air ? 'Airport of arrival' : road ? 'Border / unloading point' : 'Port of discharge'}{terms.need.has('port_of_discharge') && <em> *</em>}</span>
         <input value={f.port_of_discharge ?? ''} onChange={set('port_of_discharge')} /><Err m={fe.port_of_discharge} /></label>
+      </>}
       <label className="f"><span>Final destination</span><input value={f.destination ?? ''} onChange={set('destination')} /></label>
       {!enq && <>
       <label className="f"><span>{air ? 'Airline' : road ? 'Transporter' : 'Shipping line'}</span><input value={f.carrier ?? ''} onChange={set('carrier')} /></label>
@@ -160,7 +163,7 @@ function CargoPanel({ f, setF, fe }: { f: any; setF: (v: any) => void; fe: Recor
 /** Incoterm and the addresses it needs (migration 023): only the fields this term needs are shown, and they are required. */
 function TermsPanel({ f, setF, fe }: { f: any; setF: (v: any) => void; fe: Record<string, string> }) {
   const set = (k: string) => (e: any) => setF({ ...f, [k]: e.target.value });
-  const { need, scope, notes } = incotermNeeds(f.incoterm, f.direction, !!f.needs_transport);
+  const { need, scope, notes } = incotermNeeds(f.incoterm, f.direction, !!f.needs_transport, f.mode);
   const info = INCOTERM_INFO[f.incoterm ?? ''];
   const has = (k: string) => need.has(k as any) || !!f[k];
   const star = (k: string) => need.has(k as any) ? <em> *</em> : null;
@@ -170,7 +173,7 @@ function TermsPanel({ f, setF, fe }: { f: any; setF: (v: any) => void; fe: Recor
   </div>;
   return <div className="panel"><h2>Incoterm and addresses</h2>
     <div className="terms-top">
-      <label className={`f${fe.incoterm ? ' bad' : ''}`} style={{ maxWidth: 260 }}><span>Incoterm{incotermRequired(f.direction) && f.status === 'enquiry' && <em> *</em>}</span>
+      <label className={`f${fe.incoterm ? ' bad' : ''}`} style={{ maxWidth: 260 }}><span>Incoterm{incotermRequired(f.direction, f.mode) && f.status === 'enquiry' && <em> *</em>}</span>
         <select value={f.incoterm ?? ''} onChange={set('incoterm')}><option value="">Choose</option>
           {INCOTERMS.map((t) => <option key={t} value={t}>{t} — {INCOTERM_INFO[t].name}</option>)}</select><Err m={fe.incoterm} /></label>
       {info ? <div className="terms-info"><b>{f.incoterm} — {info.name}</b><span>{info.text}</span>

@@ -116,7 +116,7 @@ const flag = (v: unknown) => v === true || v === 'true' || v === 1 || v === '1';
 const FIELDS: Record<string, { label: string; parse: (v: unknown) => unknown }> = {
   customer_id: { label: 'Customer', parse: (v) => { if (!isUuid(v)) throw bad('Choose the customer'); return v; } },
   direction: { label: 'Direction', parse: pick(DIRECTIONS, 'import, export, cross-trade or domestic') },
-  mode: { label: 'Mode', parse: pick(MODES, 'sea FCL, sea LCL, air or road') },
+  mode: { label: 'Mode', parse: pick(MODES, 'sea FCL, sea LCL, air, road, courier or others') },
   needs_clearance: { label: 'Needs customs clearance', parse: flag },
   needs_transport: { label: 'Needs transport', parse: flag },
   needs_warehouse: { label: 'Needs warehouse', parse: flag },
@@ -175,10 +175,10 @@ export async function checklist(f: any, db?: Db) {
 }
 
 // ------------------------------------------------------------ Incoterm details (migration 023)
-const INCOTERM_KEYS = ['incoterm', 'direction', 'needs_transport', 'pickup_address', 'named_place', 'port_of_loading', 'port_of_discharge', 'delivery_address', 'cargo_value', 'cargo_value_currency'];
+const INCOTERM_KEYS = ['incoterm', 'direction', 'mode', 'needs_transport', 'pickup_address', 'named_place', 'port_of_loading', 'port_of_discharge', 'delivery_address', 'cargo_value', 'cargo_value_currency'];
 /** The Incoterm decides which addresses the enquiry needs. `optionalTerm`: an old enquiry without a term may stay without one. */
 function checkIncoterm(v: Record<string, any>, optionalTerm = false) {
-  if (!v.incoterm && incotermRequired(v.direction) && !optionalTerm)
+  if (!v.incoterm && incotermRequired(v.direction, v.mode) && !optionalTerm)
     throw new ApiError(400, 'VALIDATION', 'Choose the Incoterm', { fields: { incoterm: 'Choose the Incoterm' } });
   const miss = incotermMissing(v);
   if (miss.length) throw new ApiError(400, 'VALIDATION', `${v.incoterm} needs: ${miss.map((k) => FIELD_LABEL[k].toLowerCase()).join(', ')}`,
