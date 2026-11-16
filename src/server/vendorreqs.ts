@@ -38,7 +38,9 @@ export function vrScope(a: Actor, params: unknown[], alias = 'r'): string {
   const me = `$${params.length}`;
   const c = [`${alias}.created_by = ${me}`];
   if (agent) c.push(`${alias}.assigned_to = ${me}`);
-  if (own) c.push(`exists (select 1 from job_files jf where jf.id = ${alias}.job_file_id and (jf.salesman_id = ${me} or jf.coordinator_id = ${me}))`);
+  if (own) c.push(`exists (select 1 from job_files jf where jf.id = ${alias}.job_file_id and (jf.salesman_id = ${me} or jf.coordinator_id = ${me} or jf.cs_handler_id = ${me}))`);
+  if (own && a.has('jobfiles.view_team'))   // migration 025: the team's requests too
+    c.push(`exists (select 1 from job_files jf, user_team(${me}) tm where jf.id = ${alias}.job_file_id and tm in (jf.salesman_id, jf.coordinator_id, ${alias}.created_by))`);
   return ` and (${c.join(' or ')})`;
 }
 const txt = (v: unknown, max = 200) => { const t = String(v ?? '').trim(); if (t.length > max) throw bad(`Value too long (max ${max} characters)`); return t || null; };

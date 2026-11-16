@@ -5,9 +5,10 @@
  * the person may use (the server checks again).
  */
 import Link from 'next/link';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { api, fmtDate, fmtDateTime, fmtMoney } from './api';
 import { useMe } from './Shell';
+import { StatusDot, statusText } from './Presence';
 import { EmailButton } from './EmailButton';
 import { NewVendorRequest } from './NewVendorRequest';
 import { STAGES, PRE_CONFIRM, PREALERT_CHECKS, divisionName, rateSourceName, stageName } from '@/lib/commercialRules';
@@ -31,10 +32,75 @@ const PHASES: [string, string[]][] = [
   ['Pre-alert', ['prealert_awaited', 'prealert_received', 'prealert_verified']],
   ['Handover', ['handed_over']],
 ];
+const PART: Record<string, string> = { cs: 'Customer Service', ops: 'Operations', docs: 'Documentation' };
+const HCOL: Record<string, string> = { cs: 'cs_handler_id', ops: 'ops_handler_id', docs: 'docs_handler_id' };
+/** Migration 026: choose or change a job's handler for one part (Customer Service, Operations, Documentation). */
+function HandlerPicker({ d, kind, onClose, onDone }: { d: any; kind: 'cs' | 'ops' | 'docs'; onClose: () => void; onDone: () => void }) {
+  const [list, setList] = useState<any[] | null>(null);
+  const [f, setF] = useState({ user_id: '', reason: '' });
+  const [err, setErr] = useState('');
+  const cur = d[HCOL[kind]];
+  useEffect(() => { api(`/api/job-files/${d.id}/handler/${kind}`).then(setList).catch((e) => setErr(e.message)); }, [d.id, kind]);
+  const save = async () => {
+    try { await api(`/api/job-files/${d.id}/handler/${kind}`, { body: f }); onDone(); } catch (e: any) { setErr(e.message); }
+  };
+  return (
+    <div className="grid g4" style={{ marginTop: 12 }}>
+      {err && <div className="msg err span4">{err}</div>}
+      <label className="f"><span>{PART[kind]} handler</span><select value={f.user_id} onChange={(e) => setF({ ...f, user_id: e.target.value })}>
+        <option value="">{list ? 'Choose…' : 'Loading…'}</option>
+        {(list ?? []).filter((u) => u.id !== cur).map((u) => <option key={u.id} value={u.id}>{u.full_name} — {u.note}</option>)}</select></label>
+      {cur && <label className="f"><span>Why? *</span><input value={f.reason} onChange={(e) => setF({ ...f, reason: e.target.value })} /></label>}
+      <div style={{ display: 'flex', gap: 6, alignItems: 'end' }}><button className="btn small" onClick={onClose}>Cancel</button>
+        <button className="btn small primary" disabled={!f.user_id || (!!cur && !f.reason.trim())} onClick={save}>Save</button></div>
+    </div>
+  );
+}
+
+/** After handover: who owns each part of the job, and the two handoffs (Ops → Documentation → Ops). */
+export function HandlersPanel({ d, reload }: { d: any; reload: () => void }) {
+  const [pick, setPick] = useState<'cs' | 'ops' | 'docs' | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+  if (d.stage !== 'handed_over') return null;
+  const step = async (what: 'do_received' | 'cleared', ask: string) => {
+    const note = prompt(ask); if (note === null) return;
+    setBusy(true); setErr('');
+    try { await api(`/api/job-files/${d.id}/handoff`, { body: { what, note } }); reload(); } catch (e: any) { setErr(e.message); }
+    setBusy(false);
+  };
+  const clr = d.job_type === 'clearance_delivery';
+  const where = clr ? (d.docs_cleared_at ? 'Cleared — raise the transport for delivery' : 'Clearance & Delivery job — with Documentation')
+    : d.docs_cleared_at ? 'Cleared — Operations arranges collection and delivery' : d.do_received_at ? 'With Documentation (DO received)' : 'With Operations (waiting for the DO)';
+  const cell = (kind: 'cs' | 'ops' | 'docs', label: string, name: string | null, can: boolean, show: boolean) => show && (
+    <div><span>{label}</span><b>{name ? <><StatusDot s={d.people_status?.[d[HCOL[kind]]]} /> {name}</> : <span className="flag">To assign</span>}</b>
+      {can && pick !== kind && <button className="linkish small" onClick={() => setPick(kind)}>{name ? 'Change' : 'Choose'}</button>}</div>);
+  return (
+    <div className="panel" style={{ marginBottom: 14 }}>
+      <div className="role-head"><h2 style={{ fontSize: 15 }}>Who handles it</h2><span className="muted small">{where}</span><span className="spacer" />
+        {d.can?.do_received && <button className="btn small primary" disabled={busy} onClick={() => step('do_received', 'DO received — any note for Documentation? (optional)')}>DO received — send to Documentation</button>}
+        {d.can?.docs_cleared && <button className="btn small primary" disabled={busy} onClick={() => step('cleared', 'Cleared — any note? (optional)')}>{clr ? 'Mark cleared' : 'Cleared — back to Operations'}</button>}
+      </div>
+      {err && <div className="msg err">{err}</div>}
+      {(['cs', 'ops', 'docs'] as const).filter((k) => d.people_status?.[d[HCOL[k]]]?.status === 'leave').map((k) => (
+        <div key={k} className="msg warn" style={{ margin: '10px 0 0' }}>{PART[k]}: {statusText(d.people_status[d[HCOL[k]]])} — choose someone to cover with "Change".</div>))}
+      <div className="rec-info" style={{ marginTop: 10 }}>
+        {cell('cs', 'Customer Service', d.cs_handler_name, !!d.can?.cs_pick, !clr || !!d.cs_handler_name)}
+        {cell('ops', `Operations — ${d.department_name ?? ''}`, d.ops_handler_name, !!d.can?.ops_pick, !clr)}
+        {cell('docs', clr ? 'Clearance handler' : 'Documentation', d.docs_handler_name, !!d.can?.docs_pick, clr || !!d.do_received_at)}
+        {d.do_received_at && <div><span>DO received</span><b>{fmtDateTime(d.do_received_at)}</b></div>}
+        {d.docs_cleared_at && <div><span>Cleared</span><b>{fmtDateTime(d.docs_cleared_at)}</b></div>}
+      </div>
+      {pick && <HandlerPicker d={d} kind={pick} onClose={() => setPick(null)} onDone={() => { setPick(null); reload(); }} />}
+    </div>
+  );
+}
+
 /** The numbers, the people, and where the shipment stands. */
-export function StageHeader({ d, act }: { d: any; act?: (b: any, done?: string) => Promise<any> }) {
+export function StageHeader({ d, act, reload }: { d: any; act?: (b: any, done?: string) => Promise<any>; reload?: () => void }) {
   const { can, lk } = useMe();
   const [re, setRe] = useState<any>(null);
+  const [cs, setCs] = useState(false);
   if (!d.enquiry_ref) return null;
   const done = d.stage === 'handed_over';
   const at = PHASES.findIndex(([, st]) => st.includes(d.stage));
@@ -48,10 +114,13 @@ export function StageHeader({ d, act }: { d: any; act?: (b: any, done?: string) 
         <div><span>Shipping Ref</span><b>{d.shipping_ref ?? '—'}</b></div>
         <div><span>Job No.</span>{d.job_no && d.job_no !== d.enquiry_ref ? <b>{d.job_no}</b> : <b className="muted">After handover</b>}</div>
         <div><span>Division</span><b>{divisionName(d.division)}</b></div>
-        <div><span>Salesman</span><b>{d.salesman_name ?? '—'}</b></div>
-        <div><span>Coordinator</span><b>{d.coordinator_name ?? '—'}</b></div>
+        <div><span>Salesman</span><b><StatusDot s={d.people_status?.[d.salesman_id]} /> {d.salesman_name ?? '—'}</b></div>
+        <div><span>Coordinator</span><b><StatusDot s={d.people_status?.[d.coordinator_id]} /> {d.coordinator_name ?? '—'}</b></div>
+        {d.stage !== 'handed_over' && (d.cs_handler_name || d.can?.cs_pick) && <div><span>Customer Service</span><b>{d.cs_handler_name ? <><StatusDot s={d.people_status?.[d.cs_handler_id]} /> {d.cs_handler_name}</> : <span className="flag">To assign</span>}</b>
+          {d.can?.cs_pick && !cs && <button className="linkish small" onClick={() => setCs(true)}>{d.cs_handler_id ? 'Change' : 'Choose'}</button>}</div>}
         {canReassign && !re && <button className="linkish small" style={{ alignSelf: 'flex-end' }} onClick={() => setRe({ salesman_id: d.salesman_id ?? '', coordinator_id: d.coordinator_id ?? '', reason: '' })}>Reassign</button>}
       </div>
+      {cs && <HandlerPicker d={d} kind="cs" onClose={() => setCs(false)} onDone={() => { setCs(false); reload?.(); }} />}
       {re && <div className="grid g4" style={{ marginTop: 12 }}>
         <label className="f"><span>Salesman</span><select value={re.salesman_id} onChange={(e) => setRe({ ...re, salesman_id: e.target.value })}><option value="">—</option>
           {(lk.salesmen ?? []).map((u: any) => <option key={u.id} value={u.id}>{u.name}</option>)}</select></label>

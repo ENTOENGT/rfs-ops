@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import { resetDb, mkUser, reqFields } from './helpers';
 import { q, one } from '../src/server/db';
 import { loadActor, Actor } from '../src/server/auth';
+import { updateUser } from '../src/server/team';
 import { createMaster } from '../src/server/masters';
 import { localWrite } from '../src/server/storage';
 import { createJobFile, getJobFile, listJobFiles, setJobFileStatus } from '../src/server/jobfiles';
@@ -33,6 +34,9 @@ before(async () => {
   sub = await mkUser(admin, 'SeaSub', 'operations', 'sea_import');
   other = await mkUser(admin, 'AirMgr', 'operations_manager', 'air_export');
   cs = await mkUser(admin, 'Care', 'customer_service');
+  // the old follow-only Customer Service (sees every shipment, no prices) — since migration 026 CS owns its own jobs instead
+  await updateUser(admin, cs.id, { overrides: [{ code: 'jobfiles.view_all', granted: true }, { code: 'jobfiles.edit', granted: false }, { code: 'quotes.view', granted: false }, { code: 'finance.selling.view', granted: false }, { code: 'vendors.requests', granted: false }, { code: 'jobfiles.handover', granted: false }] });
+  cs = (await loadActor(cs.id))!;
   tm = await mkUser(admin, 'TM', 'transport_manager');
   fin = await mkUser(admin, 'Fin', 'finance');
   erpAdmin = await mkUser(admin, 'ERP', 'erp_admin');

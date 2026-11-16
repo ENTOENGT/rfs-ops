@@ -8,8 +8,9 @@
  */
 import Link from 'next/link';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
-import { createContext, Suspense, useContext, useEffect, useMemo, useRef, useState } from 'react';
+import { createContext, Fragment, Suspense, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { api, fmtDateTime } from './api';
+import { StatusDot, STATUS } from './Presence';
 import { Icon } from './Icon';
 import { QUICK_CREATE, locate, isOn, visibleModules, NavModule } from '@/lib/navigation';
 
@@ -41,6 +42,17 @@ function useOutside(open: boolean, close: () => void) {
     return () => { document.removeEventListener('mousedown', click); document.removeEventListener('keydown', key); };
   }, [open]);  // eslint-disable-line react-hooks/exhaustive-deps
   return ref;
+}
+
+/** Release L (migration 027): team chats with unread messages. */
+function ChatIcon() {
+  const [n, setN] = useState(0);
+  useEffect(() => {
+    const load = () => { if (document.visibilityState === 'visible') api('/api/chats').then((r) => setN(r.unread)).catch(() => {}); };
+    load(); const t = setInterval(load, 30000); return () => clearInterval(t);
+  }, []);
+  return <Link className="icon-btn chat-btn bell" href="/chats" aria-label={`Team chats${n ? `, ${n} unread` : ''}`} title="Team chats">
+    <Icon name="chat" />{n > 0 && <span className="dot">{n > 99 ? '99+' : n}</span>}</Link>;
 }
 
 function Bell({ jobHref = (id: string) => `/jobs/${id}`, compact }: { jobHref?: (id: string) => string; compact?: boolean }) {
@@ -124,17 +136,52 @@ function QuickCreate({ can }: { can: (p: string) => boolean }) {
   );
 }
 
+/** Release L (migration 027): ping every minute while the app is open, saying whether the person did anything since. */
+function usePresence() {
+  const [st, setSt] = useState<any>(null);
+  const active = useRef(true);
+  useEffect(() => {
+    const mark = () => { active.current = true; };
+    const ev = ['keydown', 'mousedown', 'touchstart', 'scroll'];
+    ev.forEach((e) => window.addEventListener(e, mark, { passive: true }));
+    const send = () => {
+      if (document.visibilityState !== 'visible') return;
+      const a = active.current; active.current = false;
+      api('/api/presence/ping', { body: { active: a } }).then(setSt).catch(() => { /* offline for a moment */ });
+    };
+    send();
+    const t = setInterval(send, 60_000);
+    document.addEventListener('visibilitychange', send);
+    return () => { clearInterval(t); document.removeEventListener('visibilitychange', send); ev.forEach((e) => window.removeEventListener(e, mark)); };
+  }, []);
+  return [st, setSt] as const;
+}
+
 function Profile({ me, logout }: { me: Me; logout: () => void }) {
   const [open, setOpen] = useState(false);
   const ref = useOutside(open, () => setOpen(false));
+  const [st, setSt] = usePresence();
+  const [leave, setLeave] = useState<{ until: string; note: string } | null>(null);
+  const set = async (b: any) => { try { setSt(await api('/api/presence', { method: 'PUT', body: b })); setLeave(null); setOpen(false); } catch (e: any) { alert(e.message); } };
   return (
     <div className="profile" ref={ref}>
       <button className="avatar-btn" aria-expanded={open} aria-label="Your account" onClick={() => setOpen(!open)}>
-        <span className="avatar">{initials(me.full_name)}</span>
+        <span className="avatar">{initials(me.full_name)}{st && <span className="avatar-dot"><StatusDot s={st} /></span>}</span>
         <span className="who hide-md"><b>{me.full_name}</b><small>{me.role}</small></span><Icon name="chevronDown" size={15} className="hide-md" />
       </button>
       {open && <div className="dropdown pop-right menu" role="menu">
         <div className="pop-head col"><b>{me.full_name}</b><small>{me.email}</small><small>{me.role}{me.department ? ` · ${me.department}` : ''}</small></div>
+        {st && <div className="status-pick">
+          <div className="muted small" style={{ padding: '2px 0 6px' }}>Your status: <StatusDot s={st} label /></div>
+          <button role="menuitem" onClick={() => set({ presence: 'available' })}><span className="sdot" style={{ background: STATUS.online[1] }} /> Available</button>
+          <button role="menuitem" onClick={() => set({ presence: 'busy', note: 'In a meeting' })}><span className="sdot" style={{ background: STATUS.busy[1] }} /> Busy — in a meeting</button>
+          <button role="menuitem" onClick={() => set({ presence: 'busy', note: 'On a call' })}><span className="sdot" style={{ background: STATUS.busy[1] }} /> Busy — on a call</button>
+          {!leave ? <button role="menuitem" onClick={() => setLeave({ until: '', note: '' })}><span className="sdot" style={{ background: STATUS.leave[1] }} /> On leave…</button>
+            : <div className="leave-form">
+              <label className="small">Back on <input type="date" value={leave.until} onChange={(e) => setLeave({ ...leave, until: e.target.value })} /></label>
+              <input placeholder="Note (optional)" value={leave.note} onChange={(e) => setLeave({ ...leave, note: e.target.value })} />
+              <button className="btn small primary" onClick={() => set({ presence: 'leave', leave_until: leave.until || null, note: leave.note })}>Set leave</button></div>}
+        </div>}
         <Link href="/notifications" role="menuitem" onClick={() => setOpen(false)}><Icon name="bell" size={16} /> Notifications</Link>
         <Link href="/change-password" role="menuitem" onClick={() => setOpen(false)}><Icon name="key" size={16} /> Change password</Link>
         <button role="menuitem" onClick={logout}><Icon name="logout" size={16} /> Sign out</button>
@@ -145,7 +192,7 @@ function Profile({ me, logout }: { me: Me; logout: () => void }) {
 
 const DETAIL: [RegExp, string][] = [[/^\/job-files\/[^/]+$/, 'Shipment'], [/^\/quotations\/[^/]+\/print$/, 'Customer copy'], [/^\/quotations\/[^/]+$/, 'Quotation'],
   [/^\/lcl\/[^/]+$/, 'Consolidation'], [/^\/vendor-requests\/[^/]+$/, 'Vendor request'], [/\/new$/, 'New'], [/^\/jobs\/[^/]+$/, 'Job'], [/^\/pro\/[^/]+$/, 'PRO request'],
-  [/^\/runs\/[^/]+$/, 'Run'], [/^\/cases\/[^/]+$/, 'Case'], [/^\/warehouse\/(receipts|orders)\/[^/]+$/, 'Details'], [/^\/notifications$/, 'Notifications'], [/^\/change-password$/, 'Change password']];
+  [/^\/runs\/[^/]+$/, 'Run'], [/^\/cases\/[^/]+$/, 'Case'], [/^\/warehouse\/(receipts|orders)\/[^/]+$/, 'Details'], [/^\/notifications$/, 'Notifications'], [/^\/chats$/, 'Team chats'], [/^\/change-password$/, 'Change password']];
 
 function Frame({ me, lk, can, children }: { me: Me; lk: any; can: (p: string) => boolean; children: React.ReactNode }) {
   const path = usePathname();
@@ -156,6 +203,7 @@ function Frame({ me, lk, can, children }: { me: Me; lk: any; can: (p: string) =>
   const [mini, setMini] = useState(false);
   const [subOpen, setSubOpen] = useState(true);
   const [drawer, setDrawer] = useState(false);
+  const [openMod, setOpenMod] = useState<string | null>(null);   // phone / tablet menu: which module's pages are unfolded
   useEffect(() => {
     try { setPref(sessionStorage.getItem('nav.module')); } catch { /* none */ }
     setMini(store.get('nav.mini') === '1'); setSubOpen(store.get('nav.sub') !== '0');
@@ -165,6 +213,8 @@ function Frame({ me, lk, can, children }: { me: Me; lk: any; can: (p: string) =>
   useEffect(() => { if (mod && mod.key !== pref) { setPref(mod.key); try { sessionStorage.setItem('nav.module', mod.key); } catch { /* none */ } } }, [mod?.key]);  // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { setDrawer(false); }, [path, search]);
   const pick = (m: NavModule) => {
+    // in the phone / tablet menu a module unfolds its pages right under it (one panel, nothing hidden behind another)
+    if (drawer && m.items.length > 1) { setOpenMod(openMod === m.key ? null : m.key); return; }
     if (m.key === mod?.key && m.key !== 'dashboard') { const v = !subOpen; setSubOpen(v); store.set('nav.sub', v ? '1' : '0'); return; }
     setPref(m.key); try { sessionStorage.setItem('nav.module', m.key); } catch { /* none */ }
     if (!subOpen) { setSubOpen(true); store.set('nav.sub', '1'); }
@@ -185,9 +235,16 @@ function Frame({ me, lk, can, children }: { me: Me; lk: any; can: (p: string) =>
           <img className="rail-mark" src="/brand/mark-on-dark.png" alt="" width={34} height={31} />
         </Link>
         <nav className="rail-nav">
-          {mods.map((m) => <button key={m.key} className={`rail-item${mod?.key === m.key ? ' on' : ''}`} onClick={() => pick(m)} title={mini ? m.label : undefined}
-            aria-current={mod?.key === m.key ? 'true' : undefined}>
-            <Icon name={m.icon} size={19} /><span>{m.label}</span></button>)}
+          {mods.map((m) => <Fragment key={m.key}>
+            <button className={`rail-item${mod?.key === m.key ? ' on' : ''}`} onClick={() => pick(m)} title={mini ? m.label : undefined}
+              aria-current={mod?.key === m.key ? 'true' : undefined} aria-expanded={drawer && m.items.length > 1 ? openMod === m.key : undefined}>
+              <Icon name={m.icon} size={19} /><span>{m.label}</span>
+              {drawer && m.items.length > 1 && <Icon name={openMod === m.key ? 'chevronDown' : 'chevronRight'} size={16} className="rail-chev" />}</button>
+            {drawer && openMod === m.key && m.items.length > 1 && <div className="rail-sub">
+              {m.items.map((i) => <Link key={i.href} href={i.href} className={isOn(i.href, path, search, all) ? 'on' : ''}
+                onClick={() => { setPref(m.key); try { sessionStorage.setItem('nav.module', m.key); } catch { /* none */ } }}>{i.label}</Link>)}
+            </div>}
+          </Fragment>)}
         </nav>
         <div className="rail-foot">
           <button className="rail-item" onClick={toggleMini} title={mini ? 'Expand menu' : undefined}><Icon name={mini ? 'chevronRight' : 'chevronLeft'} size={19} /><span>Collapse</span></button>
@@ -208,7 +265,7 @@ function Frame({ me, lk, can, children }: { me: Me; lk: any; can: (p: string) =>
       <div className="scrim" onClick={() => setDrawer(false)} aria-hidden />
       <div className="main">
         <header className="top">
-          <button className="icon-btn show-sm" aria-label="Open the menu" onClick={() => setDrawer(true)}><Icon name="menu" /></button>
+          <button className="icon-btn show-sm" aria-label="Open the menu" onClick={() => { setOpenMod(mod?.key ?? null); setDrawer(true); }}><Icon name="menu" /></button>
           {showSub && !subOpen && <button className="icon-btn hide-sm" aria-label={`Show the ${mod!.label} menu`} title={`Show the ${mod!.label} menu`}
             onClick={() => { setSubOpen(true); store.set('nav.sub', '1'); }}><Icon name="panel" /></button>}
           <nav className="crumbs" aria-label="Breadcrumb">
@@ -220,6 +277,7 @@ function Frame({ me, lk, can, children }: { me: Me; lk: any; can: (p: string) =>
           <GlobalSearch />
           <div className="top-actions">
             <QuickCreate can={can} />
+            {['jobfiles.view_all', 'jobfiles.view_department', 'jobfiles.view_assigned', 'jobfiles.view_handed_over', 'jobfiles.create', 'jobfiles.edit'].some((p) => can(p as any)) && <ChatIcon />}
             <Bell />
             {can('settings.manage') && <Link className="icon-btn hide-sm" href="/settings" aria-label="Settings" title="Settings"><Icon name="gear" /></Link>}
             <Profile me={me} logout={logout} />

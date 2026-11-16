@@ -69,6 +69,21 @@ export async function homeDashboard(actor: Actor) {
         { key: 'custconf', label: 'Customer confirmations', count: c.sent, href: enq('c_sent', assigned), icon: 'mail', tone: 'teal' },
         { key: 'active', label: 'Active shipments', count: c.active, href: enq('c_active', assigned), icon: 'ship', tone: 'ok' },
       ] });
+    } else if (actor.department_code === 'customer_service') {
+      // migration 026: Customer Service — the shipments they own from confirmation to delivery
+      const csMgr = actor.has('users.manage_department');
+      const k = await one(`select count(*) filter (where ${V.c_cs_assign})::int to_assign,
+          count(*) filter (where f.cs_handler_id = $${params.length + 1} and ${V.c_active})::int mine,
+          count(*) filter (where f.cs_handler_id = $${params.length + 1} and ${V.c_confirmed})::int to_book
+        ${base}`, [...params, actor.id]);
+      sections.push({ key: 'cs', title: 'Customer Service', cards: [
+        ...(csMgr ? [{ key: 'assign', label: 'Confirmed jobs to assign', count: k.to_assign, href: enq('c_cs_assign'), icon: 'inbox', tone: 'warn' as const, hint: 'Nobody in Customer Service has them yet' }] : []),
+        { key: 'mine', label: 'My shipments in progress', count: k.mine, href: enq('c_active', '&assigned=1'), icon: 'ship', tone: 'ok' },
+        { key: 'book', label: 'Bookings to send', count: k.to_book, href: enq('c_confirmed', '&assigned=1'), icon: 'calendar' },
+        { key: 'booking', label: 'Waiting for booking confirmation', count: c.booking, href: enq('c_booking', '&assigned=1'), icon: 'clock' },
+        { key: 'prealert', label: 'Pre-alerts to follow', count: c.prealert, href: enq('c_prealert', '&assigned=1'), icon: 'mail', tone: 'teal' },
+        { key: 'blfix', label: 'BL draft corrections', count: c.bl_correction, href: enq('c_bl_correction', '&assigned=1'), icon: 'alert', tone: 'danger' },
+      ] });
     }
     // what needs a hand first
     const urgent = asSales ? ['c_approval', 'c_sent', 'c_confirmed'] : asCoord ? ['c_bl_correction', 'c_quoting', 'c_confirmed', 'c_prealert_received', 'c_awaiting_job', 'c_rates']
@@ -106,7 +121,7 @@ export async function homeDashboard(actor: Actor) {
 
   const wh = actor.has('warehouse.view') || actor.has('warehouse.receive');
   const lcl = actor.has('lcl.view') || actor.has('lcl.receive') || actor.has('lcl.stuff') || actor.has('lcl.manage');
-  if ((wh || lcl) && !['commercials_manager', 'coordinator', 'sales', 'agent_coordinator'].includes(role)) {
+  if ((wh || lcl) && !['commercials_manager', 'coordinator', 'sales', 'agent_coordinator', 'customer_service', 'customer_service_manager'].includes(role)) {
     const g = wh ? await one(`select count(*) filter (where status = 'expected')::int expected,
         count(*) filter (where status = 'expected' and coalesce(expected_date, current_date) <= (now() at time zone 'Asia/Dubai')::date)::int due from grns`) : { expected: 0, due: 0 };
     const l = lcl ? await one(`select
@@ -154,6 +169,23 @@ export async function homeDashboard(actor: Actor) {
       { key: 'docs', label: 'Pending documentation', count: o.docs, href: '/job-files?view=missing_docs', icon: 'folder', tone: 'warn' },
       { key: 'delivery', label: 'Pending delivery', count: o.delivery, href: '/job-files?status=arrived,delivering', icon: 'truck', tone: 'teal' },
       { key: 'active', label: 'Active shipments', count: o.active, href: '/job-files?view=open', icon: 'ship', tone: 'ok', hint: o.late ? `${o.late} past ETA` : undefined },
+    ] });
+  }
+
+  // migration 025: a manager or Team Leader sees their team at a glance
+  if (actor.has('users.view_team')) {
+    const t = await one(`select
+        (select count(*)::int from users u where u.id in (select user_team($1)) and u.is_active) people,
+        (select count(*)::int from users u where u.manager_id = $1 and u.is_active) direct,
+        ${actor.department_id && actor.has('users.manage_department') ? `(select count(*)::int from users u join roles r on r.id = u.role_id
+          where u.department_id = $2 and u.is_active and u.deleted_at is null and u.manager_id is null and u.id <> $1 and not r.is_manager)` : '0'} loose,
+        ${actor.has('jobfiles.view_team') ? `(select count(*)::int from job_files f where f.deleted_at is null and f.status not in ('closed','cancelled')
+          and exists (select 1 from user_team($1) tm where tm in (f.created_by, f.salesman_id, f.coordinator_id)))` : 'null'} shipments`,
+      actor.department_id && actor.has('users.manage_department') ? [actor.id, actor.department_id] : [actor.id]);
+    if (t.people || t.loose) sections.push({ key: 'team', title: 'My team', cards: [
+      { key: 'people', label: 'People in my team', count: t.people, href: '/users?tab=chart', icon: 'users', hint: `${t.direct} report to me directly` },
+      ...(t.shipments !== null ? [{ key: 'shipments', label: "My team's open shipments", count: t.shipments, href: '/job-files?view=open', icon: 'ship', tone: 'teal' as const }] : []),
+      ...(t.loose ? [{ key: 'loose', label: 'People not placed yet', count: t.loose, href: '/users?tab=chart', icon: 'alert', tone: 'warn' as const, hint: 'Set who they report to' }] : []),
     ] });
   }
 

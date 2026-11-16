@@ -632,6 +632,30 @@ Only the look and the navigation changed. Every URL, permission check, API and w
 - **Reports page**: reports grouped by area in a list on the left (a single dropdown on tablets), one filter row (Period — today, yesterday, this / last week, this / last month, this / last year, custom — and Search), the rest under "Filters".
 - **Commercial reports** (`src/server/commercialReports.ts`; period = date the enquiry was opened; scope = the Enquiries list): Salesman performance and Coordinator performance (enquiries, quoted, confirmed and confirmed %, not confirmed with reasons, volume CBM / tonnes / TEU, days to quote, agent replies, follow-ups, confirmed sales and profit / loss in the company currency), Enquiry tracking (one row per enquiry), Shipments by type (FCL / Air / LCL export and import, Cross Trade, Road Freight, Courier, Others + total). Only for the commercial side and managers who see quotations; money columns follow the selling / profit rights.
 
+## 15o. Organisation hierarchy and roles grid (migration 025)
+
+- **Designations** (`designations`): job titles, separate from access. Super Admin adds, renames, switches off (People → Designations).
+- **Reporting line** (`users.manager_id`): trigger `users_manager_guard` refuses self, loops and lines deeper than 12. `user_team(id)` returns everyone below a person. Changes to manager and designation are kept in `user_assignments` (reason required when an existing line changes) and the audit log. Disabling a person moves their reports up to their own manager.
+- **Team rights**: `users.view_team`, `users.manage_team` (Team Leader scope: only people below them, inside their department; new people report to them). Every manager role holds both, plus `roles.manage_department`.
+- **Team visibility**: `jobfiles.view_team` (also quotations and agent rate requests), `jobs.view_team`, `runs.view_team`, `pro.view_team` — records created by / owned by anyone in the team. Managers get the team level where they already see their department.
+- **Roles**: every permission has an `action` (view / create / edit / delete / approve / manage / export). Roles page shows one role as a module × action grid; Compare roles keeps the side-by-side table. New roles may start as a copy (limited to what the creator holds). `role_assignable_roles`: the Super Admin chooses which shared roles each manager role may give; enforced on the server; new shared roles are added to their side's managers automatically.
+- **Screens**: People page (list with Reports to / Designation and filters, Organisation chart with "Not placed yet", Designations), My team card on the dashboard.
+
+## 15p. Your workflow — Customer Service, routing, handlers, Cross Trade, Clearance, My performance (migration 026)
+
+- **Customer Service** role brought back (same row) in a new Customer Service department, plus **Customer Service Manager**. `job_files.cs_handler_id` — set automatically when the customer confirms (`assignCsOnConfirm`), changeable by the CS Manager, the job's Coordinator or Salesman (who may keep it), or the current handler; reason needed to change.
+- **Default handlers** (`default_handlers`): per team, optionally per customer. Used for Customer Service at confirmation, the Operations team at handover, Documentation at DO received / Clearance jobs. Set by each department manager (own team) or the Super Admin.
+- **Handover routes** (`handover_routes`): direction + mode → Operations team (Sea / Air Import / Export, LCL, Cross Trade, general). Sea / Air teams re-activated. `ops_handler_id`, `docs_handler_id`, `do_received_at`, `docs_cleared_at`; "DO received" (Ops → Documentation) and "Cleared" (Documentation → Ops). Documentation Executive role.
+- **Visibility**: anyone given a part of the job sees it; Documentation sees jobs once the DO is in; the CS Manager sees confirmed jobs nobody has yet.
+- **Cross Trade agents**: `origin_agent_id` / `destination_agent_id` (vendors) or `origin_is_us` / `destination_is_us`. In the Job File register with job type and handlers.
+- **Clearance & Delivery** (`job_type`): starts at Documentation (or stays with the Salesman who opens it); handover of such an enquiry goes to Documentation.
+- **My performance** (`/performance`, `src/server/performance.ts`): own numbers by period with team-specific measures (Commercials, Customer Service, Operations, Documentation, Transport); weekly or monthly chart; managers open their team's; Excel download; print / save as PDF. Department profit card from the financials engine for people who may see profit.
+
+## 15q. Live status and team chat (migration 027)
+
+- **Status** (`src/server/presence.ts`): the app pings `/api/presence/ping` every minute while open (with "did something since"). Online = active in 10 min; Away = open but quiet; Offline = no ping for 3 min ("last seen"); Busy (with a note) and On leave (return date, note) are set by the person in the profile menu; leave can also be set by their manager and ends after the return date. Dots on People, the organisation chart, the shipment header and Who handles it (with a leave warning).
+- **Team chat** (`src/server/chat.ts`, `job_chat_messages`, `job_chat_reads`, `job_chat_edits` append-only): a Team chat tab on every shipment for anyone who can open it. New messages appear within ~8 s (the page asks while open). @mentions only for people who can open the job (bell alert); the handling group hears about new messages (deduped 2 min). Files are attached through the normal upload and saved with the job's documents. "Seen by" ticks. No delete; the writer can correct within 5 minutes and the old words are kept. A message that looks like a price is hidden from anyone who may not see selling prices. "Team chats" inbox (`/chats`) and a chat icon with the unread count.
+
 ## 16. Phase status
 
 | Phase | Status |
@@ -661,5 +685,8 @@ Only the look and the navigation changed. Every URL, permission check, API and w
 | UI redesign — module rail + page panel, global search, quick create, role dashboards, tabbed shipment record, modern tables (no migration) | Done |
 | Enquiry details — cargo lines, Incoterm rules, shorter enquiry form, division only, currencies, Transport handover, LCL Team (migration 023) | Done |
 | Courier / Others modes, Reports page regrouped, Salesman / Coordinator / Enquiry / Shipment-type reports (migration 024) | Done |
+| Organisation hierarchy — designations, reporting lines, team rights and visibility, People page, roles grid (migration 025) | Done |
+| Your workflow — Customer Service, default handlers, handover routing, Ops ↔ Documentation, Cross Trade agents, Clearance & Delivery, My performance (migration 026) | Done |
+| Live status and team chat on each shipment (migration 027) | Done |
 | Freight + 3PL — remaining phases: see `docs/FREIGHT_3PL_PLAN.md` | Planned |
 | 7 Email notifications · 8 Saved views, column prefs, live ops table, performance | Planned |

@@ -13,12 +13,14 @@ import { PRE_CONFIRM } from '@/lib/commercialRules';
 import { typedLines, DIM_UNITS } from '@/lib/cargoRules';
 import { noVessel } from '@/lib/jobfileRules';
 import { INCOTERM_INFO } from '@/lib/incotermRules';
-import { StageHeader, RatesAndQuotes, BookingPanel, PrealertPanel, HandoverPanel, LclPanel } from '@/components/CommercialPanels';
+import { TeamChat } from '@/components/TeamChat';
+import { StageHeader, HandlersPanel, RatesAndQuotes, BookingPanel, PrealertPanel, HandoverPanel, LclPanel } from '@/components/CommercialPanels';
 
 const RUN_STATUS: Record<string, string> = { pending: 'Waiting', assigned: 'Assigned', collected: 'Collected', delivered: 'Delivered', failed: 'Could not complete', cancelled: 'Cancelled' };
 const EDIT_KEYS = ['customer_id', 'direction', 'mode', 'needs_clearance', 'needs_transport', 'needs_warehouse', 'customer_reference', 'shipper', 'consignee',
   'notify_party', 'origin', 'destination', 'port_of_loading', 'port_of_discharge', 'carrier', 'vessel_flight', 'voyage', 'booking_reference', 'mbl_mawb',
-  'hbl_hawb', 'incoterm', 'pickup_address', 'pickup_contact', 'named_place', 'delivery_address', 'delivery_contact', 'cargo_value', 'cargo_value_currency', 'etd', 'eta', 'atd', 'ata', 'packages', 'gross_weight_kg', 'volume_cbm', 'chargeable_weight_kg', 'cargo_description', 'remarks'];
+  'hbl_hawb', 'incoterm', 'pickup_address', 'pickup_contact', 'named_place', 'delivery_address', 'delivery_contact', 'cargo_value', 'cargo_value_currency', 'etd', 'eta', 'atd', 'ata', 'packages', 'gross_weight_kg', 'volume_cbm', 'chargeable_weight_kg', 'cargo_description', 'remarks',
+  'job_type', 'origin_agent_id', 'destination_agent_id', 'origin_is_us', 'destination_is_us'];   // migration 026
 
 function Milestones({ d, act }: { d: any; act: (b: any) => Promise<unknown> }) {
   const [planned, setPlanned] = useState<Record<string, string>>({});
@@ -66,6 +68,7 @@ export default function JobFile({ params }: { params: { id: string } }) {
   const [note, setNote] = useState('');
   const [emailsKey, setEmailsKey] = useState(0);
   const [tabSel, setTabSel] = useState<string | null>(null);
+  useEffect(() => { try { const t = new URLSearchParams(window.location.search).get('tab'); if (t) setTabSel(t); } catch { /* none */ } }, []);   // ?tab=chat from My chats
   const [more, setMore] = useState(false);
   const [room, setRoom] = useState(7);
   useEffect(() => {
@@ -106,10 +109,11 @@ export default function JobFile({ params }: { params: { id: string } }) {
     documents: true,
     services: d.status !== 'enquiry' || n(d.trips) + n(d.pro) + n(d.runs) > 0,
     milestones: n(d.milestones) > 0,
-    history: true,
+    history: true, chat: true,
   };
   const tabs = [
     { key: 'overview', label: 'Overview' },
+    { key: 'chat', label: 'Team chat', count: Number(d.chat_unread) || 0, warn: true },   // migration 027: unread messages
     { key: 'routing', label: 'Routing options', count: n(d.routes) },
     { key: 'rates', label: 'Rates & quotation', count: n(d.vendor_requests) + n(d.quotations) },
     { key: 'emails', label: 'Emails' },
@@ -155,7 +159,8 @@ export default function JobFile({ params }: { params: { id: string } }) {
       {d.status === 'cancelled' && <div className="msg warn">Cancelled: {d.cancel_reason}</div>}
       {d.service_instructions && <div className="msg">Customer's standing instructions: {d.service_instructions}</div>}
 
-      {!edit && <StageHeader d={d} act={act} />}
+      {!edit && <StageHeader d={d} act={act} reload={load} />}
+      {!edit && <HandlersPanel d={d} reload={load} />}
       {edit ? <>
         <JobFileFields f={edit} setF={setEdit} />
         <div className="form-actions"><button className="btn" onClick={() => setEdit(null)}>Cancel</button>
@@ -178,7 +183,9 @@ export default function JobFile({ params }: { params: { id: string } }) {
         {tab === 'overview' && <div className="cols tab-panel">
           <div>
             <div className="panel"><h2>Shipment</h2><dl className="kv">
-              {kv('Customer', d.customer_name)}{kv('Type', `${label(DIRECTIONS, d.direction)} · ${label(MODES, d.mode)}`)}
+              {kv('Customer', d.customer_name)}{kv('Type', `${label(DIRECTIONS, d.direction)} · ${label(MODES, d.mode)}${d.job_type === 'clearance_delivery' ? ' · Clearance & Delivery' : ''}`)}
+              {(d.direction === 'cross_trade' || d.origin_agent_name || d.origin_is_us) && kv('Origin agent', d.origin_is_us ? 'Ourselves (RFS)' : d.origin_agent_name ?? 'Not chosen yet')}
+              {(d.direction === 'cross_trade' || d.destination_agent_name || d.destination_is_us) && kv('Destination agent', d.destination_is_us ? 'Ourselves (RFS)' : d.destination_agent_name ?? 'Not chosen yet')}
               {kv('Services', [d.needs_clearance && 'Customs clearance', d.needs_transport && 'Transport', d.needs_warehouse && 'Warehouse'].filter(Boolean).join(', '))}
               {kv('Customer reference', d.customer_reference)}{kv('Incoterm', d.incoterm && `${d.incoterm} — ${INCOTERM_INFO[d.incoterm]?.name ?? ''}`)}
               {d.pickup_address && kv('Pickup address', [d.pickup_address, d.pickup_contact].filter(Boolean).join(' · '))}
@@ -232,6 +239,7 @@ export default function JobFile({ params }: { params: { id: string } }) {
         {tab === 'routing' && <div className="tab-panel"><RoutesPanel d={d} act={act} /></div>}
         {tab === 'rates' && <div className="tab-panel"><RatesAndQuotes d={d} reload={load} /></div>}
         {tab === 'emails' && <div className="tab-panel"><EmailsPanel key={emailsKey} d={d} onSaved={load} /></div>}
+        {tab === 'chat' && <div className="tab-panel"><TeamChat d={d} /></div>}
         {tab === 'booking' && <div className="tab-panel"><BookingPanel d={d} act={act} /></div>}
         {tab === 'vessel' && <div className="tab-panel"><VesselPanel d={d} act={act} /></div>}
         {tab === 'bl' && <div className="tab-panel"><BlPanel d={d} act={act} /></div>}

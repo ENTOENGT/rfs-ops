@@ -35,6 +35,9 @@ before(async () => {
   opsSub = await mkUser(admin, 'Sub', 'operations', 'commercial');
   transport = await mkUser(admin, 'Trans', 'transport_manager');
   cs = await mkUser(admin, 'CS', 'customer_service');
+  // the old follow-only Customer Service (sees every shipment, no prices) — since migration 026 CS owns its own jobs instead
+  await updateUser(admin, cs.id, { overrides: [{ code: 'jobfiles.view_all', granted: true }, { code: 'jobfiles.edit', granted: false }, { code: 'quotes.view', granted: false }, { code: 'finance.selling.view', granted: false }, { code: 'vendors.requests', granted: false }, { code: 'jobfiles.handover', granted: false }] });
+  cs = (await loadActor(cs.id))!;
   wh = await mkUser(admin, 'WH', 'warehouse_manager');
   pro = await mkUser(admin, 'Officer', 'pro_officer');
   customer = (await createMaster(mgr, 'customers', { name: 'Desert Retail' })).id;

@@ -33,11 +33,12 @@ export function runScope(actor: Actor, params: unknown[], alias = 'm'): string {
   if (actor.has('runs.view_all')) return '';
   params.push(actor.id);
   const me = `$${params.length}`;
+  const team = actor.has('runs.view_team') ? ` or ${alias}.requested_by in (select user_team(${me})) or ${alias}.messenger_id in (select user_team(${me}))` : '';   // migration 025
   if (actor.has('runs.view_department') && actor.department_id) {
     params.push(actor.department_id);
-    return ` and (${alias}.department_id = $${params.length} or ${alias}.requested_by = ${me} or ${alias}.messenger_id = ${me})`;
+    return ` and (${alias}.department_id = $${params.length} or ${alias}.requested_by = ${me} or ${alias}.messenger_id = ${me}${team})`;
   }
-  return ` and (${alias}.requested_by = ${me} or ${alias}.messenger_id = ${me})`;
+  return ` and (${alias}.requested_by = ${me} or ${alias}.messenger_id = ${me}${team})`;
 }
 export const canSeeRuns = (a: Actor) => ['runs.view_all', 'runs.view_department', 'runs.create', 'runs.update_status', 'runs.assign'].some((p) => a.has(p as any));
 

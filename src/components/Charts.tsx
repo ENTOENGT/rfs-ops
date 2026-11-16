@@ -80,3 +80,35 @@ export function BarList({ rows, metric, color, format, top = 8, empty = 'No data
     </div>
   );
 }
+
+/** Grouped bars of counts per week or month (My performance). Each bar has a title with its value. */
+export function CountChart({ rows, series, unit }: { rows: any[]; series: Series[]; unit: 'week' | 'month' }) {
+  const W = 760, H = 220, L = 34, B = 30, T = 14, R = 8;
+  const max = Math.max(1, ...rows.flatMap((r) => series.map((s) => Number(r[s.key] ?? 0))));
+  const top = max <= 5 ? max : Math.ceil(max / 5) * 5;
+  const y = (v: number) => T + (H - T - B) * (1 - v / top);
+  const gw = (W - L - R) / Math.max(rows.length, 1);
+  const bw = Math.min(26, (gw * 0.75) / series.length);
+  const name = (k: string) => new Date(k + 'T00:00:00').toLocaleDateString('en-GB', unit === 'week' ? { day: 'numeric', month: 'short' } : { month: 'short', year: '2-digit' });
+  const ticks = Array.from(new Set([0, Math.round(top / 2), top]));
+  return (
+    <div>
+      <div style={{ display: 'flex', gap: 14, fontSize: 12, marginBottom: 6, flexWrap: 'wrap' }}>
+        {series.map((s) => <span key={s.key}><span style={{ display: 'inline-block', width: 10, height: 10, background: s.color, borderRadius: 2, marginRight: 5 }} />{s.label}</span>)}
+        <span className="muted" style={{ marginLeft: 'auto' }}>{unit === 'week' ? 'By week (Monday)' : 'By month'}</span>
+      </div>
+      <svg viewBox={`0 0 ${W} ${H}`} width="100%" role="img" aria-label={`${series.map((s) => s.label).join(', ')} by ${unit}`}>
+        {ticks.map((t) => <g key={t}><line x1={L} x2={W - R} y1={y(t)} y2={y(t)} stroke={t === 0 ? '#9aa0a6' : '#e3e1dc'} />
+          <text x={L - 6} y={y(t) + 4} fontSize="11" textAnchor="end" fill="#6a7784">{t}</text></g>)}
+        {rows.map((r, i) => {
+          const x0 = L + gw * i + (gw - bw * series.length) / 2;
+          return <g key={r.key}>
+            {series.map((s, k) => { const v = Number(r[s.key] ?? 0);
+              return <rect key={s.key} x={x0 + k * bw} y={y(v)} width={bw - 2} height={Math.max(v ? 1 : 0, y(0) - y(v))} rx="2" fill={s.color}><title>{`${name(r.key)} — ${s.label}: ${v}`}</title></rect>; })}
+            {(rows.length <= 16 || i % 2 === 0) && <text x={L + gw * i + gw / 2} y={H - 9} fontSize="11" textAnchor="middle" fill="#6a7784">{name(r.key)}</text>}
+          </g>;
+        })}
+      </svg>
+    </div>
+  );
+}

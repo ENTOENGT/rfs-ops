@@ -28,7 +28,7 @@ const pct = (a: number, b: number) => (b ? Math.round((a / b) * 1000) / 10 : nul
 const avg = (xs: number[]) => (xs.length ? Math.round((xs.reduce((s, x) => s + x, 0) / xs.length) * 10) / 10 : null);
 
 /** The enquiries in the period that this person may see, with what each report needs. */
-async function enquiries(actor: Actor, p: Record<string, string>) {
+export async function enquiries(actor: Actor, p: Record<string, string>) {
   const params: unknown[] = [p.from, p.to];
   let w = `f.deleted_at is null and f.enquiry_ref is not null
     and (f.created_at at time zone 'Asia/Dubai')::date between $1 and $2${jfScope(actor, params)}`;
@@ -66,7 +66,7 @@ async function enquiries(actor: Actor, p: Record<string, string>) {
     where ${w} order by f.created_at desc`, params);
 }
 
-async function toCompany(rows: any[]) {
+export async function toCompany(rows: any[]) {
   const fx = Object.fromEntries((await q(`select key, value from settings where key like 'fx\\_%'`)).map((r) => [String(r.key).slice(3), r.value === null ? null : Number(r.value)]));
   const company = String((await q(`select value from settings where key = 'currency'`))[0]?.value ?? 'AED').replace(/"/g, '');
   return rows.map((r) => {
@@ -74,8 +74,8 @@ async function toCompany(rows: any[]) {
     return { ...r, sell_c: r.sell != null && x ? Number(r.sell) * x : null, cost_c: r.cost != null && x ? Number(r.cost) * x : null };
   });
 }
-const won = (r: any) => CONFIRMED.includes(r.stage);
-const quoted = (r: any) => !!r.first_sent || won(r) || r.stage === 'sent_to_customer';
+export const won = (r: any) => CONFIRMED.includes(r.stage);
+export const quoted = (r: any) => !!r.first_sent || won(r) || r.stage === 'sent_to_customer';
 const daysToQuote = (r: any) => (r.first_sent ? (new Date(r.first_sent).getTime() - new Date(r.created_at).getTime()) / 86400000 : null);
 const money = (v: number) => Math.round(v * 100) / 100;
 const sum = (rs: any[], k: string) => rs.reduce((s, r) => s + Number(r[k] ?? 0), 0);

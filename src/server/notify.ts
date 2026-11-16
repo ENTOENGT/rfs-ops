@@ -10,7 +10,7 @@ import { Db, q, one } from './db';
 
 /** code, name — the events people can be told about (also the list on the Notifications page). */
 export const EVENTS: [string, string][] = [
-  ['new_enquiry', 'New enquiry created'], ['assigned', 'Enquiry assigned or reassigned'],
+  ['new_enquiry', 'New enquiry created'], ['chat', 'New team chat message'], ['chat_mention', 'Mentioned in team chat'], ['assigned', 'Enquiry assigned or reassigned'],
   ['rate_requested', 'Rate requested'], ['rate_received', 'Rate received'], ['rate_updated', 'Rate updated'],
   ['quotation_prepared', 'Quotation prepared'], ['quotation_submitted', 'Quotation submitted for approval'],
   ['quotation_approved', 'Quotation approved'], ['quotation_rejected', 'Quotation rejected'], ['quotation_returned', 'Quotation returned for revision'],
@@ -33,13 +33,13 @@ export const STAGE_EVENTS: Record<string, string> = {
 
 /** The people handling this shipment right now (user ids, active users only). */
 export async function handlingGroup(db: Db, fileId: string): Promise<string[]> {
-  const f = await one('select salesman_id, coordinator_id, division from job_files where id = $1', [fileId], db);
+  const f = await one('select salesman_id, coordinator_id, cs_handler_id, ops_handler_id, docs_handler_id, division from job_files where id = $1', [fileId], db);
   if (!f) return [];
   const rows = await q(`select u.id from users u where u.is_active and u.deleted_at is null and (
-      u.id = $2 or u.id = $3
+      u.id = $2 or u.id = $3 or u.id = $5 or u.id = $6 or u.id = $7
       or u.id in (select r.assigned_to from vendor_requests r where r.job_file_id = $1 and r.assigned_to is not null and r.status in ('requested','quoted','confirmed','in_progress'))
       or (user_has_perm(u.id, 'commercial.manage') and ($4::text is null or u.division is null or u.division = $4)))`,
-    [fileId, f.salesman_id, f.coordinator_id, f.division], db);
+    [fileId, f.salesman_id, f.coordinator_id, f.division, f.cs_handler_id, f.ops_handler_id, f.docs_handler_id], db);
   return rows.map((r) => r.id as string);
 }
 

@@ -74,7 +74,8 @@ export function proScope(actor: Actor, params: unknown[], alias = 'r'): string {
   params.push(actor.id);
   const me = `$${params.length}`;
   const mine = `${alias}.requested_by = ${me} or ${alias}.assigned_to = ${me}
-    or exists (select 1 from pro_activities sa where sa.request_id = ${alias}.id and sa.deleted_at is null and (sa.assigned_to = ${me} or sa.next_action_by = ${me}))`;
+    or exists (select 1 from pro_activities sa where sa.request_id = ${alias}.id and sa.deleted_at is null and (sa.assigned_to = ${me} or sa.next_action_by = ${me}))`
+    + (actor.has('pro.view_team') ? ` or ${alias}.requested_by in (select user_team(${me})) or ${alias}.assigned_to in (select user_team(${me}))` : '');   // migration 025
   if (actor.has('pro.view_department') && actor.department_id) {
     params.push(actor.department_id);
     return ` and (${alias}.department_id = $${params.length} or ${mine})`;

@@ -42,7 +42,7 @@ export async function newRef(db: Db, kind: 'ENQ' | 'SR', division?: string | nul
 }
 
 // ------------------------------------------------------------ stage
-async function jfEvent(db: Db, actor: Actor | null, fileId: string, e: { kind: string; title: string; field?: string; old_value?: unknown; new_value?: unknown; remarks?: string | null }) {
+export async function jfEvent(db: Db, actor: Actor | null, fileId: string, e: { kind: string; title: string; field?: string; old_value?: unknown; new_value?: unknown; remarks?: string | null }) {
   const s = (v: unknown) => (v === undefined || v === null || v === '' ? null : String(v).slice(0, 1000));
   await db.query(`insert into job_file_events (job_file_id, kind, title, field, old_value, new_value, remarks, user_id, user_name) values ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
     [fileId, e.kind, e.title, e.field ?? null, s(e.old_value), s(e.new_value), e.remarks ?? null, actor?.id ?? null, actor?.full_name ?? 'System']);
@@ -67,6 +67,8 @@ export async function setStage(db: Db, actor: Actor | null, fileId: string, to: 
   // the handling group hears about the step forward (a quotation sent back for work is told by the quotation itself)
   const { STAGE_EVENTS, notifyGroup } = await import('./notify');
   if (STAGE_EVENTS[to] && (ending || ti > ci)) await notifyGroup(db, actor, fileId, STAGE_EVENTS[to], opts.note ?? null);
+  // migration 026: the confirmed job goes to its Customer Service handler
+  if (to === 'customer_confirmed') await (await import('./handlers')).assignCsOnConfirm(db, actor, fileId);
 }
 
 // ------------------------------------------------------------ customers: who may use which
@@ -418,6 +420,8 @@ export async function createOperationalJob(actor: Actor, fileId: string, b: any)
     await jfEvent(c, actor, fileId, { kind: 'status', title: `Operational job created — Job No. ${jobNo}`, field: 'Job No.', old_value: null, new_value: jobNo, remarks: skip ? `Before pre-alert verification: ${skip}` : null });
     await jfEvent(c, actor, fileId, { kind: 'status', title: 'Handed over to Operations', field: 'Stage', old_value: stageName(f.stage), new_value: stageName('handed_over'), remarks: notes });
     await (await import('./notify')).notifyGroup(c, actor, fileId, 'handed_over', `Job No. ${jobNo}`);
+    // migration 026: the job goes to the Operations team for its type, and to that team's default handler
+    await (await import('./handlers')).routeOnHandover(c, actor, fileId);
     // trips / PRO requests already typed with this Job No. link now
     await c.query(`update transport_requests set job_file_id = null where upper(btrim(job_no)) = upper(btrim($1))`, [jobNo]);
     await c.query(`update pro_requests set job_file_id = null where upper(btrim(job_no)) = upper(btrim($1))`, [jobNo]);

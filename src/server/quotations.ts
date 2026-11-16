@@ -35,7 +35,11 @@ function qScope(actor: Actor, params: unknown[], alias = 'x'): string {
   const own = actor.has('jobfiles.view_assigned') && !actor.has('jobfiles.view_department');
   if (actor.department_id && !own) { params.push(actor.department_id); c.push(`${alias}.department_id = $${params.length}`); }
   if (actor.has('jobfiles.view_assigned'))
-    c.push(`${alias}.salesman_id = ${me}`, `exists (select 1 from job_files jf where jf.id = ${alias}.job_file_id and (jf.salesman_id = ${me} or jf.coordinator_id = ${me}))`);
+    c.push(`${alias}.salesman_id = ${me}`, `exists (select 1 from job_files jf where jf.id = ${alias}.job_file_id and (jf.salesman_id = ${me} or jf.coordinator_id = ${me} or jf.cs_handler_id = ${me}))`);
+  // migration 025: the team's quotations too
+  if (actor.has('jobfiles.view_team'))
+    c.push(`exists (select 1 from user_team(${me}) tm where tm = ${alias}.created_by or tm = ${alias}.salesman_id)`,
+      `exists (select 1 from job_files jf, user_team(${me}) tm where jf.id = ${alias}.job_file_id and tm in (jf.salesman_id, jf.coordinator_id))`);
   return ` and (${c.join(' or ')})`;
 }
 async function load(actor: Actor, id: string, db?: Db, lock = false) {

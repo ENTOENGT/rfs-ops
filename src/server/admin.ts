@@ -3,7 +3,7 @@ import { Actor, hashPassword, requirePerm, validatePassword } from './auth';
 import { ApiError, audit, bad, getSetting, notFound, one, q, tx } from './db';
 
 // User, role and department management lives in team.ts (Super Admin + department managers).
-export { listUsers, createUser, updateUser, resetPassword, listRoles, createRole, setRolePermissions, listDepartments, saveDepartment } from './team';
+export { listUsers, createUser, updateUser, resetPassword, listRoles, createRole, setRolePermissions, listDepartments, saveDepartment, listDesignations, saveDesignation, setAssignableRoles } from './team';
 
 export async function changeOwnPassword(actor: Actor, b: any) {
   const u = await one('select password_hash from users where id = $1', [actor.id]);

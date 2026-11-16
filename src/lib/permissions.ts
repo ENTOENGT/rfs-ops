@@ -11,6 +11,7 @@ export type Perm =
   | 'drivers.manage' | 'vehicles.manage' | 'customers.manage' | 'locations.manage'
   | 'users.manage' | 'roles.manage' | 'settings.manage' | 'audit.view'
   | 'users.manage_department' | 'roles.manage_department'
+  | 'users.view_team' | 'users.manage_team' | 'jobfiles.view_team' | 'jobs.view_team' | 'runs.view_team' | 'pro.view_team'
   | 'runs.view_all' | 'runs.view_department' | 'runs.create' | 'runs.cancel' | 'runs.assign' | 'runs.update_status'
   | 'rentals.approve'
   | 'pro.view_all' | 'pro.view_department' | 'pro.create' | 'pro.assign' | 'pro.update' | 'pro.charges.view' | 'pro.charges.edit' | 'pro.configure'

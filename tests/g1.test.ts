@@ -208,10 +208,10 @@ test('7. Notifications page: filters, unread count, read, email choices saved', 
   await rejects(saveNotificationPref(coord, { event: 'nonsense', email: true }), 'VALIDATION');
 });
 
-test('8. Customer Service retired: the role can no longer be given, people who have it are flagged, history stays', async () => {
-  const roles = (await listUsers(admin)).roles.map((r: any) => r.code);
-  assert.ok(!roles.includes('customer_service'));
-  const csRole = (await one(`select id from roles where code = 'customer_service'`)).id;
+test('8. A retired role can no longer be given, people who have it are flagged, history stays (Customer Service came back in 026)', async () => {
+  assert.ok((await listUsers(admin)).roles.map((r: any) => r.code).includes('customer_service'), 'Customer Service is back (migration 026)');
+  const csRole = (await one(`insert into roles (code, name, side, retired_at) values ('old_retired_role', 'Old role', 'operations', now()) returning id`)).id;
+  assert.ok(!(await listUsers(admin)).roles.some((r: any) => r.code === 'old_retired_role'));
   await q('update users set role_id = $2 where id = $1', [agent.id, csRole]);
   assert.equal((await listUsers(admin)).users.find((u: any) => u.id === agent.id).role_retired, true);
   assert.ok(await one(`select 1 from information_schema.tables where table_name = 'cs_cases'`), 'cases are kept');

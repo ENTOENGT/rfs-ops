@@ -36,5 +36,5 @@ test('…and sees nothing else', async () => {
   await assert.rejects(listJobs(team, {}), (e: any) => e.code === 'FORBIDDEN');
   const mods = visibleModules((p) => team.has(p as any), { moneyScreens: true });
   assert.deepEqual(mods.map((m) => m.key), ['dashboard', 'lcl', 'reports']);
-  assert.deepEqual(mods.find((m) => m.key === 'reports')!.items.map((i) => i.href), ['/lcl/reports'], 'Reports holds only the LCL reports');
+  assert.deepEqual(mods.find((m) => m.key === 'reports')!.items.map((i) => i.href), ['/performance', '/lcl/reports'], 'Reports holds My performance and the LCL reports');
 });

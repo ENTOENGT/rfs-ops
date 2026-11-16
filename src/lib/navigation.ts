@@ -86,12 +86,13 @@ export const MODULES: NavModule[] = [
   { key: 'documents', label: 'Documents', icon: 'folder', items: [
     { href: '/documents', label: 'Transport documents', perm: 'jobs.view' }] },
   { key: 'reports', label: 'Reports', icon: 'chart', items: [
+    { href: '/performance', label: 'My performance' },                       // migration 026: everyone
     { href: '/reports', label: 'Reports', perm: 'reports.view' },
     { href: '/financials', label: 'Financials', perm: ['finance.buying.view', 'finance.selling.view'] },
     { href: '/lcl/reports', label: 'LCL reports', perm: LCL },
-    { href: '/erp', label: 'ERP export', perm: ['erp.view', 'erp.export'], section: 'ERP' }], paths: ['/reports', '/financials', '/erp'] },
+    { href: '/erp', label: 'ERP export', perm: ['erp.view', 'erp.export'], section: 'ERP' }], paths: ['/reports', '/financials', '/erp', '/performance'] },
   { key: 'admin', label: 'Administration', icon: 'shield', items: [
-    { href: '/users', label: 'Users', perm: ['users.manage', 'users.manage_department'] },
+    { href: '/users', label: 'People', perm: ['users.manage', 'users.manage_department', 'users.manage_team'] },
     { href: '/roles', label: 'Roles & permissions', perm: ['roles.manage', 'roles.manage_department'] },
     { href: '/settings', label: 'Settings', perm: 'settings.manage' },
     { href: '/customers', label: 'Customers', perm: ['jobs.view', 'customers.manage'], section: 'Master data' },

@@ -20,7 +20,7 @@ import { ApiError, bad, Db, forbidden, getSetting, notFound, one, q, tx } from '
 import { jobNoProblem } from '../lib/requestRules';
 import { DIRECTIONS, MODES, JF_STATUSES, INCOTERMS, jfStatusName, jfStatusColor, label, milestonePlan, qStatusName, qStatusColor } from '../lib/jobfileRules';
 import { normContainer } from './pro';
-import { stageName, stageColor, nextAction, divisionName, directionOfDivision, PRE_CONFIRM } from '../lib/commercialRules';
+import { stageName, stageColor, nextAction, divisionName, directionOfDivision, PRE_CONFIRM, STAGE_ORDER } from '../lib/commercialRules';
 import { isCurrency } from '../lib/currency';
 import { FIELD_LABEL, incotermMissing, incotermRequired } from '../lib/incotermRules';
 import { CargoLine, cargoTotals, dimsRequired, lineCbm, lineProblem } from '../lib/cargoRules';
@@ -45,9 +45,17 @@ export function jfScope(actor: Actor, params: unknown[], alias = 'f'): string {
   const c = [`${alias}.created_by = ${me}`];
   if (actor.has('jobfiles.view_department') && actor.department_id) { params.push(actor.department_id); c.push(`${alias}.department_id = $${params.length}`); }
   // Part E: Salesman / Coordinator see the shipments they are responsible for
-  if (actor.has('jobfiles.view_assigned')) c.push(`${alias}.salesman_id = ${me}`, `${alias}.coordinator_id = ${me}`);
+  if (actor.has('jobfiles.view_assigned')) c.push(`${alias}.salesman_id = ${me}`, `${alias}.coordinator_id = ${me}`, `${alias}.cs_handler_id = ${me}`);   // + Customer Service (026)
   // Operations works on everything handed over to it
   if (actor.has('jobfiles.view_handed_over')) c.push(`${alias}.stage = 'handed_over'`);
+  // migration 026: whoever is given a part of the job sees it; Documentation sees the jobs whose DO is in
+  c.push(`${alias}.ops_handler_id = ${me}`, `${alias}.docs_handler_id = ${me}`);
+  if (actor.department_code === 'documentations' && actor.has('jobfiles.view_department')) c.push(`${alias}.do_received_at is not null`);
+  // migration 026: the Customer Service Manager sees confirmed jobs nobody has been given yet (to assign them)
+  if (actor.department_code === 'customer_service' && actor.has('users.manage_department'))
+    c.push(`(${alias}.cs_handler_id is null and ${alias}.stage in ('customer_confirmed','booking_requested','booking_confirmed','prealert_awaited','prealert_received','prealert_verified'))`);
+  // migration 025: a manager / team leader sees what anyone in their team (at any level) created or is responsible for
+  if (actor.has('jobfiles.view_team')) c.push(`exists (select 1 from user_team(${me}) tm where tm in (${alias}.created_by, ${alias}.salesman_id, ${alias}.coordinator_id, ${alias}.cs_handler_id, ${alias}.ops_handler_id, ${alias}.docs_handler_id))`);
   return ` and (${c.join(' or ')})`;
 }
 
@@ -118,6 +126,12 @@ const FIELDS: Record<string, { label: string; parse: (v: unknown) => unknown }> 
   direction: { label: 'Direction', parse: pick(DIRECTIONS, 'import, export, cross-trade or domestic') },
   mode: { label: 'Mode', parse: pick(MODES, 'sea FCL, sea LCL, air, road, courier or others') },
   needs_clearance: { label: 'Needs customs clearance', parse: flag },
+  // migration 026: the kind of job, and the agent at each end (or "Ourselves")
+  job_type: { label: 'Job type', parse: pick([['freight', 'Freight'], ['clearance_delivery', 'Clearance & Delivery']], 'freight or clearance & delivery') },
+  origin_agent_id: { label: 'Origin agent', parse: (v) => { if (v === null || v === '') return null; if (!isUuid(v)) throw bad('Choose the origin agent'); return v; } },
+  destination_agent_id: { label: 'Destination agent', parse: (v) => { if (v === null || v === '') return null; if (!isUuid(v)) throw bad('Choose the destination agent'); return v; } },
+  origin_is_us: { label: 'Origin agent: ourselves', parse: flag },
+  destination_is_us: { label: 'Destination agent: ourselves', parse: flag },
   needs_transport: { label: 'Needs transport', parse: flag },
   needs_warehouse: { label: 'Needs warehouse', parse: flag },
   customer_reference: { label: 'Customer reference', parse: (v) => txt(v, 80) },
@@ -220,6 +234,15 @@ const liveCargo = (id: string, db?: Db) => q(`select id, line_no, package_type, 
 
 // ------------------------------------------------------------ create
 /** Create a Job File. `c` lets a quotation create it inside its own transaction. */
+/** Agents must be real vendors; "Ourselves" at an end clears that end's agent (migration 026). */
+async function checkAgents(db: Db, vals: Record<string, unknown>) {
+  for (const end of ['origin', 'destination']) {
+    if (vals[`${end}_is_us`] === true) vals[`${end}_agent_id`] = null;
+    const id = vals[`${end}_agent_id`];
+    if (id && !(await one('select 1 from vendors where id = $1 and deleted_at is null', [id], db))) throw bad(`Choose the ${end} agent`);
+  }
+}
+
 export async function createJobFile(actor: Actor, b: any, c?: PoolClient, from?: { quotation_id: string }): Promise<{ id: string; job_no: string; enquiry_ref: string }> {
   if (!actor.has('jobfiles.create')) throw forbidden();
   // Part E: an enquiry has no Job No. yet — it gets one from the ERP at handover. A direct (already confirmed) job needs it now.
@@ -244,6 +267,7 @@ export async function createJobFile(actor: Actor, b: any, c?: PoolClient, from?:
 
   const run = async (db: PoolClient) => {
     if (!(await one('select 1 from customers where id = $1 and deleted_at is null', [vals.customer_id], db))) throw bad('Customer not found');
+    await checkAgents(db, vals);
     const cm = await import('./commercial');
     await cm.assertCustomerAllowed(actor, vals.customer_id as string, db);
     if (jobNo) {
@@ -268,6 +292,8 @@ export async function createJobFile(actor: Actor, b: any, c?: PoolClient, from?:
     vals.email_topic = from0 && to0 ? `${from0} to ${to0}` : from0 || to0 || null;
     if (!enquiry) Object.assign(vals, { handed_over_at: new Date(), handed_over_by: actor.id });
     let deptId: string | null = actor.department_side === 'operations' ? actor.department_id : null;
+    // migration 026: a direct Clearance & Delivery job belongs to Documentation from the start
+    if (!enquiry && vals.job_type === 'clearance_delivery') deptId = (await one(`select id from departments where code = 'documentations'`, [], db))?.id ?? deptId;
     if (!deptId && b.department_id) {
       const d = isUuid(b.department_id) ? await one(`select id from departments where id = $1 and side = 'operations' and is_active`, [b.department_id], db) : null;
       if (!d) throw bad('Choose an operations department');
@@ -283,6 +309,7 @@ export async function createJobFile(actor: Actor, b: any, c?: PoolClient, from?:
     for (const [i, [code, name]] of plan.entries())
       await db.query('insert into job_file_milestones (job_file_id, code, name, sort_order) values ($1,$2,$3,$4)', [f.id, code, name, (i + 1) * 10]);
     if (cargo.length) await saveCargo(db, actor, f.id, cargo, f.mode);
+    if (!enquiry && vals.job_type === 'clearance_delivery') await (await import('./handlers')).startClearance(db, actor, f.id, b.handler_id);
     const conts = Array.isArray(b.containers) ? b.containers.filter((k: any) => String(k?.container_no ?? '').trim()) : [];
     for (const k of conts)
       await db.query('insert into job_file_containers (job_file_id, container_no, size_type, seal_no) values ($1,$2,$3,$4) on conflict do nothing',
@@ -327,6 +354,8 @@ export const COMMERCIAL_VIEWS: Record<string, string> = {
   // UI redesign: dashboard and Bookings menu views (Part G2 data)
   c_pending_quotes: `f.stage in ('rates_requested','rates_received','quotation_draft','pending_approval')`,
   c_active: `f.stage in ('customer_confirmed','booking_requested','booking_confirmed','prealert_awaited','prealert_received','prealert_verified')`,
+  // migration 026: confirmed jobs nobody in Customer Service has yet
+  c_cs_assign: `f.cs_handler_id is null and f.stage in ('customer_confirmed','booking_requested','booking_confirmed','prealert_awaited','prealert_received','prealert_verified')`,
   c_vessel_pending: `f.stage in ('booking_confirmed','prealert_awaited','prealert_received','prealert_verified') and f.mode <> 'road' and f.vessel_status <> 'verified'`,
   c_bl_customer: `f.bl_status in ('sent_to_customer','revised_sent') and f.stage not in ('lost','cancelled')`,
   c_bl_correction: `f.bl_status in ('correction_required','correction_sent','revised_received') and f.stage not in ('lost','cancelled')`,
@@ -349,7 +378,7 @@ function filterSql(actor: Actor, p: Record<string, string>, params: unknown[]) {
   for (const [k, col] of Object.entries({ salesman_id: 'f.salesman_id', coordinator_id: 'f.coordinator_id' }))
     if (p[k]) { if (p[k] === 'me') w += ` and ${col} = ${add(actor.id)}`; else { if (!isUuid(p[k])) throw bad('Invalid filter'); w += ` and ${col} = ${add(p[k])}`; } }
   if (p.mine === '1') w += ` and f.created_by = ${add(actor.id)}`;
-  if (p.assigned === '1') w += ` and (f.coordinator_id = ${add(actor.id)} or f.salesman_id = $${params.length})`;
+  if (p.assigned === '1') w += ` and (f.coordinator_id = ${add(actor.id)} or f.salesman_id = $${params.length} or f.cs_handler_id = $${params.length})`;
   if (p.division) w += ` and f.division = ${add(p.division)}`;
   if (p.stage) w += ` and f.stage = any(${add(p.stage.split(','))})`;
   return w;
@@ -358,6 +387,10 @@ const LIST_COLS = `f.id, f.job_no, f.enquiry_ref, f.shipping_ref, f.stage, f.div
   sm.full_name salesman_name, co.full_name coordinator_name, f.direction, f.mode, f.status, f.needs_clearance, f.needs_transport, f.needs_warehouse,
   f.origin, f.destination, f.port_of_loading, f.port_of_discharge, f.carrier, f.mbl_mawb, f.hbl_hawb, f.etd, f.eta, f.atd, f.ata,
   f.created_at, f.closed_at, c.name customer_name, dep.name department_name, u.full_name created_by_name,
+  f.job_type, case when f.origin_is_us then 'Ourselves (RFS)' else (select v.name from vendors v where v.id = f.origin_agent_id) end origin_agent,
+  case when f.destination_is_us then 'Ourselves (RFS)' else (select v.name from vendors v where v.id = f.destination_agent_id) end destination_agent,
+  (select x.full_name from users x where x.id = f.cs_handler_id) cs_handler_name, (select x.full_name from users x where x.id = f.ops_handler_id) ops_handler_name,
+  (select x.full_name from users x where x.id = f.docs_handler_id) docs_handler_name,
   (select string_agg(k.container_no, ', ' order by k.container_no) from job_file_containers k where k.job_file_id = f.id and k.deleted_at is null) container_list,
   (select count(*)::int from transport_requests t where t.job_file_id = f.id and t.deleted_at is null and t.status_code <> 'cancelled') trips,
   (select count(*)::int from pro_requests r where r.job_file_id = f.id and r.deleted_at is null and r.status_code <> 'cancelled') pro_requests,
@@ -365,6 +398,7 @@ const LIST_COLS = `f.id, f.job_no, f.enquiry_ref, f.shipping_ref, f.stage, f.div
 const LIST_FROM = `from job_files f join customers c on c.id = f.customer_id left join departments dep on dep.id = f.department_id join users u on u.id = f.created_by
   left join users sm on sm.id = f.salesman_id left join users co on co.id = f.coordinator_id`;
 const shape = (r: any) => ({ ...r, direction_name: label(DIRECTIONS, r.direction), mode_name: label(MODES, r.mode),
+  job_type_name: r.job_type === 'clearance_delivery' ? 'Clearance & Delivery' : 'Freight',
   status_name: jfStatusName(r.status), status_color: jfStatusColor(r.status),
   stage_name: stageName(r.stage), stage_color: stageColor(r.stage), next_action: nextAction(r.stage), division_name: divisionName(r.division) });
 
@@ -418,7 +452,11 @@ export async function getJobFile(actor: Actor, id: string) {
   const f = await loadFile(actor, id);
   const [extra, containers, milestones, events, work] = await Promise.all([
     one(`select c.name customer_name, c.service_instructions, dep.name department_name, u.full_name created_by_name, cb.full_name closed_by_name,
-       sm.full_name salesman_name, co.full_name coordinator_name, cf.full_name confirmed_by_name, ho.full_name handed_over_by_name
+       sm.full_name salesman_name, co.full_name coordinator_name, cf.full_name confirmed_by_name, ho.full_name handed_over_by_name,
+       (select x.full_name from users x where x.id = f.cs_handler_id) cs_handler_name,
+       (select x.full_name from users x where x.id = f.ops_handler_id) ops_handler_name, (select x.full_name from users x where x.id = f.docs_handler_id) docs_handler_name,
+       dep.code department_code, (select v.name from vendors v where v.id = f.origin_agent_id) origin_agent_name,
+       (select v.name from vendors v where v.id = f.destination_agent_id) destination_agent_name
        from job_files f join customers c on c.id = f.customer_id left join departments dep on dep.id = f.department_id
        join users u on u.id = f.created_by left join users cb on cb.id = f.closed_by left join users sm on sm.id = f.salesman_id
        left join users co on co.id = f.coordinator_id left join users cf on cf.id = f.confirmed_by left join users ho on ho.id = f.handed_over_by where f.id = $1`, [id]),
@@ -469,7 +507,20 @@ export async function getJobFile(actor: Actor, id: string) {
     quotations: quotations?.map((x) => ({ ...x, status_name: qStatusName(x.status), status_color: qStatusColor(x.status) })) ?? null, vendor_requests: vendorRequests,
     closure: { can_close: blockers.length === 0, blockers,
       warnings: milestones.filter((m) => !m.actual_at).map((m) => `Milestone "${m.name}" has no actual date`) },
-    can: { edit, status: edit, close: (actor.isSuperAdmin || actor.has('jobfiles.close')) && f.status !== 'cancelled',
+    // migration 027: unread team chat messages for this person
+    chat_unread: (await one(`select count(*)::int n from job_chat_messages x where x.job_file_id = $1 and x.user_id <> $2
+      and x.created_at > coalesce((select r.read_at from job_chat_reads r where r.job_file_id = $1 and r.user_id = $2), '-infinity')`, [id, actor.id]))?.n ?? 0,
+    // migration 027: the live status of the people on the job
+    people_status: Object.fromEntries((await q(`select u.id, ${(await import('./presence')).presenceCols('u')} from users u
+      where u.id = any($1)`, [[f.salesman_id, f.coordinator_id, f.cs_handler_id, f.ops_handler_id, f.docs_handler_id].filter(Boolean)])).map((r: any) => [r.id, r])),
+    can: { ...(await (async () => { const h = await import('./handlers'); const g = { ...f, department_code: extra?.department_code };
+        const opsTeam = h.canPick(actor, 'ops', g) || (actor.has('jobfiles.edit') && actor.department_id === f.department_id);
+        const clr = f.job_type === 'clearance_delivery';
+        return { ops_pick: !clr && h.canPick(actor, 'ops', g), docs_pick: h.canPick(actor, 'docs', g),
+          do_received: !clr && f.stage === 'handed_over' && !f.do_received_at && opsTeam,
+          docs_cleared: (!!f.do_received_at || (clr && f.stage === 'handed_over')) && !f.docs_cleared_at && h.canPick(actor, 'docs', g) }; })()),
+      cs_pick: (await import('./handlers')).canPickCs(actor, f) && STAGE_ORDER.indexOf(f.stage ?? 'enquiry') >= STAGE_ORDER.indexOf('customer_confirmed') && !['lost', 'cancelled'].includes(f.stage),
+      edit, status: edit, close: (actor.isSuperAdmin || actor.has('jobfiles.close')) && f.status !== 'cancelled',
       request_transport: actor.has('jobs.create') && isOpen(f), request_pro: actor.has('pro.create') && isOpen(f),
       quote: actor.has('quotes.create') && isOpen(f) && (!commercial || PRE_CONFIRM.includes(f.stage) || f.stage === 'handed_over'),
       ask_vendor: (actor.isSuperAdmin || actor.has('vendors.requests')) && isOpen(f),
@@ -501,6 +552,15 @@ export async function updateJobFile(actor: Actor, id: string, b: any) {
       throw new ApiError(400, 'VALIDATION', `This enquiry is in the ${divisionName(f.division)} division (it is in the Enquiry Ref), so its direction stays ${DIRECTIONS.find(([c]) => c === directionOfDivision(f.division))?.[1]}.`,
         { fields: { direction: 'Follows the division' } });
     if (next.etd && next.eta && String(next.eta) < String(next.etd)) throw bad('ETA is before ETD');
+    // migration 026: agents are real vendors ("Ourselves" clears that end); the job type is fixed once the job is opened
+    if (changes.some(([k]) => k === 'job_type') && f.status !== 'enquiry') throw bad('The job type can only be changed at enquiry stage');
+    if (changes.some(([k]) => /^(origin|destination)_(agent_id|is_us)$/.test(k))) {
+      await checkAgents(c, next);
+      for (const end of ['origin', 'destination']) if (next[`${end}_is_us`] === true && f[`${end}_agent_id`]) {
+        const i = changes.findIndex(([x]) => x === `${end}_agent_id`);
+        if (i >= 0) changes[i][1] = null; else changes.push([`${end}_agent_id`, null]);
+      }
+    }
     // Incoterm details (migration 023): checked at enquiry stage when the term or one of its fields is changed
     if (f.status === 'enquiry' && changes.some(([k]) => INCOTERM_KEYS.includes(k))) checkIncoterm(next, f.incoterm == null);
     // cargo lines (migration 023): when the shipment has lines, its totals always come from them

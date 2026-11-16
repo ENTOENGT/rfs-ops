@@ -31,6 +31,12 @@ export function JobFileFields({ f, setF, fe = {}, isNew }: { f: any; setF: (v: a
   const terms = incotermNeeds(f.incoterm, f.direction, !!f.needs_transport, f.mode);
   const portless = noPorts(f.mode);
   const own = lk.my_department?.side === 'operations';
+  // migration 026: the agent at each end of a cross-trade shipment — a vendor, or ourselves
+  const agentPick = (end: 'origin' | 'destination') => (
+    <select value={f[`${end}_is_us`] ? 'us' : f[`${end}_agent_id`] ?? ''}
+      onChange={(e) => setF({ ...f, [`${end}_is_us`]: e.target.value === 'us', [`${end}_agent_id`]: e.target.value === 'us' ? null : e.target.value || null })}>
+      <option value="">Not chosen yet</option><option value="us">Ourselves (RFS)</option>
+      {(lk.vendors ?? []).filter((v: any) => v.vendor_type !== 'shipping_line').map((v: any) => <option key={v.id} value={v.id}>{v.name}</option>)}</select>);
   const tick = (k: string, text: string) => (
     <label className="small" style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
       <input type="checkbox" style={{ width: 'auto' }} checked={!!f[k]} onChange={set(k)} />{text}</label>);
@@ -67,6 +73,13 @@ export function JobFileFields({ f, setF, fe = {}, isNew }: { f: any; setF: (v: a
           <select value={f.mode ?? ''} onChange={set('mode')}><option value="">Choose</option>
             {MODES.map(([c, n]) => <option key={c} value={c}>{n}</option>)}</select><Err m={fe.mode} /></label>
         <label className="f"><span>Customer reference</span><input value={f.customer_reference ?? ''} onChange={set('customer_reference')} /></label>
+        {/* migration 026: a Clearance & Delivery job has no freight — it starts with Documentation (or with you, if you are a Salesman) */}
+        {(isNew || enq) && <label className="f"><span>Job type</span>
+          <select value={f.job_type ?? 'freight'} onChange={set('job_type')}><option value="freight">Freight</option><option value="clearance_delivery">Clearance &amp; Delivery</option></select></label>}
+        {f.direction === 'cross_trade' && <>
+          <label className="f"><span>Origin agent</span>{agentPick('origin')}</label>
+          <label className="f"><span>Destination agent</span>{agentPick('destination')}</label>
+        </>}
       </div>
       <div style={{ display: 'flex', gap: 18, flexWrap: 'wrap', marginTop: 12 }}>
         {tick('needs_clearance', 'Needs customs clearance (PRO)')}{tick('needs_transport', 'Needs transport')}{tick('needs_warehouse', 'Goes into our warehouse')}

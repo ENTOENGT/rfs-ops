@@ -1,0 +1,29 @@
+RFS Ops — Releases J, K and L in one upload
+=============================================
+
+What is inside
+  J  Organisation hierarchy: designations, reporting lines, team rights, People page, roles grid
+  K  Your workflow: Customer Service after confirmation, default handlers, handover routing,
+     Ops -> Documentation -> Ops, Cross Trade agents, Clearance & Delivery jobs, My performance
+  L  Live status (online / away / busy / on leave / offline) and team chat on each shipment
+
+Step 1 — Database (Supabase -> SQL Editor). Run these three files from this zip, one at a time, in this order:
+  db/migrations/025_hierarchy.sql
+  db/migrations/026_workflow.sql
+  db/migrations/027_status_chat.sql
+  Each one is safe to run twice. Wait for "Success" before the next.
+
+Step 2 — Code (GitHub). Upload every other file in this zip to the same paths, in ONE commit.
+  Netlify then builds once.
+
+Step 3 — Quick checks after the deploy
+  1. Log in as Super Admin -> Administration -> People: tabs People / Organisation chart / Default handlers / Designations.
+  2. People -> Default handlers: set a Customer Service handler for "All customers".
+  3. Click your name (top right): set yourself Busy, then Available.
+  4. Open any shipment -> Team chat tab: send a message.
+  5. Reports -> My performance: choose This month, then Download Excel.
+
+First things to set up (no rush)
+  - Give each person their designation and "Reports to" (People -> Edit).
+  - Default handlers for Customer Service, each Ops team and Documentation.
+  - Create the Customer Service Manager and Documentation Executive users.

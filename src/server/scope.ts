@@ -13,14 +13,15 @@ export function jobScope(actor: Actor, params: unknown[], alias = 't'): string {
   if (actor.has('jobs.view_all')) return '';
   params.push(actor.id);
   const me = `$${params.length}`;
+  const team = actor.has('jobs.view_team') ? ` or ${alias}.requested_by in (select user_team(${me}))` : '';   // migration 025
   if (actor.has('jobs.view_department') && actor.department_id) {
     params.push(actor.department_id);
-    return ` and (${alias}.department_id = $${params.length} or ${alias}.requested_by = ${me})`;
+    return ` and (${alias}.department_id = $${params.length} or ${alias}.requested_by = ${me}${team})`;
   }
   if (actor.has('jobs.view_assigned'))
-    return ` and (${alias}.requested_by = ${me} or exists (select 1 from transport_assignments sa join drivers sd on sd.id = sa.driver_id
+    return ` and (${alias}.requested_by = ${me}${team} or exists (select 1 from transport_assignments sa join drivers sd on sd.id = sa.driver_id
       where sa.job_id = ${alias}.id and sa.is_current and sd.user_id = ${me} and sd.deleted_at is null))`;
-  return ` and ${alias}.requested_by = ${me}`;
+  return ` and (${alias}.requested_by = ${me}${team})`;
 }
 
 /** A driver on the phone app: sees only their own jobs and can only move them along the road. */
