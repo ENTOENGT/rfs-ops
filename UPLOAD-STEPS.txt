@@ -1,19 +1,27 @@
-RFS CRM — Release P (fix: inbox check every minute)
-=====================================================
+RFS CRM — Release Q (AI agent part A: customer replies -> missing details)
+=========================================================================
 
-Upload this after Release O.
+Upload this after Release P.
 
-What is fixed
-  - "Check inbox now" and the automatic check were stuck after the first check (a database lock was never let go).
-    Now one check at a time is kept a simpler way that clears itself.
-  - The inbox is checked every minute while RFS CRM is open (was every 10 minutes).
-  - A check that is already running now says so, instead of showing nothing.
+What is new
+  When a customer replies on an enquiry that still has Missing details, the AI reads the reply and shows what it found
+  in a purple "Suggestions from emails" box under Missing details. Nothing changes until you tick the answers and press
+  "Fill in". Then "Ask the customer by email" asks only for what is still missing.
 
-Step 1 — Database (Supabase -> SQL Editor). Run this one file:
-  db/migrations/031_inbox_lock.sql
+Step 1 — Anthropic key (only once)
+  1. Someone at your company opens https://console.anthropic.com, signs in, adds billing / credit,
+     then API keys -> Create key. Copy the key (it starts with sk-ant-...).
+  2. Netlify -> Site configuration -> Environment variables -> Add a variable:
+       ANTHROPIC_API_KEY    the key (paste it yourself; do not send it to anyone)
+     Scope: All scopes.
+
+Step 2 — Database (Supabase -> SQL Editor). Run this one file:
+  db/migrations/032_ai_agent.sql
   Safe to run again. Wait for "Success".
 
-Step 2 — Code (GitHub). Upload every other file in this zip to the same paths, in ONE commit.
+Step 3 — Code (GitHub). Upload every other file in this zip to the same paths, in ONE commit.
+  Netlify then builds once (and picks up the new key).
 
-Step 3 — Check: My Outlook -> "Check inbox now" -> a green message shows and "Last checked" changes.
-  Then open ENQ-EXP-26-00005 -> Emails tab: the customer's reply shows as "Received".
+Step 4 — Check
+  Open ENQ-EXP-26-00005 (the customer has already replied). The purple box should show what the AI found
+  (pickup address, weight, DG, ready date). Tick, press "Fill in", and Missing details gets shorter.

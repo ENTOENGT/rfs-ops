@@ -14,6 +14,7 @@ import { typedLines, DIM_UNITS } from '@/lib/cargoRules';
 import { noVessel } from '@/lib/jobfileRules';
 import { INCOTERM_INFO } from '@/lib/incotermRules';
 import { TeamChat } from '@/components/TeamChat';
+import { AiSuggestions } from '@/components/AiSuggestions';
 import { StageHeader, HandlersPanel, RatesAndQuotes, BookingPanel, PrealertPanel, HandoverPanel, LclPanel } from '@/components/CommercialPanels';
 
 const RUN_STATUS: Record<string, string> = { pending: 'Waiting', assigned: 'Assigned', collected: 'Collected', delivered: 'Delivered', failed: 'Could not complete', cancelled: 'Cancelled' };
@@ -168,6 +169,7 @@ export default function JobFile({ params }: { params: { id: string } }) {
             {d.can.edit && <EmailButton kind="enquiry_missing" id={d.id} label="Ask the customer by email" className="btn small primary" onLogged={() => { load(); setEmailsKey((k) => k + 1); }} />}
             {d.can.edit && <button className="btn small" style={{ marginLeft: 6 }} onClick={() => { setEdit({ ...d, cargo_lines: (d.cargo_lines ?? []).map((l: any) => ({ ...l, length: Number(l.length), width: Number(l.width), height: Number(l.height), weight_kg: Number(l.weight_kg) })) }); window.scrollTo(0, 0); }}>Fill in</button>}
           </div>}
+      {!edit && d.status === 'enquiry' && <AiSuggestions key={`${d.id}-${emailsKey}`} fileId={d.id} canEdit={!!d.can.edit} hasGaps={(d.enquiry_gaps ?? []).length > 0} onApplied={load} />}
       {edit ? <>
         <JobFileFields f={edit} setF={setEdit} />
         <div className="form-actions"><button className="btn" onClick={() => setEdit(null)}>Cancel</button>

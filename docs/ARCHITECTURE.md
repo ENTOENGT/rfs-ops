@@ -728,3 +728,13 @@ the app is open (no scheduled function). An expired delta link is cleared, so th
 Fix (031): "one check at a time" is outlook_connections.sync_started_at (cleared after the check, ignored after 2 minutes),
 not a session advisory lock — the Supabase transaction pooler left that lock held, so every later check returned busy.
 A check stops fetching new pages after ~6 s (25 emails a page) and the next check carries on from the saved link.
+
+### 15v. AI agent part A — customer replies → missing details (migration 032, 19 Nov 2026)
+`src/server/ai.ts` calls the Anthropic Messages API (ANTHROPIC_API_KEY; AI_MODEL optional, default `claude-haiku-5-5`), always with
+one forced tool so the answer has a fixed shape; 8-second limit. `src/server/agent.ts`: `readEmail` takes a received email on an
+enquiry, fetches its full text once from the Outlook it came into (kept in email_messages.body_text), sends Claude the enquiry's
+missing details (`enquiry_gaps`: built-in + checklist, with key, label, format and what we asked) and the email, and checks the
+answer (only listed keys; yes/no, YYYY-MM-DD, numbers, Incoterm codes; NA → "not answered clearly"). Saved as ai_suggestions
+(one per email; 'open' or 'nothing'). The enquiry page (AiSuggestions) reads the newest unread received email by itself when the
+enquiry still has gaps and the viewer can edit it. Nothing changes until a person ticks answers and presses "Fill in" →
+`updateJobFile` in their name + a history line; or Dismiss. Cargo lines are shown but filled by hand.
