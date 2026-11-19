@@ -1,5 +1,5 @@
 'use client';
-/** G3 step 1 (migration 029): "My Outlook" — connect or disconnect your own Outlook mailbox (pilot users). */
+/** "My Outlook" (pilot users): connect or disconnect your own Outlook (step 1), check the inbox and file the emails no shipment matched (step 3). */
 import { useEffect, useState } from 'react';
 import { api, fmtDateTime } from '@/components/api';
 
@@ -19,7 +19,7 @@ export default function MyOutlook() {
     try { await api('/api/outlook', { method: 'DELETE' }); setNote({ t: 'ok', m: 'Outlook disconnected.' }); load(); } catch (e: any) { setNote({ t: 'err', m: e.message }); }
   };
   return (
-    <div className="page" style={{ maxWidth: 760 }}>
+    <div className="page" style={{ maxWidth: 1180 }}>
       <div className="page-head"><h1>My Outlook</h1></div>
       {note && <div className={`msg ${note.t}`}>{note.m}</div>}
       {!s ? <p className="muted">Loading…</p> : <div className="panel">
@@ -42,6 +42,54 @@ export default function MyOutlook() {
             <a className="btn primary" href="/api/outlook/connect">Connect my Outlook</a>
           </>}
       </div>}
+      {s?.connected && !s.last_error && <Inbox />}
+    </div>
+  );
+}
+
+/** Step 3: check the inbox, and the emails from customers / agents that matched no shipment. */
+function Inbox() {
+  const [d, setD] = useState<any>(null);
+  const [busy, setBusy] = useState(false);
+  const [note, setNote] = useState<{ t: 'ok' | 'err'; m: string } | null>(null);
+  const [refs, setRefs] = useState<Record<string, string>>({});
+  const load = () => api('/api/outlook/inbox').then(setD).catch((e) => setNote({ t: 'err', m: e.message }));
+  const check = async (quiet = false) => {
+    setBusy(true); if (!quiet) setNote(null);
+    try {
+      const r = await api('/api/outlook/sync', { body: {} });
+      if (!quiet && !r.busy) setNote({ t: 'ok', m: `Checked: ${r.filed} email(s) filed on shipments, ${r.waiting} waiting below.${r.more ? ' More to read — press Check again.' : ''}` });
+    } catch (e: any) { setNote({ t: 'err', m: e.message }); }
+    setBusy(false); load();
+  };
+  useEffect(() => { load(); check(true); }, []);
+  const act = async (id: string, b: any, ok: string) => {
+    try { await api(`/api/outlook/inbox/${id}`, { body: b }); setNote({ t: 'ok', m: ok }); load(); } catch (e: any) { setNote({ t: 'err', m: e.message }); }
+  };
+  return (
+    <div className="panel">
+      <div className="page-head" style={{ marginBottom: 6 }}><h2 style={{ margin: 0 }}>Emails to file</h2><span className="spacer" />
+        <button className="btn" disabled={busy} onClick={() => check()}>{busy ? 'Checking…' : 'Check inbox now'}</button></div>
+      <p className="muted small" style={{ marginTop: 0 }}>RFS CRM reads your inbox (it never changes or deletes anything) and files each email on its shipment by the
+        tag in the subject, like [ENQ-…] or the Job No., or by the same email conversation. Emails from your customers and agents that match
+        no shipment wait here. Other emails are not saved. It also checks by itself while RFS CRM is open.</p>
+      {note && <div className={`msg ${note.t}`}>{note.m}</div>}
+      {d?.last_sync_at && <p className="muted small">Last checked {fmtDateTime(d.last_sync_at)}</p>}
+      {!d ? <p className="muted">Loading…</p> : d.rows.length === 0 ? <div className="empty small">Nothing waiting. Every email from your customers and agents is on its shipment.</div>
+        : <div className="table-wrap"><table className="t">
+          <thead><tr><th>Received</th><th>From</th><th style={{ width: '45%' }}>Subject</th><th>File on shipment</th></tr></thead>
+          <tbody>{d.rows.map((m: any) => <tr key={m.id}>
+            <td className="small" style={{ whiteSpace: 'nowrap' }}>{fmtDateTime(m.received_at)}</td>
+            <td style={{ minWidth: 170 }}><b>{m.from_name || m.from_addr}</b><div className="muted small">{m.from_addr}</div>{m.known_as && <div className="small">{m.known_as}</div>}</td>
+            <td>{m.subject || <span className="muted">(no subject)</span>}{m.has_attachments && <span className="muted small"> · 📎</span>}
+              {m.body_excerpt && <div className="muted small">{String(m.body_excerpt).slice(0, 200)}</div>}
+              {m.web_link && <a className="small" href={m.web_link} target="_blank" rel="noopener">Open in Outlook</a>}</td>
+            <td style={{ minWidth: 250 }}><div style={{ display: 'flex', gap: 6 }}>
+              <input style={{ flex: 1, minWidth: 0 }} placeholder="ENQ / Job No. / Shipping Ref" value={refs[m.id] ?? ''} onChange={(e) => setRefs({ ...refs, [m.id]: e.target.value })}
+                onKeyDown={(e) => e.key === 'Enter' && refs[m.id]?.trim() && act(m.id, { action: 'file', ref: refs[m.id] }, 'Filed on the shipment.')} />
+              <button className="btn small primary" disabled={!refs[m.id]?.trim()} onClick={() => act(m.id, { action: 'file', ref: refs[m.id] }, 'Filed on the shipment.')}>File</button></div>
+              <button className="linkish small" style={{ marginTop: 6 }} onClick={() => act(m.id, { action: 'ignore' }, 'Hidden: not for a shipment.')}>Not for a shipment</button></td>
+          </tr>)}</tbody></table></div>}
     </div>
   );
 }

@@ -157,10 +157,30 @@ function usePresence() {
   return [st, setSt] as const;
 }
 
+/** Outlook step 3: while the app is open, a connected pilot user's inbox is checked every 10 minutes (quietly). */
+function useInboxCheck() {
+  useEffect(() => {
+    let on = false, last = 0;
+    const check = () => {
+      if (!on || document.visibilityState !== 'visible' || Date.now() - last < 9 * 60_000) return;
+      last = Date.now();
+      api('/api/outlook/sync', { body: {} }).catch(() => { /* shown on My Outlook */ });
+    };
+    api('/api/outlook').then((s) => {
+      on = !!(s?.configured && s?.pilot && s?.connected && !s?.last_error);
+      if (on && s.last_sync_at) last = new Date(s.last_sync_at).getTime();
+      check();
+    }).catch(() => {});
+    const t = setInterval(check, 60_000);
+    return () => clearInterval(t);
+  }, []);
+}
+
 function Profile({ me, logout }: { me: Me; logout: () => void }) {
   const [open, setOpen] = useState(false);
   const ref = useOutside(open, () => setOpen(false));
   const [st, setSt] = usePresence();
+  useInboxCheck();
   const [leave, setLeave] = useState<{ until: string; note: string } | null>(null);
   const set = async (b: any) => { try { setSt(await api('/api/presence', { method: 'PUT', body: b })); setLeave(null); setOpen(false); } catch (e: any) { alert(e.message); } };
   return (

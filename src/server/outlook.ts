@@ -153,9 +153,12 @@ export async function accessToken(userId: string) {
 /** One Microsoft Graph call for this person. */
 export async function graph(userId: string, path: string, init: RequestInit = {}) {
   const token = await accessToken(userId);
-  const res = await net(path.startsWith('https://') ? path : `https://graph.microsoft.com/v1.0${path}`, {
-    ...init, headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', ...(init.headers ?? {}) },
-  });
+  let res: Response;
+  try {
+    res = await net(path.startsWith('https://') ? path : `https://graph.microsoft.com/v1.0${path}`, {
+      ...init, headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', ...(init.headers ?? {}) },
+    });
+  } catch { throw new ApiError(502, 'MS_UNREACHABLE', 'Could not reach Microsoft just now. Try again in a minute.'); }
   if (res.status === 202 || res.status === 204) return null;
   const j: any = await res.json().catch(() => ({}));
   if (!res.ok) throw new ApiError(502, 'MS_GRAPH', `Outlook: ${j?.error?.message ?? res.statusText}`.slice(0, 300));

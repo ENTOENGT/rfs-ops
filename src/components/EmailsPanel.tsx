@@ -3,12 +3,14 @@ import { useEffect, useState } from 'react';
 import { api, fmtDateTime } from '@/components/api';
 import { uploadToShipment } from '@/components/CommercialPanels';
 import { emailTemplateName } from '@/lib/templateRules';
+import { useMe } from './Shell';
 
 /**
  * The shipment's Emails tab (Part G1): every email prepared with the Email button and every saved .msg / .eml file,
  * newest first, with sender, recipients, subject, date and attachments. The fixed subject is shown at the top to copy.
  */
 export function EmailsPanel({ d, onSaved }: { d: any; onSaved?: () => void }) {
+  const { me } = useMe();
   const [e, setE] = useState<any>(null);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<{ ok?: string; err?: string }>({});
@@ -59,6 +61,9 @@ export function EmailsPanel({ d, onSaved }: { d: any; onSaved?: () => void }) {
         <div className="small" style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginTop: 2 }}>
           {m.body_excerpt && <button className="linkish" onClick={() => setOpenId(openId === m.id ? null : m.id)}>{openId === m.id ? 'Hide text' : 'Show text'}</button>}
           {m.document_id && <button className="linkish" onClick={() => openDoc(m.document_id)}>Open email file</button>}
+          {m.source === 'mailbox' && (m.web_link && m.created_by === me?.id
+            ? <a href={m.web_link} target="_blank" rel="noopener">Open in my Outlook</a>
+            : <span className="muted">From {m.created_by_name}'s Outlook</span>)}
           {m.attachments.map((a: any) => <button key={a.id} className="linkish" onClick={() => openDoc(a.id)}>📎 {a.file_name}</button>)}
         </div>
         {openId === m.id && <pre className="small" style={{ whiteSpace: 'pre-wrap', background: 'var(--bg-soft, #F7F7F5)', padding: 8, borderRadius: 6, margin: '6px 0 0' }}>{m.body_excerpt}</pre>}

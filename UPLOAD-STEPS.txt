@@ -1,40 +1,23 @@
-RFS CRM — update up to Release N, in one upload
-=================================================
+RFS CRM — Release O (Outlook step 3: reading the inbox)
+=========================================================
 
-What is inside (everything since Release I — safe even if you already uploaded the J-K-L or M zip)
-  J  Organisation hierarchy: job titles, reporting lines, team rights, People page, roles grid
-  K  Your workflow: Customer Service, default handlers, handover routing, Ops <-> Documentation,
-     Cross Trade agents, Clearance & Delivery, My performance
-  L  Live status and team chat on each shipment
-  M  Checklists: enquiry and agent quote checklists, with ready emails asking for what is missing
-  N  (new) - The app is now called RFS CRM on screen (the web address stays rfsops.netlify.app)
-           - Documents are kept for good: the 30-day clean-up is switched off
-           - Outlook: pilot users connect their own Outlook and send emails from it
-           - Invitation email: a new person gets a one-time link (48 hours) to choose their own password
+Upload this only AFTER Release N (it holds just the changes since N: 11 files).
 
-Step 1 — Database (Supabase -> SQL Editor). Run these files from this zip, one at a time, in this order:
-  db/migrations/025_hierarchy.sql
-  db/migrations/026_workflow.sql
-  db/migrations/027_status_chat.sql
-  db/migrations/028_checklists.sql
-  db/migrations/029_outlook.sql      <- the only new one if you already ran 025-028
-  Each one is safe to run again. Wait for "Success" before the next.
+What is new
+  RFS CRM reads the Outlook inbox of the pilot users (read only — nothing in Outlook is changed or deleted) and files
+  each email on its shipment: by the tag in the subject ([ENQ-...], Job No., Shipping Ref) or by the same email
+  conversation. Emails from known customers / agents that match no shipment wait on My Outlook -> "Emails to file".
+  Other emails are not saved.
 
-Step 2 — Netlify settings (Site configuration -> Environment variables). Add these four:
-  MS_TENANT_ID      95acc64b-7fde-4edc-b2db-063774e47e36
-  MS_CLIENT_ID      3e1eca78-f72a-41a9-b05d-1d140ae5fb6f
-  MS_CLIENT_SECRET  the secret value IT gave you (paste it yourself; do not send it to anyone)
-  APP_URL           https://rfsops.netlify.app
-  Do not change any other setting.
+Step 1 — Database (Supabase -> SQL Editor). Run this one file:
+  db/migrations/030_outlook_inbox.sql
+  Safe to run again. Wait for "Success".
 
-Step 3 — Code (GitHub). Upload every other file in this zip to the same paths, in ONE commit.
-  (This includes netlify/functions/document-cleanup.mjs, which switches the old clean-up off.)
-  Netlify then builds once.
+Step 2 — Code (GitHub). Upload every other file in this zip to the same paths, in ONE commit.
+  Netlify then builds once. No new Netlify settings are needed.
 
-Step 4 — Quick checks after the deploy
-  1. The browser tab and the menu say RFS CRM.
-  2. Settings -> Documents says "All documents are kept for good".
-  3. Administration -> People: next to a person, "Outlook pilot: off" -> press it to switch on for your test user.
-  4. Sign in as that test user -> menu -> My Outlook -> Connect -> sign in with Microsoft -> it shows "Connected".
-  5. As that user, open a shipment -> Email -> "Send from my Outlook" -> the email arrives and shows in Sent Items.
-  6. Add a test person with your own second email -> the invitation arrives -> the link lets you choose a password.
+Step 3 — Quick checks after the deploy (as your Outlook pilot user)
+  1. From a second email address, send yourself an email with a shipment's tag in the subject,
+     for example: [ENQ-IMP-26-00036] test
+  2. RFS CRM -> menu -> My Outlook -> "Check inbox now".
+  3. Open that shipment -> Emails tab: the email shows as "Received".

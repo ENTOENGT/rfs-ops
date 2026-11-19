@@ -713,3 +713,15 @@ rule already deleted cannot be brought back; their records and history stay. Set
   join link (app_links, 48 hours, older links switched off) and emails it from the sender's Outlook, or returns the email
   to copy / open when Outlook is not connected. No password is ever put in the email; the temporary password stays as a backup.
   The /join page has an office version that signs the person straight into RFS CRM. No database change.
+
+### 15u. Outlook step 3 — reading the inbox (migration 030, 19 Nov 2026)
+`src/server/inbox.ts`. For a connected pilot user, `syncInbox` reads the Outlook inbox with Microsoft Graph delta
+(`/me/mailFolders/inbox/messages/delta`, first time `receivedDateTime ge` 7 days ago, 50 per page, at most 10 pages per check;
+the next/delta link is saved in outlook_connections.delta_link so each check only reads what is new). Read only.
+Matching: a [TAG] in the subject that is an Enquiry Ref, Job No. or Shipping Ref → else the same conversationId as an email
+already filed. Matched → email_messages (direction in, status received, source mailbox, web_link), a history line and a
+group notification ('email_saved'). Not matched but from a known customer / contact / agent (exact address or same company
+domain, public mail domains excluded) → outlook_inbox status 'unmatched' ("Emails to file" on My Outlook: file by reference —
+the rest of the conversation follows — or "Not for a shipment"). Unknown senders are not saved. Every email is noted once per
+person (unique user_id + ms_message_id). Checks run from "Check inbox now", on opening My Outlook, and every 10 minutes while
+the app is open (no scheduled function). An expired delta link is cleared, so the next check starts again from 7 days back.
