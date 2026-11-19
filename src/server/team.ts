@@ -86,7 +86,7 @@ async function activeSuperAdmins(excluding: string) {
 
 // ---------------------------------------------------------------- Commercials: division + Salesman → Coordinator
 export const DIVISIONS: [string, string][] = [['imports', 'Imports'], ['exports', 'Exports'], ['cross_trade', 'Cross Trade']];
-const NEEDS_DIVISION = ['sales', 'coordinator'];
+const NEEDS_DIVISION: string[] = [];   // Salesmen and Coordinators work for every division; the division is chosen on each enquiry
 
 /**
  * Division (Imports / Exports / Cross Trade) and, for a Salesman, the dedicated Coordinator.

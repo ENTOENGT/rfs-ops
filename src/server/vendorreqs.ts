@@ -99,7 +99,17 @@ export async function getVendorRequest(actor: Actor, id: string) {
   const compare = r.rate_group && actor.fin.buyingView ? await rateGroup(r.rate_group) : null;
   const cheaper = actor.fin.buyingView ? await cheaperRateWarning(id) : null;
   const upd = actor.isSuperAdmin || actor.has('vendors.requests');
-  return { ...present(actor, r), events, compare, cheaper_warning: cheaper, next: NEXT[r.status], charges, versions, agent_coordinators: agentCoordinators,
+  // migration 028: the agent quote checklist for this mode, and what the agent's rate still lacks (once they have replied)
+  let quote: any = { quote_checks: [], quote_gaps: [] };
+  if (r.service === 'rate') {
+    const { allQuoteChecks } = await import('./checklists');
+    const { quoteChecksFor, quoteGaps } = await import('../lib/quoteGaps');
+    const all = await allQuoteChecks();
+    const sections = (await q('select distinct section from vendor_rate_charges where request_id = $1 and rate_version = $2', [id, r.rate_version])).map((x: any) => x.section);
+    quote = { quote_checks: quoteChecksFor(all, r.file_mode), quote_details: r.quote_details ?? {},
+      quote_gaps: ['quoted', 'confirmed'].includes(r.status) ? quoteGaps(r, sections, all, r.file_mode) : [] };
+  }
+  return { ...present(actor, r), ...quote, events, compare, cheaper_warning: cheaper, next: NEXT[r.status], charges, versions, agent_coordinators: agentCoordinators,
     can: { update: upd, cost: actor.fin.buyingView, revise: upd && actor.fin.buyingView && ['quoted', 'confirmed'].includes(r.status) && r.service === 'rate',
       assign: upd && !actor.has('rates.agent_coordination') && ['requested', 'quoted'].includes(r.status) } };
 }
@@ -281,6 +291,12 @@ export async function vendorRequestAction(actor: Actor, id: string, b: any, clie
     const sp: unknown[] = [id];
     const r = await one(`select r.* from vendor_requests r where r.id = $1${vrScope(actor, sp)} for update of r`, sp, c);
     if (!r) throw notFound('Request');
+    if (b.what === 'quote_details') {   // migration 028: answers to the extra questions of the agent quote checklist
+      const mode = r.job_file_id ? (await one('select mode from job_files where id = $1', [r.job_file_id], c))?.mode ?? null : null;
+      const d = await (await import('./checklists')).cleanQuoteDetails(c, b.quote_details, mode);
+      await c.query('update vendor_requests set quote_details = $2, updated_at = now() where id = $1', [id, JSON.stringify(d)]);
+      await evt(c, actor, id, 'Quote details updated', `${Object.keys(d).length} answered`); return;
+    }
     if (b.what === 'note') {
       const note = txt(b.note, 2000); if (!note) throw bad('Write the note');
       await evt(c, actor, id, 'Note', note); return;

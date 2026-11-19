@@ -1,6 +1,6 @@
 'use client';
 import Link from 'next/link';
-import { useEffect, useState } from 'react';
+import { Fragment, useEffect, useState } from 'react';
 import { api, fmtDate, fmtDateTime, fmtMoney } from '@/components/api';
 import { EmailButton } from '@/components/EmailButton';
 import { EmailsPanel } from '@/components/EmailsPanel';
@@ -20,7 +20,8 @@ const RUN_STATUS: Record<string, string> = { pending: 'Waiting', assigned: 'Assi
 const EDIT_KEYS = ['customer_id', 'direction', 'mode', 'needs_clearance', 'needs_transport', 'needs_warehouse', 'customer_reference', 'shipper', 'consignee',
   'notify_party', 'origin', 'destination', 'port_of_loading', 'port_of_discharge', 'carrier', 'vessel_flight', 'voyage', 'booking_reference', 'mbl_mawb',
   'hbl_hawb', 'incoterm', 'pickup_address', 'pickup_contact', 'named_place', 'delivery_address', 'delivery_contact', 'cargo_value', 'cargo_value_currency', 'etd', 'eta', 'atd', 'ata', 'packages', 'gross_weight_kg', 'volume_cbm', 'chargeable_weight_kg', 'cargo_description', 'remarks',
-  'job_type', 'origin_agent_id', 'destination_agent_id', 'origin_is_us', 'destination_is_us'];   // migration 026
+  'job_type', 'origin_agent_id', 'destination_agent_id', 'origin_is_us', 'destination_is_us',   // migration 026
+  'enquiry_details'];   // migration 028
 
 function Milestones({ d, act }: { d: any; act: (b: any) => Promise<unknown> }) {
   const [planned, setPlanned] = useState<Record<string, string>>({});
@@ -161,6 +162,12 @@ export default function JobFile({ params }: { params: { id: string } }) {
 
       {!edit && <StageHeader d={d} act={act} reload={load} />}
       {!edit && <HandlersPanel d={d} reload={load} />}
+      {(d.enquiry_gaps ?? []).length > 0 && <div className="gap-box" role="status">
+            <b>Missing details ({d.enquiry_gaps.length})</b> <span className="muted small">— needed for an accurate quotation</span>
+            <ul>{d.enquiry_gaps.map((g: any) => <li key={g.key}>{g.label}{!g.built_in && <span className="muted small"> (your checklist)</span>}</li>)}</ul>
+            {d.can.edit && <EmailButton kind="enquiry_missing" id={d.id} label="Ask the customer by email" className="btn small primary" onLogged={() => { load(); setEmailsKey((k) => k + 1); }} />}
+            {d.can.edit && <button className="btn small" style={{ marginLeft: 6 }} onClick={() => { setEdit({ ...d, cargo_lines: (d.cargo_lines ?? []).map((l: any) => ({ ...l, length: Number(l.length), width: Number(l.width), height: Number(l.height), weight_kg: Number(l.weight_kg) })) }); window.scrollTo(0, 0); }}>Fill in</button>}
+          </div>}
       {edit ? <>
         <JobFileFields f={edit} setF={setEdit} />
         <div className="form-actions"><button className="btn" onClick={() => setEdit(null)}>Cancel</button>
@@ -183,10 +190,12 @@ export default function JobFile({ params }: { params: { id: string } }) {
         {tab === 'overview' && <div className="cols tab-panel">
           <div>
             <div className="panel"><h2>Shipment</h2><dl className="kv">
-              {kv('Customer', d.customer_name)}{kv('Type', `${label(DIRECTIONS, d.direction)} · ${label(MODES, d.mode)}${d.job_type === 'clearance_delivery' ? ' · Clearance & Delivery' : ''}`)}
+              {kv('Customer', d.customer_name)}{kv('Type', `${label(DIRECTIONS, d.direction)} · ${label(MODES, d.mode)}${d.job_type === 'clearance_delivery' ? ' · Clearance & Delivery' : d.needs_clearance && d.needs_transport ? ' · Freight + Clearance & Delivery' : ''}`)}
               {(d.direction === 'cross_trade' || d.origin_agent_name || d.origin_is_us) && kv('Origin agent', d.origin_is_us ? 'Ourselves (RFS)' : d.origin_agent_name ?? 'Not chosen yet')}
               {(d.direction === 'cross_trade' || d.destination_agent_name || d.destination_is_us) && kv('Destination agent', d.destination_is_us ? 'Ourselves (RFS)' : d.destination_agent_name ?? 'Not chosen yet')}
               {kv('Services', [d.needs_clearance && 'Customs clearance', d.needs_transport && 'Transport', d.needs_warehouse && 'Warehouse'].filter(Boolean).join(', '))}
+              {(d.enquiry_checks ?? []).filter((c: any) => d.enquiry_details?.[c.id]).map((c: any) => <Fragment key={c.id}>{kv(c.label,
+                c.field_type === 'yes_no' ? (d.enquiry_details[c.id] === 'yes' ? 'Yes' : 'No') : d.enquiry_details[c.id])}</Fragment>)}
               {kv('Customer reference', d.customer_reference)}{kv('Incoterm', d.incoterm && `${d.incoterm} — ${INCOTERM_INFO[d.incoterm]?.name ?? ''}`)}
               {d.pickup_address && kv('Pickup address', [d.pickup_address, d.pickup_contact].filter(Boolean).join(' · '))}
               {d.named_place && kv('Handover place', d.named_place)}

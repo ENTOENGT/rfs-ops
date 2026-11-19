@@ -823,3 +823,9 @@ table.t, .kpi b, .stat-n, .num, .bar b, .funnel-n, .pager { font-variant-numeric
 @media (max-width: 560px) { .chat-msg { max-width: 92%; } .chat-compose { flex-direction: column; align-items: stretch; } .chat-actions { justify-content: flex-end; } }
 .chat-btn { position: relative; }
 .unread-pill { display: inline-block; min-width: 20px; text-align: center; background: var(--danger, #C53030); color: #fff; font-size: 11.5px; font-weight: 700; border-radius: 999px; padding: 1px 7px; }
+
+/* Checklists (migration 028) */
+.chk-picks { display: flex; flex-wrap: wrap; gap: 4px 14px; align-items: center; padding-top: 4px; }
+.chk-built { margin: 0; padding-left: 18px; line-height: 1.7; }
+.gap-box { border: 1px solid #F0C36D; background: #FFF8E8; border-radius: 10px; padding: 12px 14px; margin-bottom: 14px; }
+.gap-box ul { margin: 6px 0 10px; padding-left: 18px; line-height: 1.6; }

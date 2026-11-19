@@ -39,7 +39,9 @@ test('1. Structure: Commercials Department, divisions, Salesman → Coordinator 
   const d = await one(`select name from departments where code = 'commercial'`);
   assert.equal(d.name, 'Commercials');
   // the Commercials Manager adds Salesmen to the Commercials Department
-  await rejects(createUser(mgr, { full_name: 'No Div', email: 'nodiv@x.ae', role_id: await roleId('sales') }), 'VALIDATION', /division/);
+  // a Salesman may have no division (works for every division; the division is chosen on each enquiry)
+  const nd = await createUser(mgr, { full_name: 'No Div', email: 'nodiv@x.ae', role_id: await roleId('sales') });
+  assert.equal((await one('select division from users where id = $1', [nd.id])).division, null);
   await rejects(createUser(mgr, { full_name: 'Bad Coord', email: 'bc@x.ae', role_id: await roleId('sales'), division: 'imports', coordinator_id: agent.id }), 'VALIDATION', /Coordinator role/);
   const s = await createUser(mgr, { full_name: 'Sam Sales', email: 'sam@x.ae', role_id: await roleId('sales'), division: 'imports', coordinator_id: coord.id });
   await one('update users set must_change_password = false where id = $1', [s.id]);

@@ -200,7 +200,8 @@ export async function getQuotation(actor: Actor, id: string) {
     approvals: { salesman: x.salesman_id ? (x.salesman_decision ?? (pending ? 'waiting' : null)) : null,
       manager: x.needs_manager ? (x.approved_by && pending ? 'approved' : pending ? 'waiting' : null) : null },
     can: { edit: editable, submit: x.status === 'draft' && actor.has('quotes.create'),
-      salesman_approve: salesmanTurn && actor.has('quotes.salesman_approve') && (x.salesman_id === actor.id || actor.has('commercial.manage') || actor.isSuperAdmin),
+      salesman_approve: salesmanTurn && ((actor.has('quotes.salesman_approve') && (x.salesman_id === actor.id || actor.has('commercial.manage') || actor.isSuperAdmin))
+        || (x.salesman_id === actor.id && actor.role_is_manager)),   // a team manager who owns the enquiry approves as its Salesman
       approve: pending && actor.has('quotes.approve') && (x.needs_manager || !x.salesman_id) && !(x.needs_manager && x.approved_by),
       revise: ['approved', 'sent'].includes(x.status) && actor.has('quotes.create'),
       respond: ['sent', 'approved'].includes(x.status) && actor.has('quotes.create'),
@@ -467,7 +468,8 @@ export async function quotationAction(actor: Actor, id: string, b: any) {
         from('pending_approval');
         if (!x.salesman_id || x.salesman_decision) throw new ApiError(409, 'QUOTE_STATE', 'The Salesman has already decided');
         const onBehalf = x.salesman_id !== actor.id;
-        if (!actor.has('quotes.salesman_approve') || (onBehalf && !actor.has('commercial.manage') && !actor.isSuperAdmin))
+        const ownerManager = !onBehalf && actor.role_is_manager;   // the team manager who owns the enquiry
+        if ((!actor.has('quotes.salesman_approve') && !ownerManager) || (onBehalf && !actor.has('commercial.manage') && !actor.isSuperAdmin))
           throw forbidden('Only the responsible Salesman (or the Commercials Manager) can decide');
         const by = onBehalf ? ' (on behalf of the Salesman)' : '';
         const reason = txt(b.reason, 500);

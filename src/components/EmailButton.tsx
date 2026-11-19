@@ -7,7 +7,7 @@ import { api } from '@/components/api';
  * it ready to send. Nothing is sent by the system; it only notes in the history that the email was prepared.
  */
 export function EmailButton({ kind, id, label = 'Email', className = 'btn', update, onLogged }: {
-  kind: 'vendor_request' | 'quotation' | 'job_file' | 'case'; id: string; label?: string; className?: string; update?: string; onLogged?: () => void;
+  kind: 'vendor_request' | 'quotation' | 'job_file' | 'case' | 'enquiry_missing' | 'vendor_missing'; id: string; label?: string; className?: string; update?: string; onLogged?: () => void;
 }) {
   const [d, setD] = useState<any>(null);
   const [err, setErr] = useState('');

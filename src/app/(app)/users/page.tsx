@@ -78,8 +78,8 @@ function UserForm({ user, data, onDone, onClose }: { user?: any; data: any; onDo
           <label className="f span2"><span>Role <em>*</em></span><select value={f.role_id} onChange={set('role_id')} disabled={all && !f.department_id}>
             <option value="">{all && !f.department_id ? 'Choose the department first' : 'Choose role'}</option>
             {roles.map((r: any) => <option key={r.id} value={r.id}>{r.name}{r.is_manager ? ' (department admin)' : ''}</option>)}</select></label>
-          {commercial && <label className="f"><span>Division {['sales', 'coordinator'].includes(roleCode) && <em>*</em>}</span>
-            <select value={f.division ?? ''} onChange={set('division')}><option value="">{roleCode === 'commercials_manager' ? 'All divisions' : 'Choose division'}</option>
+          {commercial && <label className="f"><span>Division (optional — empty means every division)</span>
+            <select value={f.division ?? ''} onChange={set('division')}><option value="">All divisions</option>
               {data.divisions.map(([k, n]: [string, string]) => <option key={k} value={k}>{n}</option>)}</select></label>}
           {roleCode === 'sales' && <label className="f"><span>Dedicated Coordinator</span>
             <select value={f.coordinator_id ?? ''} onChange={set('coordinator_id')}><option value="">Not assigned yet</option>

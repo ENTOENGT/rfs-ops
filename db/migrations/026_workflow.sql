@@ -31,7 +31,6 @@ on conflict do nothing;
 insert into role_assignable_roles (role_id, assignable_role_id)
   select m.id, r.id from roles m, roles r where m.code = 'customer_service_manager' and r.code = 'customer_service'
 on conflict do nothing;
-insert into designations (name, level) values ('Customer Service Executive', 60) on conflict do nothing;
 
 -- who owns each confirmed shipment
 alter table job_files add column if not exists cs_handler_id uuid references users(id);

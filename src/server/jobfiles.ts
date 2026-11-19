@@ -48,8 +48,8 @@ export function jfScope(actor: Actor, params: unknown[], alias = 'f'): string {
   if (actor.has('jobfiles.view_assigned')) c.push(`${alias}.salesman_id = ${me}`, `${alias}.coordinator_id = ${me}`, `${alias}.cs_handler_id = ${me}`);   // + Customer Service (026)
   // Operations works on everything handed over to it
   if (actor.has('jobfiles.view_handed_over')) c.push(`${alias}.stage = 'handed_over'`);
-  // migration 026: whoever is given a part of the job sees it; Documentation sees the jobs whose DO is in
-  c.push(`${alias}.ops_handler_id = ${me}`, `${alias}.docs_handler_id = ${me}`);
+  // migration 026: whoever is given a part of the job sees it (owner and Coordinator too); Documentation sees the jobs whose DO is in
+  c.push(`${alias}.ops_handler_id = ${me}`, `${alias}.docs_handler_id = ${me}`, `${alias}.salesman_id = ${me}`, `${alias}.coordinator_id = ${me}`);
   if (actor.department_code === 'documentations' && actor.has('jobfiles.view_department')) c.push(`${alias}.do_received_at is not null`);
   // migration 026: the Customer Service Manager sees confirmed jobs nobody has been given yet (to assign them)
   if (actor.department_code === 'customer_service' && actor.has('users.manage_department'))
@@ -309,6 +309,10 @@ export async function createJobFile(actor: Actor, b: any, c?: PoolClient, from?:
     for (const [i, [code, name]] of plan.entries())
       await db.query('insert into job_file_milestones (job_file_id, code, name, sort_order) values ($1,$2,$3,$4)', [f.id, code, name, (i + 1) * 10]);
     if (cargo.length) await saveCargo(db, actor, f.id, cargo, f.mode);
+    if (b.enquiry_details) {   // migration 028: answers to your own enquiry checklist
+      const d = await (await import('./checklists')).cleanDetails(db, b.enquiry_details, vals.division as string ?? null, f.mode);
+      if (Object.keys(d).length) await db.query('update job_files set enquiry_details = $2 where id = $1', [f.id, JSON.stringify(d)]);
+    }
     if (!enquiry && vals.job_type === 'clearance_delivery') await (await import('./handlers')).startClearance(db, actor, f.id, b.handler_id);
     const conts = Array.isArray(b.containers) ? b.containers.filter((k: any) => String(k?.container_no ?? '').trim()) : [];
     for (const k of conts)
@@ -507,6 +511,15 @@ export async function getJobFile(actor: Actor, id: string) {
     quotations: quotations?.map((x) => ({ ...x, status_name: qStatusName(x.status), status_color: qStatusColor(x.status) })) ?? null, vendor_requests: vendorRequests,
     closure: { can_close: blockers.length === 0, blockers,
       warnings: milestones.filter((m) => !m.actual_at).map((m) => `Milestone "${m.name}" has no actual date`) },
+    // migration 028: your enquiry checklist items for this enquiry, and what is still missing
+    ...(await (async () => {
+      const { allEnquiryChecks } = await import('./checklists');
+      const { checksFor, enquiryGaps } = await import('../lib/enquiryGaps');
+      const all = await allEnquiryChecks();
+      const mine = checksFor(all, f.division, f.mode);
+      const shown = all.filter((x) => mine.includes(x) || (f.enquiry_details ?? {})[x.id]);   // an answer stays visible even if the item was switched off
+      return { enquiry_checks: shown, enquiry_gaps: f.status === 'enquiry' && PRE_CONFIRM.includes(f.stage ?? 'enquiry') ? enquiryGaps({ ...f, cargo_lines: cargoLines ?? [] }, all) : [] };
+    })()),
     // migration 027: unread team chat messages for this person
     chat_unread: (await one(`select count(*)::int n from job_chat_messages x where x.job_file_id = $1 and x.user_id <> $2
       and x.created_at > coalesce((select r.read_at from job_chat_reads r where r.job_file_id = $1 and r.user_id = $2), '-infinity')`, [id, actor.id]))?.n ?? 0,
@@ -577,7 +590,20 @@ export async function updateJobFile(actor: Actor, id: string, b: any) {
       await saveCargo(c, actor, id, cargo!, next.mode);
       await event(c, actor, id, { kind: 'edit', title: 'Cargo dimensions changed', field: 'Cargo', old_value: cargoSummary(oldCargo), new_value: cargoSummary(cargo!) });
     } else if (lines.length && changes.some(([k]) => k === 'mode')) await writeTotals(c, id, lines, next.mode);
-    if (!changes.length) { if (cargoChanged) await refreshSearch(c, id); return; }
+    // migration 028: the answers to your own enquiry checklist
+    let detailsChanged = false;
+    if (b.enquiry_details !== undefined) {
+      const { cleanDetails } = await import('./checklists');
+      const nd = await cleanDetails(c, b.enquiry_details, f.division, next.mode);
+      const od = f.enquiry_details ?? {};
+      if (JSON.stringify(Object.entries(nd).sort()) !== JSON.stringify(Object.entries(od).sort())) {
+        await c.query('update job_files set enquiry_details = $2, updated_at = now() where id = $1', [id, JSON.stringify(nd)]);
+        await event(c, actor, id, { kind: 'edit', title: 'Additional enquiry details changed', field: 'Additional details',
+          old_value: Object.keys(od).length ? `${Object.keys(od).length} answered` : null, new_value: `${Object.keys(nd).length} answered` });
+        detailsChanged = true;
+      }
+    }
+    if (!changes.length) { if (cargoChanged || detailsChanged) await refreshSearch(c, id); return; }
     if (changes.some(([k]) => k === 'customer_id') && !(await one('select 1 from customers where id = $1 and deleted_at is null', [next.customer_id], c)))
       throw bad('Customer not found');
     await c.query(`update job_files set ${changes.map(([k], i) => `${k} = $${i + 2}`).join(', ')}, updated_at = now() where id = $1`,

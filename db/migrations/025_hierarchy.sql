@@ -13,8 +13,8 @@ create table if not exists designations (
 );
 create unique index if not exists designations_name_uq on designations (lower(name));
 insert into designations (name, level) values
-  ('Manager', 20), ('Assistant Manager', 30), ('Team Leader', 40), ('Senior Executive', 50),
-  ('Executive', 60), ('Salesman', 60), ('Coordinator', 60), ('Driver', 70)
+  ('Manager', 20), ('Assistant Manager', 30), ('Team Leader', 40), ('Senior Executive', 50), ('Executive', 60)
+  -- no Salesman / Coordinator / Driver titles: the role already says that
 on conflict do nothing;
 
 alter table users add column if not exists designation_id uuid references designations(id);

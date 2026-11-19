@@ -36,10 +36,9 @@ export async function handlingGroup(db: Db, fileId: string): Promise<string[]> {
   const f = await one('select salesman_id, coordinator_id, cs_handler_id, ops_handler_id, docs_handler_id, division from job_files where id = $1', [fileId], db);
   if (!f) return [];
   const rows = await q(`select u.id from users u where u.is_active and u.deleted_at is null and (
-      u.id = $2 or u.id = $3 or u.id = $5 or u.id = $6 or u.id = $7
-      or u.id in (select r.assigned_to from vendor_requests r where r.job_file_id = $1 and r.assigned_to is not null and r.status in ('requested','quoted','confirmed','in_progress'))
-      or (user_has_perm(u.id, 'commercial.manage') and ($4::text is null or u.division is null or u.division = $4)))`,
-    [fileId, f.salesman_id, f.coordinator_id, f.division, f.cs_handler_id, f.ops_handler_id, f.docs_handler_id], db);
+      u.id = $2 or u.id = $3 or u.id = $4 or u.id = $5 or u.id = $6
+      or u.id in (select r.assigned_to from vendor_requests r where r.job_file_id = $1 and r.assigned_to is not null and r.status in ('requested','quoted','confirmed','in_progress')))`,
+    [fileId, f.salesman_id, f.coordinator_id, f.cs_handler_id, f.ops_handler_id, f.docs_handler_id], db);
   return rows.map((r) => r.id as string);
 }
 

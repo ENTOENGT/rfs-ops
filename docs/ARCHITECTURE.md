@@ -656,6 +656,12 @@ Only the look and the navigation changed. Every URL, permission check, API and w
 - **Status** (`src/server/presence.ts`): the app pings `/api/presence/ping` every minute while open (with "did something since"). Online = active in 10 min; Away = open but quiet; Offline = no ping for 3 min ("last seen"); Busy (with a note) and On leave (return date, note) are set by the person in the profile menu; leave can also be set by their manager and ends after the return date. Dots on People, the organisation chart, the shipment header and Who handles it (with a leave warning).
 - **Team chat** (`src/server/chat.ts`, `job_chat_messages`, `job_chat_reads`, `job_chat_edits` append-only): a Team chat tab on every shipment for anyone who can open it. New messages appear within ~8 s (the page asks while open). @mentions only for people who can open the job (bell alert); the handling group hears about new messages (deduped 2 min). Files are attached through the normal upload and saved with the job's documents. "Seen by" ticks. No delete; the writer can correct within 5 minutes and the old words are kept. A message that looks like a price is hidden from anyone who may not see selling prices. "Team chats" inbox (`/chats`) and a chat icon with the unread count.
 
+## 15r. Checklists the AI agent follows (migration 028)
+
+- **Enquiry checklist** (`enquiry_checks`, `job_files.enquiry_details`, `src/lib/enquiryGaps.ts`): your own items (label, how to ask, answer type, divisions, modes, on / off) on top of the built-in rules (Incoterm and its addresses, cargo lines or FCL weight, commodity). Additional details section on the enquiry form; a Missing details box above the tabs with **Ask the customer by email** (`enquiry_missing` draft on the enquiry's own subject) and **Fill in**.
+- **Agent quote checklist** (`quote_checks`, `vendor_requests.quote_details`, `src/lib/quoteGaps.ts`): items read from the rate request's own fields (freight rate, currency, validity, transit, routing, carrier, ETD, free days, origin / destination charge lines) or extra questions answered on the request; by mode. Once the agent has replied, the request shows what is missing with **Ask the agent by email** (`vendor_missing` draft: the missing items plus the shipment details, never the customer's name or our prices).
+- Kept on **Commercials → Checklists** by the Super Admin and Commercials Managers; every change is audited. The AI assistant (G3) will use the same lists.
+
 ## 16. Phase status
 
 | Phase | Status |
@@ -688,5 +694,6 @@ Only the look and the navigation changed. Every URL, permission check, API and w
 | Organisation hierarchy — designations, reporting lines, team rights and visibility, People page, roles grid (migration 025) | Done |
 | Your workflow — Customer Service, default handlers, handover routing, Ops ↔ Documentation, Cross Trade agents, Clearance & Delivery, My performance (migration 026) | Done |
 | Live status and team chat on each shipment (migration 027) | Done |
+| Enquiry and agent quote checklists, missing-details emails (migration 028) | Done |
 | Freight + 3PL — remaining phases: see `docs/FREIGHT_3PL_PLAN.md` | Planned |
 | 7 Email notifications · 8 Saved views, column prefs, live ops table, performance | Planned |

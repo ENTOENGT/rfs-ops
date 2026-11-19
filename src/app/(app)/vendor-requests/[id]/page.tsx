@@ -55,6 +55,35 @@ function RateFields({ s, set, d }: { s: any; set: (v: any) => void; d: any }) {
   </>;
 }
 
+/** Migration 028: the agent quote checklist on this rate — what the agent's reply still lacks, the extra questions, and the email. */
+function QuoteChecks({ d, act, reload }: { d: any; act: (b: any) => Promise<boolean>; reload: () => void }) {
+  const extra = (d.quote_checks ?? []).filter((c: any) => !c.field_key);
+  const [v, setV] = useState<Record<string, string>>(d.quote_details ?? {});
+  const [open, setOpen] = useState(false);
+  const replied = ['quoted', 'confirmed'].includes(d.status);
+  const gaps: any[] = d.quote_gaps ?? [];
+  const dirty = JSON.stringify(v) !== JSON.stringify(d.quote_details ?? {});
+  return (
+    <div className={replied && gaps.length ? 'gap-box' : 'panel'} style={{ marginBottom: 14 }}>
+      <div className="role-head">
+        <b>{!replied ? 'The agent\'s rate must include' : gaps.length ? `Missing from the agent's rate (${gaps.length})` : 'The agent\'s rate is complete'}</b>
+        <span className="spacer" />
+        {replied && gaps.length > 0 && d.can.update && <EmailButton kind="vendor_missing" id={d.id} label="Ask the agent by email" className="btn small primary" onLogged={reload} />}
+        {extra.length > 0 && d.can.update && <button className="btn small" onClick={() => setOpen(!open)}>{open ? 'Close' : 'Extra questions'}</button>}
+      </div>
+      <ul style={{ margin: '8px 0 0', paddingLeft: 18, lineHeight: 1.6 }}>
+        {(replied ? gaps : d.quote_checks).map((g: any) => <li key={g.key ?? g.id}>{g.label}</li>)}
+      </ul>
+      {open && <div style={{ marginTop: 10 }}>
+        <div className="grid g3">{extra.map((c: any) => <label key={c.id} className="f"><span>{c.label}</span>
+          <input value={v[c.id] ?? ''} onChange={(e) => setV({ ...v, [c.id]: e.target.value })} /></label>)}</div>
+        <div className="actions" style={{ justifyContent: 'flex-start' }}>
+          <button className="btn small primary" disabled={!dirty} onClick={async () => { if (await act({ what: 'quote_details', quote_details: v })) setOpen(false); }}>Save answers</button></div>
+      </div>}
+    </div>
+  );
+}
+
 export default function VendorRequest({ params }: { params: { id: string } }) {
   const [d, setD] = useState<any>(null);
   const [step, setStep] = useState<any>(null);
@@ -88,6 +117,7 @@ export default function VendorRequest({ params }: { params: { id: string } }) {
         {d.can.update && isRate && d.job_file_id && ['requested', 'quoted'].includes(d.status) && <button className="btn" onClick={() => setMore(true)}>Ask more vendors</button>}
         {d.can.update && <EmailButton kind="vendor_request" id={d.id} label="Email vendor" onLogged={load} />}</div>
       {d.cheaper_warning && <div className="msg warn"><b>Another vendor gave a lower price.</b> {d.cheaper_warning}</div>}
+      {isRate && (d.quote_checks ?? []).length > 0 && <QuoteChecks d={d} act={act} reload={load} />}
       {err && <div className="msg err">{err}</div>}
       {step && <div className="panel"><h2>{LABEL[step.status]}</h2>
         {(['quoted', 'revise'].includes(step.status) || (step.status === 'confirmed' && isRate)) && d.can.cost ? <RateFields s={step} set={setStep} d={d} />

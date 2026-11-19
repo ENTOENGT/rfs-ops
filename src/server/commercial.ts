@@ -102,6 +102,7 @@ async function claimCustomer(db: Db, actor: Actor, customerId: string, salesmanI
     return;
   }
   if (owners.some((o) => o.user_id === salesmanId) || actor.has('commercial.manage') || actor.isSuperAdmin) return;
+  if (salesmanId === actor.id && actor.role_is_manager) return;          // a team manager handling their own sale
   const s = await one('select full_name from users where id = $1', [salesmanId], db);
   throw bad(`${s?.full_name ?? 'This Salesman'} is not a Salesman of this customer. Ask the Commercials Manager to add them.`);
 }
@@ -159,16 +160,17 @@ export async function resolvePeople(actor: Actor, b: any, customerId: string, di
   let s: any = null;
   if (salesmanId) {
     if (!isUuid(salesmanId)) throw bad('Choose the Salesman');
+    // the owner is a Salesman — or the team manager creating it, who handles their own part of sales (feedback 17 Nov)
     s = await one(`select u.id, u.full_name, u.division, u.coordinator_id from users u join roles r on r.id = u.role_id
-      where u.id = $1 and r.code = 'sales' and u.is_active and u.deleted_at is null`, [salesmanId], db);
-    if (!s) throw bad('The responsible Salesman must be an active user with the Salesman role');
+      where u.id = $1 and (r.code = 'sales' or (u.id = $2 and $3::boolean)) and u.is_active and u.deleted_at is null`, [salesmanId, actor.id, actor.role_is_manager], db);
+    if (!s) throw bad('The owner must be an active Salesman, or yourself as a team manager');
     if (actor.role_code === 'coordinator' && s.coordinator_id && s.coordinator_id !== actor.id && !actor.has('commercial.manage')) {
       // allowed: the enquiry still goes to the Salesman's own Coordinator
     }
     await claimCustomer(db, actor, customerId, salesmanId);
   }
   let coordinatorId: string | null = s?.coordinator_id ?? (actor.role_code === 'coordinator' ? actor.id : null);
-  if (b.coordinator_id && (actor.has('commercial.manage') || actor.isSuperAdmin)) {
+  if (b.coordinator_id && (actor.has('commercial.manage') || actor.isSuperAdmin || actor.role_is_manager)) {
     if (!isUuid(b.coordinator_id) || !(await one(`select 1 from users u join roles r on r.id = u.role_id where u.id = $1 and r.code = 'coordinator' and u.is_active and u.deleted_at is null`, [b.coordinator_id], db)))
       throw bad('Choose an active Coordinator');
     coordinatorId = b.coordinator_id;

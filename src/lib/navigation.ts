@@ -13,13 +13,14 @@ const WAREHOUSE = ['warehouse.view', 'warehouse.receive', 'warehouse.dispatch', 
 
 export const MODULES: NavModule[] = [
   { key: 'dashboard', label: 'Dashboard', icon: 'dashboard', items: [{ href: '/dashboard', label: 'Dashboard' }], paths: ['/notifications'] },
-  { key: 'commercials', label: 'Commercials', icon: 'briefcase', perm: [...COMMERCIAL, 'templates.manage'], items: [
+  { key: 'commercials', label: 'Commercials', icon: 'briefcase', perm: [...COMMERCIAL, 'templates.manage', 'commercial.manage', 'settings.manage'], items: [
     { href: '/commercials', label: 'Overview', perm: COMMERCIAL },
     { href: '/commercials?division=imports', label: 'Imports', section: 'Divisions', perm: COMMERCIAL },
     { href: '/commercials?division=exports', label: 'Exports', section: 'Divisions', perm: COMMERCIAL },
     { href: '/commercials?division=cross_trade', label: 'Cross Trade', section: 'Divisions', perm: COMMERCIAL },
     { href: '/settings/quote-terms', label: 'Quotation terms', section: 'Templates', perm: 'templates.manage' },
-    { href: '/settings/email-templates', label: 'Email templates', section: 'Templates', perm: 'templates.manage' }] },
+    { href: '/settings/email-templates', label: 'Email templates', section: 'Templates', perm: 'templates.manage' },
+    { href: '/commercials/checklists', label: 'Checklists', section: 'Templates', perm: ['commercial.manage', 'settings.manage'] }] },   // migration 028
   { key: 'enquiries', label: 'Enquiries', icon: 'inbox', perm: COMMERCIAL, items: [
     { href: '/commercials/enquiries', label: 'All enquiries' },
     { href: '/commercials/enquiries?mine=1', label: 'My enquiries' },

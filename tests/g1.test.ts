@@ -48,7 +48,7 @@ test('1. New enquiry: Enquiry Ref carries the division; the email subject is fix
   const g = await getJobFile(sales, fileId);
   assert.equal(g.email_subject, `[${enq}] Shipment Enquiry – Shanghai to Jebel Ali`);
   assert.equal((await notes(coord, 'new_enquiry')).length, 1, 'the Coordinator');
-  assert.equal((await notes(mgr, 'new_enquiry')).length, 1, 'the Imports manager');
+  assert.equal((await notes(mgr, 'new_enquiry')).length, 0, 'not the manager: only the people handling the job (feedback 17 Nov)');
   assert.equal((await notes(mgrX, 'new_enquiry')).length, 0, 'not the Exports manager');
   assert.equal((await notes(sales)).length, 0, 'not the Salesman who opened it');
   assert.match((await notes(coord, 'new_enquiry'))[0].title, new RegExp(`^${enq} · Desert Retail: New enquiry created`));

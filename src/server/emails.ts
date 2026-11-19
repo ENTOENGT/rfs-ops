@@ -225,6 +225,56 @@ async function jobFileDraft(actor: Actor, id: string, choice: string): Promise<D
     note: recipients.length ? undefined : 'This customer has no email saved — add one under Customers → contacts.' };
 }
 
+// ------------------------------------------------------------ ask the customer for what the enquiry is missing (migration 028)
+async function missingDraft(actor: Actor, id: string): Promise<Draft> {
+  const g: any = await getJobFile(actor, id);
+  if (!g.can.edit) throw new ApiError(403, 'FORBIDDEN', 'You can\'t send emails on this shipment');
+  const f = await shipment(id);
+  const recipients = await customerRecipients(f.customer_id);
+  const gaps: { ask: string }[] = g.enquiry_gaps ?? [];
+  const body = [
+    dear(recipients, `${f.customer_name} team`), '',
+    'Thank you for your enquiry. To prepare an accurate quotation, could you please share:', '',
+    ...(gaps.length ? gaps.map((x) => `- ${x.ask.charAt(0).toUpperCase()}${x.ask.slice(1)}`) : ['- [Nothing is missing — write your question here]']), '',
+    'Once we have these, we will send you our quotation.', '',
+    await signature(actor),
+  ].join('\n');
+  return { kind: 'enquiry_missing', id, recipients, subject: threadSubject({ ...f, ...g }), body,
+    note: recipients.length ? (gaps.length ? undefined : 'Nothing is missing on this enquiry.') : 'This customer has no email saved — add one under Customers → contacts.' };
+}
+
+// ------------------------------------------------------------ ask the agent for what their rate lacks (migration 028)
+// Never the customer's name or our prices — only what the agent needs to complete the quote.
+async function vendorMissingDraft(actor: Actor, id: string): Promise<Draft> {
+  const r: any = await getVendorRequest(actor, id);
+  if (!r.can.update) throw new ApiError(403, 'FORBIDDEN', 'You can\'t send vendor requests');
+  const f = r.job_file_id ? await shipment(r.job_file_id) : null;
+  const recipients: Recipient[] = r.vendor_email && EMAIL.test(r.vendor_email) ? [{ name: r.vendor_contact || r.vendor_name, email: r.vendor_email, role: r.vendor_name, picked: true }] : [];
+  const gaps: { ask: string }[] = r.quote_gaps ?? [];
+  let ship = '';
+  if (f) {
+    const lines = await q(`select pieces, package_type, package_other, length, width, height, dim_unit, weight_kg from job_file_cargo_lines
+      where job_file_id = $1 and removed_at is null order by line_no`, [f.id]);
+    const { allEnquiryChecks } = await import('./checklists');
+    const extra = (await allEnquiryChecks()).filter((c) => (f.enquiry_details ?? {})[c.id])
+      .map((c) => [c.label, c.field_type === 'yes_no' ? (f.enquiry_details[c.id] === 'yes' ? 'Yes' : 'No') : f.enquiry_details[c.id]] as [string, unknown]);
+    ship = facts([['Shipment', `${label(DIRECTIONS, f.direction)} · ${label(MODES, f.mode)}`], ['Route', routeOf(f)], ['Incoterm', f.incoterm], ['Commodity', f.cargo_description],
+      ['Cargo', lines.map((l: any) => `${l.pieces} ${(l.package_type === 'Other' ? l.package_other : l.package_type)} ${Number(l.length)}×${Number(l.width)}×${Number(l.height)} ${l.dim_unit}, ${Number(l.weight_kg)} kg`).join('; ')
+        || [f.packages && `${f.packages} pkgs`, f.gross_weight_kg && `${Number(f.gross_weight_kg).toLocaleString()} kg`, f.volume_cbm && `${f.volume_cbm} CBM`].filter(Boolean).join(' · ')],
+      ...extra]);
+  }
+  const body = [
+    `Dear ${r.vendor_contact ? r.vendor_contact.split(' ')[0] : `${r.vendor_name} team`},`, '',
+    `Thank you for your rate (our ref. ${r.request_no}). To complete it, could you please also share:`, '',
+    ...(gaps.length ? gaps.map((x) => `- ${x.ask.charAt(0).toUpperCase()}${x.ask.slice(1)}`) : ['- [Nothing is missing — write your question here]']), '',
+    ...(ship ? ['For your reference, the shipment details:', ship, ''] : []),
+    `Please quote our reference ${r.request_no} in your reply.`, '',
+    await signature(actor),
+  ].join('\n');
+  return { kind: 'vendor_missing', id, recipients, subject: f ? `${threadSubject(f)} – Our ref. ${r.request_no}` : `Rate request – Our ref. ${r.request_no}`, body,
+    note: recipients.length ? (gaps.length ? undefined : 'Nothing is missing on this rate.') : `${r.vendor_name} has no email saved. Add it under Vendors, or type the address in your email program.` };
+}
+
 // ------------------------------------------------------------ old customer service case
 async function caseDraft(actor: Actor, id: string): Promise<Draft> {
   const k = await getCase(actor, id);
@@ -246,6 +296,8 @@ export async function emailDraft(actor: Actor, p: Record<string, string>): Promi
     case 'vendor_request': return vendorDraft(actor, p.id, p.update);
     case 'quotation': return quotationDraft(actor, p.id, p.update);
     case 'job_file': return jobFileDraft(actor, p.id, p.update ?? '');
+    case 'enquiry_missing': return missingDraft(actor, p.id);
+    case 'vendor_missing': return vendorMissingDraft(actor, p.id);
     case 'case': return caseDraft(actor, p.id);
     default: throw bad('Unknown email type');
   }
@@ -259,14 +311,16 @@ export async function emailPrepared(actor: Actor, b: any) {
   const detail = `To ${to.join(', ') || '(typed in email program)'} — "${subject}"`;
   await tx(async (c) => {
     let fileId: string | null = null, vr: string | null = null, qid: string | null = null;
-    if (b.kind === 'vendor_request') {
-      await c.query('insert into vendor_request_events (request_id, title, details, user_id, user_name) values ($1,$2,$3,$4,$5)', [b.id, 'Email prepared', detail, actor.id, actor.full_name]);
+    if (b.kind === 'vendor_request' || b.kind === 'vendor_missing') {
+      await c.query('insert into vendor_request_events (request_id, title, details, user_id, user_name) values ($1,$2,$3,$4,$5)',
+        [b.id, b.kind === 'vendor_missing' ? 'Missing quote details asked from the agent' : 'Email prepared', detail, actor.id, actor.full_name]);
       fileId = (await one('select job_file_id from vendor_requests where id = $1', [b.id], c))?.job_file_id ?? null; vr = b.id;
     } else if (b.kind === 'quotation') {
       await c.query('insert into quotation_events (quotation_id, title, details, user_id, user_name) values ($1,$2,$3,$4,$5)', [b.id, 'Email prepared for the customer', detail, actor.id, actor.full_name]);
       fileId = (await one('select job_file_id from quotations where id = $1', [b.id], c))?.job_file_id ?? null; qid = b.id;
-    } else if (b.kind === 'job_file') {
-      await loadFile(actor, b.id, c); await event(c, actor, b.id, { kind: 'note', title: 'Email prepared for the customer', new_value: detail }); fileId = b.id;
+    } else if (b.kind === 'job_file' || b.kind === 'enquiry_missing') {
+      await loadFile(actor, b.id, c);
+      await event(c, actor, b.id, { kind: 'note', title: b.kind === 'enquiry_missing' ? 'Missing details asked from the customer' : 'Email prepared for the customer', new_value: detail }); fileId = b.id;
     } else if (b.kind === 'case') {
       await c.query('insert into cs_case_events (case_id, title, details, user_id, user_name) values ($1,$2,$3,$4,$5)', [b.id, 'Email reply prepared', detail, actor.id, actor.full_name]);
       await c.query('update cs_cases set first_response_at = coalesce(first_response_at, now()) where id = $1', [b.id]);

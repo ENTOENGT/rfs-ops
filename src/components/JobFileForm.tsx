@@ -1,5 +1,7 @@
 'use client';
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
+import { api } from './api';
+import { checksFor, EnquiryCheck } from '@/lib/enquiryGaps';
 import { useMe } from './Shell';
 import { DIVISIONS, directionOfDivision, divisionName } from '@/lib/commercialRules';
 import { DIRECTIONS, MODES, INCOTERMS, label, noPorts } from '@/lib/jobfileRules';
@@ -18,7 +20,7 @@ export function JobFileFields({ f, setF, fe = {}, isNew }: { f: any; setF: (v: a
   const salesman = lk.salesmen?.find((s: any) => s.id === salesmanId);
   const coordId = me.role_code === 'sales' ? lk.me_coordinator_id : salesman?.coordinator_id ?? (me.role_code === 'coordinator' ? me.id : null);
   const coordName = lk.coordinators?.find((c: any) => c.id === (f.coordinator_id || coordId))?.name;
-  const manager = can('commercial.manage');
+  const manager = can('commercial.manage') || !!me.role_is_manager;   // team managers choose the Coordinator too
   const defDivision = salesman?.division ?? (me.role_code === 'sales' ? me.division : null);
   // start a new enquiry on the Salesman's own division, so the direction (and the Incoterm rules) are right from the start
   useEffect(() => {
@@ -37,6 +39,16 @@ export function JobFileFields({ f, setF, fe = {}, isNew }: { f: any; setF: (v: a
       onChange={(e) => setF({ ...f, [`${end}_is_us`]: e.target.value === 'us', [`${end}_agent_id`]: e.target.value === 'us' ? null : e.target.value || null })}>
       <option value="">Not chosen yet</option><option value="us">Ourselves (RFS)</option>
       {(lk.vendors ?? []).filter((v: any) => v.vendor_type !== 'shipping_line').map((v: any) => <option key={v.id} value={v.id}>{v.name}</option>)}</select>);
+  // feedback 17 Nov: Freight and Clearance & Delivery as two tick boxes. Both = a freight job that also needs clearance and delivery.
+  const freight = (f.job_type ?? 'freight') !== 'clearance_delivery';
+  const cd = f.job_type === 'clearance_delivery' || (!!f.needs_clearance && !!f.needs_transport);
+  const setTypes = (fr: boolean, c: boolean) => {
+    if (!fr && !c) return;                                       // at least one
+    setF({ ...f, job_type: fr ? 'freight' : 'clearance_delivery', needs_clearance: c, needs_transport: c });
+  };
+  const jobTypes = <div style={{ display: 'flex', gap: 18, paddingTop: 6 }}>
+    <label className="perm-chip"><input type="checkbox" checked={freight} onChange={() => setTypes(!freight, cd)} /><span>Freight</span></label>
+    <label className="perm-chip"><input type="checkbox" checked={cd} onChange={() => setTypes(freight, !cd)} /><span>Clearance &amp; Delivery</span></label></div>;
   const tick = (k: string, text: string) => (
     <label className="small" style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
       <input type="checkbox" style={{ width: 'auto' }} checked={!!f[k]} onChange={set(k)} />{text}</label>);
@@ -51,12 +63,13 @@ export function JobFileFields({ f, setF, fe = {}, isNew }: { f: any; setF: (v: a
         <label className={`f ${isNew && !enquiry ? 'span2' : ''}${fe.customer_id ? ' bad' : ''}`}><span>Customer <em>*</em></span>
           <select value={f.customer_id ?? ''} onChange={set('customer_id')}><option value="">Choose customer</option>
             {lk.customers.map((c: any) => <option key={c.id} value={c.id}>{c.name}</option>)}</select><Err m={fe.customer_id} /></label>
-        {enquiry && me.role_code !== 'sales' && <label className={`f${fe.salesman_id ? ' bad' : ''}`}><span>Responsible Salesman {me.role_code === 'coordinator' && <em>*</em>}</span>
+        {enquiry && me.role_code !== 'sales' && <label className={`f${fe.salesman_id ? ' bad' : ''}`}><span>{me.role_is_manager ? 'Owner of the enquiry' : 'Responsible Salesman'} {me.role_code === 'coordinator' && <em>*</em>}</span>
           <select value={f.salesman_id ?? ''} onChange={(e) => { const dv = f.division || lk.salesmen?.find((s: any) => s.id === e.target.value)?.division || ''; setF({ ...f, salesman_id: e.target.value, division: dv, direction: directionOfDivision(dv) ?? f.direction }); }}>
             <option value="">{me.role_code === 'coordinator' ? 'Choose the Salesman' : 'None'}</option>
+            {me.role_is_manager && <option value={me.id}>Me ({me.full_name})</option>}
             {lk.salesmen?.map((s: any) => <option key={s.id} value={s.id}>{s.name}</option>)}</select><Err m={fe.salesman_id} /></label>}
         {enquiry && <div className="f"><span>Coordinator</span>
-          {manager ? <select value={f.coordinator_id ?? ''} onChange={set('coordinator_id')}><option value="">{coordName ? `${coordName} (from the mapping)` : 'From the Salesman\'s mapping'}</option>
+          {manager ? <select value={f.coordinator_id ?? ''} onChange={set('coordinator_id')}><option value="">{coordName ? `${coordName} (from the mapping)` : f.salesman_id === me.id ? 'None — I handle it' : 'From the Salesman\'s mapping'}</option>
             {lk.coordinators?.map((c: any) => <option key={c.id} value={c.id}>{c.name}</option>)}</select>
             : <input readOnly value={coordName ?? (me.role_code === 'sales' ? 'None mapped — ask the Commercials Manager' : 'Comes from the Salesman')} />}</div>}
         {/* Step 4: an enquiry asks one thing — the division; the direction follows it (Imports → import, Exports → export, Cross Trade → cross-trade) */}
@@ -74,8 +87,7 @@ export function JobFileFields({ f, setF, fe = {}, isNew }: { f: any; setF: (v: a
             {MODES.map(([c, n]) => <option key={c} value={c}>{n}</option>)}</select><Err m={fe.mode} /></label>
         <label className="f"><span>Customer reference</span><input value={f.customer_reference ?? ''} onChange={set('customer_reference')} /></label>
         {/* migration 026: a Clearance & Delivery job has no freight — it starts with Documentation (or with you, if you are a Salesman) */}
-        {(isNew || enq) && <label className="f"><span>Job type</span>
-          <select value={f.job_type ?? 'freight'} onChange={set('job_type')}><option value="freight">Freight</option><option value="clearance_delivery">Clearance &amp; Delivery</option></select></label>}
+        {(isNew || enq) && <div className="f"><span>Job type (tick both when both are needed)</span>{jobTypes}</div>}
         {f.direction === 'cross_trade' && <>
           <label className="f"><span>Origin agent</span>{agentPick('origin')}</label>
           <label className="f"><span>Destination agent</span>{agentPick('destination')}</label>
@@ -118,10 +130,30 @@ export function JobFileFields({ f, setF, fe = {}, isNew }: { f: any; setF: (v: a
       {enq && <p className="muted small" style={{ marginBottom: 0 }}>Shipping line, vessel, booking, BL and dates are not asked here — they come from the Booking, Vessel details and Pre-alert steps.</p>}
     </div>
     <CargoPanel f={f} setF={setF} fe={fe} />
+    {(isNew || enq) && <DetailsPanel f={f} setF={setF} />}
   </>;
 }
 
 /** Cargo (migration 023): one line per package type and size; packages, weight, CBM and chargeable weight add up by themselves. */
+/** Migration 028: your own enquiry checklist items for this division and mode (kept in Commercials → Checklists). */
+function DetailsPanel({ f, setF }: { f: any; setF: (v: any) => void }) {
+  const [all, setAll] = useState<EnquiryCheck[] | null>(null);
+  useEffect(() => { api('/api/checklists/enquiry').then((r) => setAll(r.rows)).catch(() => setAll([])); }, []);
+  const div = f.division ?? (f.direction === 'import' ? 'imports' : f.direction === 'export' ? 'exports' : f.direction === 'cross_trade' ? 'cross_trade' : null);
+  const items = checksFor(all ?? [], div, f.mode);
+  if (!items.length) return null;
+  const v = f.enquiry_details ?? {};
+  const put = (id: string, x: string) => setF({ ...f, enquiry_details: { ...v, [id]: x } });
+  return <div className="panel"><h2>Additional details</h2>
+    <p className="muted small" style={{ marginTop: -4 }}>Not required to save. Anything left empty is listed as missing on the enquiry, with an email ready to ask the customer.</p>
+    <div className="grid g3">{items.map((c) => (
+      <label key={c.id} className="f"><span>{c.label}</span>
+        {c.field_type === 'yes_no' ? <select value={v[c.id] ?? ''} onChange={(e) => put(c.id, e.target.value)}><option value="">Not known yet</option><option value="yes">Yes</option><option value="no">No</option></select>
+          : <input type={c.field_type === 'date' ? 'date' : c.field_type === 'number' ? 'number' : 'text'} value={v[c.id] ?? ''} onChange={(e) => put(c.id, e.target.value)} />}
+      </label>))}</div>
+  </div>;
+}
+
 function CargoPanel({ f, setF, fe }: { f: any; setF: (v: any) => void; fe: Record<string, string> }) {
   const lines: any[] = f.cargo_lines ?? [];
   const setLines = (v: any[]) => setF({ ...f, cargo_lines: v });
