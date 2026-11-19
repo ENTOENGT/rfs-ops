@@ -1,5 +1,5 @@
 /**
- * ERP export (migration 016). The ERP stays the system of record for invoices and accounts; RFS Ops only hands it
+ * ERP export (migration 016). The ERP stays the system of record for invoices and accounts; RFS CRM only hands it
  * finished operational work to bill or pay:
  *   trip      completed truck trips          (customer, route, selling ex VAT, transport cost)
  *   pro       completed PRO requests         (customer, BL, containers, clearance charges paid — to re-bill)

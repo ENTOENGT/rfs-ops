@@ -581,7 +581,7 @@ export async function exportReport(actor: Actor, key: string, p: Record<string, 
  *   Messenger runs — messenger_runs (messenger, collected / delivered times). Job No. only if the run is
  *                    linked to a truck job; runs have no vehicle or driver.
  * Each half follows its own visibility rule (jobScope / runScope), so departments see only their own.
- * Request documents show how many are ready to print and how many expired under the 30-day rule —
+ * Request documents show how many are ready to print and how many were deleted under the old 30-day rule (now switched off) —
  * the rows themselves never disappear when files are deleted.
  */
 const OPEN_JOB = `('draft','requested','pending_assignment','assigned','confirmed','dispatched','picked_up','in_transit')`;
@@ -621,7 +621,7 @@ async function messengerReport(actor: Actor, def: ReportDef, cols: Col[], colsOu
       a.actual_delivery_at delivered_at, s.name status_name, s.sort_order status_sort,
       (select count(*) filter (where d.purged_at is null and (d.expires_at is null or d.expires_at > now()))::int from job_documents d
          join document_types dt on dt.code = d.document_type_code where d.job_id = t.id and d.deleted_at is null and dt.is_request_doc) docs_ready,
-      (select count(*) filter (where d.purged_at is not null or d.expires_at <= now())::int from job_documents d
+      (select count(*) filter (where d.purged_at is not null)::int from job_documents d
          join document_types dt on dt.code = d.document_type_code where d.job_id = t.id and d.deleted_at is null and dt.is_request_doc) docs_expired
     from transport_requests t
     join job_statuses s on s.code = t.status_code

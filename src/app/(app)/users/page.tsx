@@ -1,5 +1,6 @@
 'use client';
 import SendAppLink from '@/components/SendAppLink';
+import InviteUser from '@/components/InviteUser';
 import { useEffect, useMemo, useState } from 'react';
 import { api, fmtDateTime } from '@/components/api';
 import { useMe } from '@/components/Shell';
@@ -7,7 +8,7 @@ import { StatusDot } from '@/components/Presence';
 
 const SIDE: Record<string, string> = { admin: 'Administration', operations: 'Operations', transport: 'Transport', messenger: 'Messengers', finance: 'Finance', pro: 'PRO', warehouse: 'Warehouse' };
 
-function UserForm({ user, data, onDone, onClose }: { user?: any; data: any; onDone: (msg: string, sendApp?: any) => void; onClose: () => void }) {
+function UserForm({ user, data, onDone, onClose }: { user?: any; data: any; onDone: (msg: string, sendApp?: any, invite?: any) => void; onClose: () => void }) {
   const all = data.scope === 'all';
   const [f, setF] = useState<any>(user ? { ...user } : {
     full_name: '', email: '', mobile: '', role_id: '', department_id: all ? '' : data.department.id, designation_id: '', manager_id: '', overrides: [] });
@@ -55,7 +56,8 @@ function UserForm({ user, data, onDone, onClose }: { user?: any; data: any; onDo
       } else {
         const r = await api('/api/users', { body: { ...f, designation_id: f.designation_id || null, ...(f.manager_id ? { manager_id: f.manager_id } : {}) } });
         if (appRole) onDone(`${f.full_name} added.`, { id: r.id, full_name: f.full_name });     // goes straight to "Send app link"
-        else onDone(`${f.full_name} added. Temporary password: ${r.temporary_password} — give it to them privately. They choose their own password at first sign-in.`);
+        else onDone(`${f.full_name} added. An invitation with a sign-in link goes to ${f.email}. Backup only — temporary password: ${r.temporary_password} (give it privately if the email does not arrive).`,
+          undefined, { id: r.id, full_name: f.full_name });
       }
     } catch (e: any) { setErr(e.message); }
   };
@@ -279,6 +281,7 @@ export default function Users() {
   const [fl, setFl] = useState({ dept: '', role: '', status: 'active', mgr: '' });
   const [msg, setMsg] = useState<{ t: 'ok' | 'err'; m: string } | null>(null);
   const [appFor, setAppFor] = useState<any>(null);
+  const [inviteFor, setInviteFor] = useState<any>(null);
   const load = () => api('/api/users').then(setData).catch((e) => setMsg({ t: 'err', m: e.message }));
   useEffect(() => { load(); const t = new URLSearchParams(window.location.search).get('tab'); if (t === 'chart' || t === 'titles' || t === 'handlers') setTab(t); }, []);
   const rows = useMemo(() => (data?.users ?? []).filter((u: any) =>
@@ -346,18 +349,22 @@ export default function Users() {
             <td>{u.overrides.length ? <span className="flag">{u.overrides.length}</span> : '—'}</td>
             <td>{fmtDateTime(u.last_login_at)}</td>
             <td>{u.is_active ? (u.must_change_password ? <span className="badge outline">{u.app_only ? 'App not set up yet' : 'Awaiting first sign-in'}</span> : 'Active') : <span className="badge" style={{ background: '#9B2C2C' }}>Disabled</span>}</td>
-            <td style={{ whiteSpace: 'nowrap' }}>{u.can_edit && <>
+            <td style={{ whiteSpace: 'nowrap' }}>{can('users.manage') && !u.app_only && u.is_active && <><button className="btn small" title={u.outlook_email ? `Connected: ${u.outlook_email}` : 'Outlook pilot (G3)'}
+                onClick={() => act(() => api(`/api/users/${u.id}/outlook-pilot`, { body: { on: !u.outlook_pilot } }), () => `Outlook pilot ${u.outlook_pilot ? 'switched off' : 'switched on'} for ${u.full_name}`)}>
+                {u.outlook_pilot ? (u.outlook_email ? 'Outlook ✓' : 'Outlook pilot: on') : 'Outlook pilot: off'}</button>{' '}</>}
+              {u.can_edit && <>
               <button className="btn small" onClick={() => setEdit(u)}>Edit</button>{' '}
               {u.app_only
                 ? u.is_active && <><button className="btn small" onClick={() => setAppFor(u)}>Send app link</button>{' '}</>
-                : <><button className="btn small" onClick={() => confirm(`Reset password for ${u.full_name}?`) && act(() => api(`/api/users/${u.id}/reset-password`, { body: {} }), (r) => `Temporary password for ${u.full_name}: ${r.temporary_password}`)}>Reset password</button>{' '}</>}
+                : <>{u.is_active && <><button className="btn small" onClick={() => setInviteFor(u)}>Send invitation</button>{' '}</>}<button className="btn small" onClick={() => confirm(`Reset password for ${u.full_name}?`) && act(() => api(`/api/users/${u.id}/reset-password`, { body: {} }), (r) => `Temporary password for ${u.full_name}: ${r.temporary_password}`)}>Reset password</button>{' '}</>}
               {u.id !== me.id && <button className="btn small danger" onClick={() => disable(u)}>{u.is_active ? 'Disable' : 'Enable'}</button>}
             </>}</td>
           </tr>))}
           {rows.length === 0 && <tr><td colSpan={10} className="muted" style={{ padding: 24, textAlign: 'center' }}>{q || fl.dept || fl.role || fl.mgr ? 'Nobody matches these filters.' : 'No people yet.'}</td></tr>}
         </tbody></table></div></div>}
+      {inviteFor && <InviteUser userId={inviteFor.id} name={inviteFor.full_name} onClose={() => { setInviteFor(null); load(); }} />}
       {appFor && <SendAppLink userId={appFor.id} name={appFor.full_name} onClose={() => { setAppFor(null); load(); }} />}
-      {edit && <UserForm user={edit.id ? edit : undefined} data={data} onClose={() => setEdit(null)} onDone={(m, app) => { setEdit(null); setMsg({ t: 'ok', m }); load(); if (app) setAppFor(app); }} />}
+      {edit && <UserForm user={edit.id ? edit : undefined} data={data} onClose={() => setEdit(null)} onDone={(m, app, invite) => { setEdit(null); setMsg({ t: 'ok', m }); load(); if (app) setAppFor(app); if (invite) setInviteFor(invite); }} />}
     </div>
   );
 }

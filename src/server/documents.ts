@@ -64,7 +64,7 @@ export function unsign(ticket: unknown): any {
 // ------------------------------------------------------------ upload
 /** Request documents (Invoice, Packing list, BOE, BL, Gate pass, Other) can be added or replaced until the trip starts. */
 const BEFORE_DISPATCH = ['draft', 'requested', 'pending_assignment', 'assigned', 'confirmed'];
-export const EXPIRED_MSG = 'This document expired and was deleted automatically 30 days after it was uploaded.';
+export const EXPIRED_MSG = 'This document was deleted under the old 30-day rule (documents are now kept for good).';
 
 async function checkTypeAllowed(actor: Actor, db: Db | undefined, typeCode: string, mime: string, job?: { status_code: string }) {
   const dt = await one('select code, name, is_commercial, is_request_doc, retention_days from document_types where code = $1 and is_active', [typeCode], db);
@@ -120,7 +120,7 @@ export async function confirmUpload(actor: Actor, jobId: string, b: any) {
     const job = await visibleJob(actor, jobId, c, true);
     const dt = await checkTypeAllowed(actor, c, t.type, t.mime, job);
     if (await one('select 1 from job_documents where storage_path = $1', [t.key], c)) throw new ApiError(409, 'DUPLICATE', 'Already saved');
-    // Retention (e.g. 30 days) counts from THIS upload — a replaced file gets its own fresh 30 days.
+    // Documents are kept for good (029): retention_days is empty, so expires_at stays empty.
     const doc = await one(`insert into job_documents (job_id, document_type_code, file_name, storage_path, mime_type, size_bytes, uploaded_by, storage_driver, expires_at)
       values ($1,$2,$3,$4,$5,$6,$7,$8, case when $9::int is null then null else now() + make_interval(days => $9::int) end) returning id`,
       [jobId, t.type, t.name, t.key, t.mime, info.size, actor.id, t.driver, dt.retention_days ?? null], c);
@@ -217,7 +217,7 @@ async function visibleDoc(actor: Actor, docId: string, db?: Db) {
 
 export async function downloadUrl(actor: Actor, docId: string, inline = false) {
   const d = await visibleDoc(actor, docId);
-  if (d.purged_at || (d.expires_at && new Date(d.expires_at) <= new Date())) throw new ApiError(410, 'EXPIRED', EXPIRED_MSG);
+  if (d.purged_at) throw new ApiError(410, 'EXPIRED', EXPIRED_MSG);
   return fileStore().downloadUrl(d.storage_path, d.file_name, inline);
 }
 
@@ -234,7 +234,7 @@ export async function deleteDocument(actor: Actor, docId: string) {
       throw new ApiError(409, 'AFTER_DISPATCH', 'The trip has started — request documents can no longer be removed or replaced.');
     if (d.document_type_code === 'pod' && job.pod_status === 'verified' && !actor.isSuperAdmin)
       throw new ApiError(409, 'POD_VERIFIED', 'This POD is already verified. Ask an admin if it must be removed.');
-    // Soft delete: the file stays in storage for the audit trail (request documents are still wiped at 30 days).
+    // Soft delete: the file stays in storage for the audit trail (documents are kept for good).
     await c.query('update job_documents set deleted_at = now(), deleted_by = $2 where id = $1', [docId, actor.id]);
     await audit(c, actor, { entity_type: 'job', entity_id: job.id, job_id: job.id, action: `${d.type_name} removed`, old_value: d.file_name,
       sensitivity: d.is_commercial ? 'commercial' : 'general' });
@@ -345,7 +345,8 @@ export async function storageCheck(actor: Actor) {
 }
 
 
-// ------------------------------------------------------------ 30-day document clean-up
+// ------------------------------------------------------------ 30-day document clean-up (switched off: documents are kept for good)
+export const DOCUMENTS_KEPT_FOR_GOOD = true;
 /**
  * Deletes request documents whose retention has run out (30 days from each file's own upload time):
  *   1. the real file is removed from storage,
@@ -357,6 +358,8 @@ export async function storageCheck(actor: Actor) {
  * (if no run in the last 2 hours), and "Run now" in Settings.
  */
 export async function runDocumentCleanup(trigger: 'schedule' | 'backup' | 'manual', limit = 500, storeOverride?: Pick<ReturnType<typeof fileStore>, 'remove'>) {
+  // Switched off (migration 029, 19 Nov 2026): the company keeps every document for good. Nothing is deleted any more.
+  if (DOCUMENTS_KEPT_FOR_GOOD) return { skipped: true, deleted: 0, failed: 0 };
   const { pool } = await import('./db');
   const lock = await pool().connect();
   try {
@@ -403,6 +406,7 @@ export async function runDocumentCleanup(trigger: 'schedule' | 'backup' | 'manua
 
 /** Backup in case the scheduled function ever stops: normal app use runs the clean-up if none ran for 2 hours. */
 export async function maybeRunDocumentCleanup() {
+  if (DOCUMENTS_KEPT_FOR_GOOD) return;
   const last = await one(`select max(started_at) at from document_cleanup_runs`).catch(() => null);
   if (last?.at && new Date(last.at).getTime() > Date.now() - 2 * 3600_000) return;
   await runDocumentCleanup('backup');
@@ -412,6 +416,7 @@ export async function maybeRunDocumentCleanup() {
 export async function cleanupStatus(actor: Actor) {
   requirePerm(actor, 'settings.manage');
   return {
+    kept_for_good: DOCUMENTS_KEPT_FOR_GOOD,
     runs: await q(`select id, started_at, finished_at, trigger, deleted, failed, error from document_cleanup_runs order by id desc limit 10`),
     waiting: Number((await one(`select count(*) n from job_documents where expires_at <= now() and purged_at is null`))!.n),
     next_due: (await one(`select min(expires_at) at from job_documents where purged_at is null and expires_at > now()`))?.at ?? null,

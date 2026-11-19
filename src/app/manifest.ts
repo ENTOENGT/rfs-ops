@@ -2,8 +2,8 @@ import type { MetadataRoute } from 'next';
 // Lets drivers and messengers "Add to Home Screen": the app then opens full-screen like a normal phone app.
 export default function manifest(): MetadataRoute.Manifest {
   return {
-    name: 'Reliance Freight — Operations',
-    short_name: 'RFS Ops',
+    name: 'RFS CRM — Reliance Freight',
+    short_name: 'RFS CRM',
     description: 'Jobs and document runs for Reliance Freight Systems drivers and messengers',
     start_url: '/',
     scope: '/',

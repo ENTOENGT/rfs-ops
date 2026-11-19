@@ -25,7 +25,7 @@ export default function Notifications() {
         {d?.unread > 0 && !prefs && <button className="btn" onClick={() => read()}>Mark all as read</button>}</div>
       {err && <div className="msg err">{err}</div>}
       {prefs && d ? <div className="panel"><h2>Also send me an email for…</h2>
-        <p className="muted small" style={{ marginTop: 0 }}>Everything always shows here. Email copies start once the company mailbox is connected to RFS Ops (Part G3); your choices are saved now.</p>
+        <p className="muted small" style={{ marginTop: 0 }}>Everything always shows here. Email copies start once the company mailbox is connected to RFS CRM (Part G3); your choices are saved now.</p>
         <div className="grid g3">{d.events.map(([k, n]: [string, string]) => <label key={k} className="check">
           <input type="checkbox" checked={!!d.email_prefs[k]} onChange={(e) => setPref(k, e.target.checked)} /> {n}</label>)}</div>
       </div> : <>

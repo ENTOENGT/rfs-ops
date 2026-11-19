@@ -50,7 +50,7 @@ function EnquiryChecklist() {
 
       <div className="panel">
         <h2 style={{ marginTop: 0 }}>Always checked</h2>
-        <p className="muted small" style={{ marginTop: 0 }}>Built into RFS Ops; they follow the Incoterm and the mode.</p>
+        <p className="muted small" style={{ marginTop: 0 }}>Built into RFS CRM; they follow the Incoterm and the mode.</p>
         <ul className="chk-built">{BUILT_IN.map((x) => <li key={x}>{x}</li>)}</ul>
       </div>
 

@@ -183,6 +183,7 @@ function Profile({ me, logout }: { me: Me; logout: () => void }) {
               <button className="btn small primary" onClick={() => set({ presence: 'leave', leave_until: leave.until || null, note: leave.note })}>Set leave</button></div>}
         </div>}
         <Link href="/notifications" role="menuitem" onClick={() => setOpen(false)}><Icon name="bell" size={16} /> Notifications</Link>
+        <Link href="/outlook" role="menuitem" onClick={() => setOpen(false)}><Icon name="mail" size={16} /> My Outlook</Link>
         <Link href="/change-password" role="menuitem" onClick={() => setOpen(false)}><Icon name="key" size={16} /> Change password</Link>
         <button role="menuitem" onClick={logout}><Icon name="logout" size={16} /> Sign out</button>
       </div>}

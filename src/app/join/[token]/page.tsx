@@ -51,12 +51,12 @@ export default function Join({ params }: { params: { token: string } }) {
         {!info && err && <>
           <h1>This link can't be used</h1>
           <div className="msg err">{err}</div>
-          <p className="small">Already set your password? <a href="/login">Sign in here</a> with your mobile number.</p>
+          <p className="small">Already set your password? <a href="/login">Sign in here</a>.</p>
         </>}
 
         {info && !done && <form onSubmit={save}>
           <h1>Hello {info.full_name}</h1>
-          <p>Welcome to the Reliance Freight app. First, choose your password.</p>
+          <p>{info.app_only ? 'Welcome to the Reliance Freight app. First, choose your password.' : 'Welcome to RFS CRM. Choose your password to start.'}</p>
           <p className="small muted">You will sign in with: <b>{info.sign_in_with}</b></p>
           {err && <div className="msg err">{err}</div>}
           <label className="f"><span>New password</span>
@@ -71,10 +71,16 @@ export default function Join({ params }: { params: { token: string } }) {
           <label className="small" style={{ display: 'flex', gap: 8, alignItems: 'center', margin: '10px 0' }}>
             <input type="checkbox" checked={show} onChange={(e) => setShow(e.target.checked)} style={{ width: 'auto' }} /> Show password</label>
           <button className="btn primary app-big" disabled={busy || !okLen || !okLetter || !okNum || !pw2}>{busy ? 'Saving…' : 'Save password'}</button>
-          <p className="small muted">Write your password down somewhere safe. If you forget it, ask your manager for a new link.</p>
+          <p className="small muted">{info.app_only ? 'Write your password down somewhere safe. If you forget it, ask your manager for a new link.' : 'If you forget it later, ask your manager to send a new invitation.'}</p>
         </form>}
 
-        {done && <>
+        {done && !info.app_only && <>
+          <h1>Done ✓</h1>
+          <p>Your password is saved and you are signed in.</p>
+          <p className="small muted">Next time, sign in at this website with <b>{info.sign_in_with}</b> and your new password.</p>
+          <a className="btn primary app-big" href="/dashboard">Open RFS CRM</a>
+        </>}
+        {done && info.app_only && <>
           <h1>Done ✓</h1>
           <p>Your password is saved. Now put the app on your phone's home screen:</p>
           {phone === 'android' && <>

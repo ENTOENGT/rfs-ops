@@ -1,5 +1,5 @@
 /**
- * Group notifications (Part G1). Every important event on a shipment tells its handling group inside RFS Ops:
+ * Group notifications (Part G1). Every important event on a shipment tells its handling group inside RFS CRM:
  * the Salesman, the Coordinator, any Agent Coordinator working on one of its rate requests, and the Commercials
  * Managers of that division. The person who did the action is not told about it. The same event never reaches the
  * same person twice (same shipment, same event, same rate request / quotation, within two minutes).

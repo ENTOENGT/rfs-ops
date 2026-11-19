@@ -18,18 +18,19 @@ import { createHash, randomBytes } from 'crypto';
 import { Actor, hashPassword, issueSession, phoneKey, validatePassword } from './auth';
 import { ApiError, audit, bad, Db, forbidden, notFound, one, tx } from './db';
 import { editableUser, userScope } from './team';
+import { canSend, config as outlookConfig, sendMail } from './outlook';
 
 const LINK_DAYS = 7;
 const UUID = /^[0-9a-f-]{36}$/i;
 const hash = (t: string) => createHash('sha256').update(t).digest('hex');
 const gone = () => new ApiError(410, 'LINK_EXPIRED', 'This link has expired or was already used. Ask your manager to send a new one.');
 
-async function makeLink(c: Db, actor: Actor, user: { id: string; full_name: string }) {
+async function makeLink(c: Db, actor: Actor, user: { id: string; full_name: string }, days = LINK_DAYS, action = 'App link sent') {
   await c.query('update app_links set expires_at = now() where user_id = $1 and used_at is null and expires_at > now()', [user.id]);
   const token = randomBytes(24).toString('base64url');
   await c.query(`insert into app_links (user_id, token_hash, created_by, expires_at)
-    values ($1, $2, $3, now() + ($4 || ' days')::interval)`, [user.id, hash(token), actor.id, String(LINK_DAYS)]);
-  await audit(c, actor, { entity_type: 'user', entity_id: user.id, action: 'App link sent', new_value: user.full_name, sensitivity: 'admin' });
+    values ($1, $2, $3, now() + ($4 || ' days')::interval)`, [user.id, hash(token), actor.id, String(days)]);
+  await audit(c, actor, { entity_type: 'user', entity_id: user.id, action, new_value: user.full_name, sensitivity: 'admin' });
   return token;
 }
 
@@ -120,4 +121,43 @@ export async function useAppLink(token: string, password: unknown) {
     return l.user_id as string;
   });
   return issueSession(userId);
+}
+
+// ------------------------------------------------------------ invitation email for office staff (sign-in link, 48 hours)
+export const INVITE_HOURS = 48;
+const placeholderEmail = (e: string) => /@(users|drivers)\.app$/.test(e);
+
+/** The invitation text: short and plain. The link is the only secret in it — no password is ever emailed. */
+export function inviteText(name: string, email: string, url: string, from: string) {
+  return {
+    subject: 'You have been added to RFS CRM',
+    body: `Hello ${name.split(' ')[0]},\n\nYou have been added to RFS CRM, our system for enquiries, quotes and shipments.\n\n`
+      + `Please open this link and choose your password:\n${url}\n\n`
+      + `The link works once and only for the next ${INVITE_HOURS} hours. After that you sign in at ${outlookConfig().app}/login with your email ${email}.\n\n`
+      + `If the link has expired, just reply and I will send a new one.\n\nRegards,\n${from}`,
+  };
+}
+
+/**
+ * "Send invitation" (and automatically after "Add person"): a one-time link, valid 48 hours, to choose a password.
+ * Sent from the sender's own Outlook when it is connected; otherwise the email is returned ready to copy or open.
+ * Pressing it again makes a new link and switches off the old one — also the way to fix a forgotten password.
+ */
+export async function inviteUser(actor: Actor, userId: string) {
+  const scope = userScope(actor);
+  const u = await editableUser(actor, scope, userId);
+  if (!u.is_active) throw bad('This account is switched off. Switch it on first.');
+  const role = await one('select app_only from roles where id = $1', [u.role_id]);
+  if (role?.app_only) throw bad('Phone-app people get the app link instead (Send app link).');
+  if (!u.email || placeholderEmail(u.email)) throw bad(`${u.full_name} has no email address. Add one first.`);
+  const token = await tx((c) => makeLink(c, actor, u, INVITE_HOURS / 24, 'Invitation link made'));
+  const url = `${outlookConfig().app}/join/${token}`;
+  const mail = inviteText(u.full_name, u.email, url, actor.full_name);
+  if (await canSend(actor.id)) {
+    await sendMail(actor.id, { to: [u.email], subject: mail.subject, body: mail.body });
+    const { pool } = await import('./db');
+    await audit(pool(), actor, { entity_type: 'user', entity_id: u.id, action: 'Invitation emailed', new_value: u.email, sensitivity: 'admin' });
+    return { sent: true, to: u.email, hours: INVITE_HOURS };
+  }
+  return { sent: false, to: u.email, hours: INVITE_HOURS, subject: mail.subject, body: mail.body };
 }

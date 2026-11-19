@@ -199,7 +199,7 @@ export default function RequestForm({ job, prefill }: { job?: any; prefill?: any
           {!job && <div className="panel">
             <h2>Documents for the trip</h2>
             <p className="muted small" style={{ marginTop: 0 }}>Transport prints these and gives them to the driver. PDF, JPG or PNG, up to 10 MB each — you can add several per heading.
-              Files are deleted automatically 30 days after upload.</p>
+              Files are kept with the job.</p>
             <div className="docs-grid">
               {REQUEST_DOCS.map(([code, name]) => {
                 const mine = files.map((x, i) => ({ ...x, i })).filter((x) => x.type === code);

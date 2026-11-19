@@ -307,33 +307,49 @@ export async function emailDraft(actor: Actor, p: Record<string, string>): Promi
 export async function emailPrepared(actor: Actor, b: any) {
   const draft = await emailDraft(actor, { kind: b.kind, id: b.id, update: b.update }); // also re-checks permission
   const to = (Array.isArray(b.to) ? b.to : []).map((x: unknown) => String(x).trim()).filter((x: string) => EMAIL.test(x)).slice(0, 20);
-  const subject = String(b.subject ?? draft.subject).slice(0, 300);
-  const detail = `To ${to.join(', ') || '(typed in email program)'} — "${subject}"`;
+  await recordEmail(actor, b, draft, to, String(b.subject ?? draft.subject).slice(0, 300), null);
+  return { ok: true };
+}
+
+/** Outlook Step 2: send the checked email from the person's own Outlook, then note it as sent in the same histories. */
+export async function emailSend(actor: Actor, b: any) {
+  const draft = await emailDraft(actor, { kind: b.kind, id: b.id, update: b.update }); // also re-checks permission
+  const { sendMail } = await import('./outlook');
+  const sent = await sendMail(actor.id, { to: Array.isArray(b.to) ? b.to : [], cc: Array.isArray(b.cc) ? b.cc : [],
+    subject: String(b.subject ?? draft.subject), body: String(b.body ?? draft.body) });
+  await recordEmail(actor, { ...b, body: b.body ?? draft.body }, draft, sent.to, sent.subject, sent.from);
+  return { ok: true, sent: true, to: sent.to };
+}
+
+/** One email in the record's own history and on the shipment's Emails tab. `sentFrom` = sent from Outlook; null = only prepared. */
+async function recordEmail(actor: Actor, b: any, draft: Draft, to: string[], subject: string, sentFrom: string | null) {
+  const sent = sentFrom !== null;
+  const detail = `To ${to.join(', ') || '(typed in email program)'} — "${subject}"${sent ? ' — sent from Outlook' : ''}`;
+  const t = (prepared: string, done: string) => sent ? done : prepared;
   await tx(async (c) => {
     let fileId: string | null = null, vr: string | null = null, qid: string | null = null;
     if (b.kind === 'vendor_request' || b.kind === 'vendor_missing') {
       await c.query('insert into vendor_request_events (request_id, title, details, user_id, user_name) values ($1,$2,$3,$4,$5)',
-        [b.id, b.kind === 'vendor_missing' ? 'Missing quote details asked from the agent' : 'Email prepared', detail, actor.id, actor.full_name]);
+        [b.id, b.kind === 'vendor_missing' ? 'Missing quote details asked from the agent' : t('Email prepared', 'Email sent'), detail, actor.id, actor.full_name]);
       fileId = (await one('select job_file_id from vendor_requests where id = $1', [b.id], c))?.job_file_id ?? null; vr = b.id;
     } else if (b.kind === 'quotation') {
-      await c.query('insert into quotation_events (quotation_id, title, details, user_id, user_name) values ($1,$2,$3,$4,$5)', [b.id, 'Email prepared for the customer', detail, actor.id, actor.full_name]);
+      await c.query('insert into quotation_events (quotation_id, title, details, user_id, user_name) values ($1,$2,$3,$4,$5)', [b.id, t('Email prepared for the customer', 'Email sent to the customer'), detail, actor.id, actor.full_name]);
       fileId = (await one('select job_file_id from quotations where id = $1', [b.id], c))?.job_file_id ?? null; qid = b.id;
     } else if (b.kind === 'job_file' || b.kind === 'enquiry_missing') {
       await loadFile(actor, b.id, c);
-      await event(c, actor, b.id, { kind: 'note', title: b.kind === 'enquiry_missing' ? 'Missing details asked from the customer' : 'Email prepared for the customer', new_value: detail }); fileId = b.id;
+      await event(c, actor, b.id, { kind: 'note', title: b.kind === 'enquiry_missing' ? 'Missing details asked from the customer' : t('Email prepared for the customer', 'Email sent to the customer'), new_value: detail }); fileId = b.id;
     } else if (b.kind === 'case') {
-      await c.query('insert into cs_case_events (case_id, title, details, user_id, user_name) values ($1,$2,$3,$4,$5)', [b.id, 'Email reply prepared', detail, actor.id, actor.full_name]);
+      await c.query('insert into cs_case_events (case_id, title, details, user_id, user_name) values ($1,$2,$3,$4,$5)', [b.id, t('Email reply prepared', 'Email reply sent'), detail, actor.id, actor.full_name]);
       await c.query('update cs_cases set first_response_at = coalesce(first_response_at, now()) where id = $1', [b.id]);
     }
     if (fileId) {
       const me = await one('select email from users where id = $1', [actor.id], c);
       await c.query(`insert into email_messages (job_file_id, direction, status, template_key, vendor_request_id, quotation_id, from_addr, from_name, to_addrs, subject,
-          sent_at, body_excerpt, source, created_by, created_by_name) values ($1,'out','prepared',$2,$3,$4,$5,$6,$7,$8, now(), $9, 'button', $10, $11)`,
-        [fileId, draft.template?.key ?? null, vr, qid, me?.email ?? null, actor.full_name, to.join(', ') || null, subject,
-          String(b.body ?? draft.body).slice(0, 2000), actor.id, actor.full_name]);
+          sent_at, body_excerpt, source, created_by, created_by_name) values ($1,'out',$12,$2,$3,$4,$5,$6,$7,$8, now(), $9, 'button', $10, $11)`,
+        [fileId, draft.template?.key ?? null, vr, qid, sentFrom || me?.email || null, actor.full_name, to.join(', ') || null, subject,
+          String(b.body ?? draft.body).slice(0, 2000), actor.id, actor.full_name, sent ? 'sent' : 'prepared']);
     }
   });
-  return { ok: true };
 }
 
 // ------------------------------------------------------------ the shipment's Emails tab

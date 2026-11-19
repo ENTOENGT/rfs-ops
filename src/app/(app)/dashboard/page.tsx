@@ -136,7 +136,7 @@ export default function Dashboard() {
         <p className="muted small" style={{ marginTop: 10 }}>Transport figures cover jobs with a required date from {from} to {to}.</p>
       </section>}
 
-      {nothing && <div className="panel"><div className="empty"><b>Welcome to RFS Ops</b>Use the menu on the left to open your work. Administrators can set up the team under Administration → Users.</div></div>}
+      {nothing && <div className="panel"><div className="empty"><b>Welcome to RFS CRM</b>Use the menu on the left to open your work. Administrators can set up the team under Administration → Users.</div></div>}
     </div>
   );
 }

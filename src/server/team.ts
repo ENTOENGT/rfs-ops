@@ -237,7 +237,7 @@ export async function listUsers(actor: Actor) {
   if (!scope.all) { params.push(scope.deptId); where += ' and u.department_id = $1'; }
   if (!scope.all && scope.team) { params.push(actor.id); where += ` and u.id in (select user_team($${params.length}))`; }
   const { presenceCols } = await import('./presence');
-  const users = await q(`select u.id, ${presenceCols('u')}, u.manager_id, (select m.full_name from users m where m.id = u.manager_id) manager_name,
+  const users = await q(`select u.id, ${presenceCols('u')}, u.outlook_pilot, (select o.ms_email from outlook_connections o where o.user_id = u.id) outlook_email, u.manager_id, (select m.full_name from users m where m.id = u.manager_id) manager_name,
       u.designation_id, (select g.name from designations g where g.id = u.designation_id) designation_name,
       (select count(*)::int from users s where s.manager_id = u.id and s.deleted_at is null and s.is_active) reports_count, u.full_name, u.email, u.mobile, u.is_active, u.must_change_password, u.last_login_at, u.created_at,
       u.division, u.coordinator_id, (select k.full_name from users k where k.id = u.coordinator_id) coordinator_name,

@@ -116,40 +116,25 @@ function StorageCheck() {
   );
 }
 
-/** The 30-day rule: proof that it runs, what it deleted, and anything that failed (retried automatically). */
+/** Documents are kept for good; this only shows what the old 30-day rule did before it was switched off. */
 function DocumentCleanup() {
   const [d, setD] = useState<any>(null);
-  const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState('');
-  const load = () => api('/api/settings/document-cleanup').then(setD).catch((e) => setMsg(e.message));
-  useEffect(() => { load(); }, []);
-  const run = async () => {
-    setBusy(true); setMsg('');
-    try { const r = await api('/api/settings/document-cleanup', { body: {} });
-      setMsg(r.skipped ? 'A clean-up is already running.' : `Done: ${r.deleted} deleted, ${r.failed} failed.`); load(); }
-    catch (e: any) { setMsg(e.message); }
-    setBusy(false);
-  };
+  useEffect(() => { api('/api/settings/document-cleanup').then(setD).catch((e) => setMsg(e.message)); }, []);
   return (
     <div className="panel">
-      <div className="page-head" style={{ marginBottom: 8 }}><h2 style={{ margin: 0 }}>Document clean-up (30-day rule)</h2><span className="spacer" />
-        <button className="btn small" disabled={busy} onClick={run}>{busy ? 'Running…' : 'Run now'}</button></div>
-      <p className="muted small" style={{ marginTop: 0 }}>Trip documents (Invoice, Packing list, BOE, BL, Gate pass, Other) are deleted 30 days after each upload —
-        the file in storage and then its record. Runs every hour automatically. Jobs, history and reports are never deleted. PODs are kept.</p>
+      <h2 style={{ marginTop: 0 }}>Documents</h2>
+      <p className="muted small" style={{ marginTop: 0 }}>All documents are kept for good — nothing is deleted automatically.
+        The old 30-day rule is switched off. Files it deleted before it was switched off cannot be brought back; their records stay on the job.</p>
       {msg && <div className="msg">{msg}</div>}
       {d && <>
-        <p className="small">Deleted in the last 30 days: <b>{d.deleted_30d}</b> · Waiting now: <b>{d.waiting}</b>
-          {d.next_due && <> · Next one due: <b>{fmtDateTime(d.next_due)}</b></>}</p>
+        <p className="small">History of the old clean-up:</p>
         <div className="table-wrap"><table className="t">
           <thead><tr><th>Started</th><th>How</th><th>Deleted</th><th>Failed</th><th>Note</th></tr></thead>
           <tbody>{d.runs.map((r: any) => <tr key={r.id}><td>{fmtDateTime(r.started_at)}</td>
             <td>{({ schedule: 'Every hour', backup: 'Backup trigger', manual: 'Run now' } as any)[r.trigger] ?? r.trigger}</td>
             <td>{r.deleted}</td><td>{r.failed ? <span className="flag">{r.failed}</span> : 0}</td><td className="small">{r.error ?? (r.finished_at ? '' : 'Running…')}</td></tr>)}
-            {d.runs.length === 0 && <tr><td colSpan={5} className="muted">No runs yet.</td></tr>}</tbody></table></div>
-        {d.problems.length > 0 && <>
-          <p className="small" style={{ marginBottom: 4 }}><b>Files that could not be deleted yet</b> — tried again on every run:</p>
-          <ul className="small">{d.problems.map((p: any) => <li key={p.id}>{p.file_name} (Job No. {p.job_no ?? p.job_number}) — {p.purge_attempts} attempt(s): {p.purge_error}</li>)}</ul>
-        </>}
+            {d.runs.length === 0 && <tr><td colSpan={5} className="muted">It never deleted anything.</td></tr>}</tbody></table></div>
       </>}
     </div>
   );

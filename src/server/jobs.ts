@@ -197,7 +197,7 @@ export async function getJob(actor: Actor, id: string) {
   const beforeDispatch = ['draft', 'requested', 'pending_assignment', 'assigned', 'confirmed'].includes(row.status_code);
   job.documents = (await q(
     `select d.id, d.document_type_code, dt.name document_type, dt.is_commercial, dt.is_request_doc, d.file_name, d.mime_type, d.size_bytes, d.created_at,
-            d.uploaded_by, u.full_name uploaded_by_name, d.expires_at, (d.purged_at is not null or d.expires_at <= now()) expired
+            d.uploaded_by, u.full_name uploaded_by_name, d.expires_at, (d.purged_at is not null) expired
        from job_documents d join document_types dt on dt.code = d.document_type_code left join users u on u.id = d.uploaded_by
       where d.job_id = $1 and d.deleted_at is null and ($2 or not dt.is_commercial) order by dt.sort_order, d.created_at`,
     [id, fin.sellingView && actor.has('documents.view_commercial')]))

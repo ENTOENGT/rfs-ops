@@ -169,13 +169,13 @@ export function DocumentsTab({ job, onChange }: { job: any; onChange: (j: any) =
             {isReq && live.length > 1 && <button className="btn small" style={{ marginLeft: 'auto' }} disabled={!!printing}
               onClick={() => printFiles(live.map((d: any) => `${docUrl(d.id)}?view=1`), setPrinting).catch((e) => { setPrinting(''); setErr(e.message); })}>
               {printing || `Print all ${live.length}`}</button>}</h3>
-          {isReq && <p className="muted small" style={{ margin: '0 16px 6px' }}>Click a file to open it, then <b>Print</b>. These files are deleted automatically 30 days after upload.</p>}
+          {isReq && <p className="muted small" style={{ margin: '0 16px 6px' }}>Click a file to open it, then <b>Print</b>.</p>}
           <div className="table-wrap"><table className="t">
             <thead><tr><th>Type</th><th>File</th><th>Size</th><th>Uploaded</th><th /></tr></thead>
             <tbody>
               {list.map((d: any) => <tr key={d.id}>
                 <td>{d.document_type}</td>
-                <td>{d.expired ? <span className="expired-tag">{d.file_name} — expired, deleted after 30 days</span>
+                <td>{d.expired ? <span className="expired-tag">{d.file_name} — deleted under the old 30-day rule</span>
                   : <FileLink files={viewable} index={viewable.indexOf(d)} base={docUrl} />}
                   {!d.expired && d.expires_at && <div className="muted small">Deleted on {fmtDate(d.expires_at)}</div>}</td>
                 <td>{d.expired ? '—' : fmtSize(d.size_bytes)}</td>

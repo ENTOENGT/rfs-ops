@@ -1,7 +1,7 @@
 @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap');
 
 /* =====================================================================================================================
-   RFS Ops design system (UI redesign, Nov 2026)
+   RFS CRM design system (UI redesign, Nov 2026)
    Deep navy for structure and primary actions, Reliance gold for the brand accent, teal for information,
    soft grey canvas with white cards. Old variable names are kept so every existing page picks up the new look.
    ===================================================================================================================== */
@@ -359,7 +359,7 @@ a.kpi:hover { border-color: var(--navy-100); box-shadow: var(--shadow); text-dec
 .app-route span { width: 40px; color: var(--muted); font-size: 13px; padding-top: 1px; }
 .app-next { color: var(--primary); font-weight: 600; margin-top: 10px; font-size: 15px; }
 .app-back { display: inline-block; padding: 6px 0; font-size: 15px; }
-.btn.app-big { display: block; width: 100%; padding: 14px 16px; font-size: 17px; margin-top: 8px; text-align: center; }
+.btn.app-big { display: flex; align-items: center; justify-content: center; width: 100%; height: auto; min-height: 50px; padding: 12px 16px; font-size: 17px; margin-top: 8px; text-align: center; }
 .app-action { border-color: var(--primary); }
 .app-place-name { font-size: 17px; font-weight: 600; margin: 2px 0; }
 .app-place-btns { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
