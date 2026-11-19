@@ -157,12 +157,12 @@ function usePresence() {
   return [st, setSt] as const;
 }
 
-/** Outlook step 3: while the app is open, a connected pilot user's inbox is checked every 10 minutes (quietly). */
+/** Outlook step 3: while the app is open, a connected pilot user's inbox is checked every minute (quietly). */
 function useInboxCheck() {
   useEffect(() => {
     let on = false, last = 0;
     const check = () => {
-      if (!on || document.visibilityState !== 'visible' || Date.now() - last < 9 * 60_000) return;
+      if (!on || document.visibilityState !== 'visible' || Date.now() - last < 50_000) return;
       last = Date.now();
       api('/api/outlook/sync', { body: {} }).catch(() => { /* shown on My Outlook */ });
     };
@@ -172,7 +172,8 @@ function useInboxCheck() {
       check();
     }).catch(() => {});
     const t = setInterval(check, 60_000);
-    return () => clearInterval(t);
+    document.addEventListener('visibilitychange', check);
+    return () => { clearInterval(t); document.removeEventListener('visibilitychange', check); };
   }, []);
 }
 

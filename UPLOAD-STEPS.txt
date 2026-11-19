@@ -1,23 +1,19 @@
-RFS CRM — Release O (Outlook step 3: reading the inbox)
-=========================================================
+RFS CRM — Release P (fix: inbox check every minute)
+=====================================================
 
-Upload this only AFTER Release N (it holds just the changes since N: 11 files).
+Upload this after Release O.
 
-What is new
-  RFS CRM reads the Outlook inbox of the pilot users (read only — nothing in Outlook is changed or deleted) and files
-  each email on its shipment: by the tag in the subject ([ENQ-...], Job No., Shipping Ref) or by the same email
-  conversation. Emails from known customers / agents that match no shipment wait on My Outlook -> "Emails to file".
-  Other emails are not saved.
+What is fixed
+  - "Check inbox now" and the automatic check were stuck after the first check (a database lock was never let go).
+    Now one check at a time is kept a simpler way that clears itself.
+  - The inbox is checked every minute while RFS CRM is open (was every 10 minutes).
+  - A check that is already running now says so, instead of showing nothing.
 
 Step 1 — Database (Supabase -> SQL Editor). Run this one file:
-  db/migrations/030_outlook_inbox.sql
+  db/migrations/031_inbox_lock.sql
   Safe to run again. Wait for "Success".
 
 Step 2 — Code (GitHub). Upload every other file in this zip to the same paths, in ONE commit.
-  Netlify then builds once. No new Netlify settings are needed.
 
-Step 3 — Quick checks after the deploy (as your Outlook pilot user)
-  1. From a second email address, send yourself an email with a shipment's tag in the subject,
-     for example: [ENQ-IMP-26-00036] test
-  2. RFS CRM -> menu -> My Outlook -> "Check inbox now".
-  3. Open that shipment -> Emails tab: the email shows as "Received".
+Step 3 — Check: My Outlook -> "Check inbox now" -> a green message shows and "Last checked" changes.
+  Then open ENQ-EXP-26-00005 -> Emails tab: the customer's reply shows as "Received".

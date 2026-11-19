@@ -122,3 +122,26 @@ test('Microsoft says the saved place is too old: next check starts again from th
   await assert.rejects(syncInbox(sales));
   assert.equal((await one('select delta_link from outlook_connections where user_id = $1', [sales.id])).delta_link, null);
 });
+
+test('one check at a time: a running check says busy; a check stopped half-way never blocks (clears after 2 minutes)', async () => {
+  pages = { '$select=subject': { value: [], '@odata.deltaLink': 'https://graph.microsoft.com/v1.0/me/mailFolders/inbox/messages/delta?$deltatoken=D9' } };
+  await q('update outlook_connections set sync_started_at = now() where user_id = $1', [sales.id]);
+  assert.deepEqual(await syncInbox(sales), { busy: true });
+  await q(`update outlook_connections set sync_started_at = now() - interval '3 minutes' where user_id = $1`, [sales.id]);
+  const r: any = await syncInbox(sales);
+  assert.equal(r.busy, undefined); assert.equal(r.more, false);
+  assert.equal((await one('select sync_started_at from outlook_connections where user_id = $1', [sales.id])).sync_started_at, null, 'cleared after the check');
+  // and after a failed check too
+  pages = { 'deltatoken=D9': () => new Response('{}', { status: 500 }) };
+  await assert.rejects(syncInbox(sales));
+  assert.equal((await one('select sync_started_at from outlook_connections where user_id = $1', [sales.id])).sync_started_at, null);
+});
+
+test('a short check: stops before the time limit and carries on next time', async () => {
+  let n = 0;
+  pages = { 'deltatoken=D9': () => new Response(JSON.stringify({ value: [], '@odata.nextLink': `https://graph.microsoft.com/v1.0/me/mailFolders/inbox/messages/delta?$skiptoken=S${++n}` }), { status: 200 }),
+    'skiptoken=S': () => new Response(JSON.stringify({ value: [], '@odata.nextLink': `https://graph.microsoft.com/v1.0/me/mailFolders/inbox/messages/delta?$skiptoken=S${++n}` }), { status: 200 }) };
+  const r: any = await syncInbox(sales, 0);            // no time left after the first page
+  assert.equal(r.more, true); assert.equal(n, 1);
+  assert.match((await one('select delta_link from outlook_connections where user_id = $1', [sales.id])).delta_link, /skiptoken=S1/);
+});

@@ -10,13 +10,15 @@
  *  - From anyone else (newsletters, personal mail) → not saved at all.
  */
 import { Actor } from './auth';
-import { ApiError, bad, Db, forbidden, notFound, one, pool, q, tx } from './db';
+import { ApiError, bad, Db, forbidden, notFound, one, q, tx } from './db';
 import { canSend, graph } from './outlook';
 import { event, loadFile } from './jobfiles';
 import { notifyGroup } from './notify';
 
 export const FIRST_LOOK_BACK_DAYS = 7;
-const PAGES_PER_CHECK = 10;            // 10 × 50 emails at most per check; the rest on the next check
+const PAGES_PER_CHECK = 10;            // at most 10 pages of 25 per check; the rest on the next check
+const PAGE_SIZE = 25;
+const TIME_BUDGET_MS = 6000;           // no new page after 6 seconds (requests are cut at 10)
 const SELECT = 'subject,from,toRecipients,ccRecipients,receivedDateTime,internetMessageId,conversationId,bodyPreview,hasAttachments,isDraft,webLink';
 const PUBLIC_DOMAINS = new Set(['gmail.com', 'googlemail.com', 'yahoo.com', 'hotmail.com', 'outlook.com', 'live.com', 'msn.com', 'icloud.com', 'me.com',
   'aol.com', 'proton.me', 'protonmail.com', 'yandex.com', 'mail.com', 'gmx.com', 'zoho.com', 'emirates.net.ae', 'eim.ae', 'rediffmail.com']);
@@ -88,7 +90,7 @@ async function takeOne(actor: Actor, msg: any): Promise<'filed' | 'unmatched' | 
   };
   const byTag = await shipmentFromSubject(m.subject);
   const fileId = byTag ?? await shipmentFromConversation(m.conversation_id);
-  const known = m.from_addr ? await knownSender(m.from_addr) : null;
+  const known = !fileId && m.from_addr ? await knownSender(m.from_addr) : null;
   if (!fileId && !known) return 'skipped';                       // not ours to keep
   return tx(async (c) => {
     const row = await one(`insert into outlook_inbox (user_id, ms_message_id, internet_message_id, conversation_id, from_addr, from_name, to_addrs, cc_addrs,
@@ -105,21 +107,24 @@ async function takeOne(actor: Actor, msg: any): Promise<'filed' | 'unmatched' | 
 
 /**
  * "Check inbox": read what is new in this person's Outlook inbox since the last check and file it.
- * Only one check at a time per person; a second one at the same moment just returns { busy: true }.
+ * Only one check at a time per person: the start time is kept on the connection and clears itself after 2 minutes
+ * (so a check stopped half-way never blocks the next). A second check at the same moment returns { busy: true }.
+ * Each check stops after about 6 seconds (the hosting cuts requests at 10) and says "more" — the next check carries on.
  */
-export async function syncInbox(actor: Actor) {
+export async function syncInbox(actor: Actor, budgetMs = TIME_BUDGET_MS) {
   if (!(await canSend(actor.id))) throw new ApiError(409, 'NOT_CONNECTED', 'Connect your Outlook first (menu → My Outlook)');
-  const lock = await pool().connect();
+  const got = await one(`update outlook_connections set sync_started_at = now()
+      where user_id = $1 and (sync_started_at is null or sync_started_at < now() - interval '2 minutes') returning delta_link`, [actor.id]);
+  if (!got) return { busy: true };
+  const started = Date.now();
   try {
-    if (!(await lock.query('select pg_try_advisory_lock(hashtext($1)) ok', [`outlook-inbox:${actor.id}`])).rows[0].ok) return { busy: true };
-    const conn = await one('select delta_link from outlook_connections where user_id = $1', [actor.id]);
     const since = new Date(Date.now() - FIRST_LOOK_BACK_DAYS * 86400_000).toISOString().replace(/\.\d+Z$/, 'Z');
-    let url: string | null = conn?.delta_link
+    let url: string | null = got.delta_link
       || `/me/mailFolders/inbox/messages/delta?$select=${SELECT}&$filter=${encodeURIComponent(`receivedDateTime ge ${since}`)}`;
     const n = { filed: 0, unmatched: 0, looked: 0 };
-    let saveLink: string | null = conn?.delta_link ?? null, done = false;
-    for (let page = 0; page < PAGES_PER_CHECK && url; page++) {
-      const r: any = await graph(actor.id, url, { headers: { Prefer: 'odata.maxpagesize=50' } });
+    let saveLink: string | null = got.delta_link ?? null, done = false;
+    for (let page = 0; page < PAGES_PER_CHECK && url && (page === 0 || Date.now() - started < budgetMs); page++) {
+      const r: any = await graph(actor.id, url, { headers: { Prefer: `odata.maxpagesize=${PAGE_SIZE}` } });
       for (const msg of r?.value ?? []) {
         n.looked++;
         const what = await takeOne(actor, msg);
@@ -139,8 +144,7 @@ export async function syncInbox(actor: Actor) {
       await q('update outlook_connections set delta_link = null where user_id = $1', [actor.id]).catch(() => {});
     throw e;
   } finally {
-    await lock.query('select pg_advisory_unlock(hashtext($1))', [`outlook-inbox:${actor.id}`]).catch(() => {});
-    lock.release();
+    await q('update outlook_connections set sync_started_at = null where user_id = $1', [actor.id]).catch(() => {});
   }
 }
 

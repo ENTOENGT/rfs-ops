@@ -723,5 +723,8 @@ already filed. Matched → email_messages (direction in, status received, source
 group notification ('email_saved'). Not matched but from a known customer / contact / agent (exact address or same company
 domain, public mail domains excluded) → outlook_inbox status 'unmatched' ("Emails to file" on My Outlook: file by reference —
 the rest of the conversation follows — or "Not for a shipment"). Unknown senders are not saved. Every email is noted once per
-person (unique user_id + ms_message_id). Checks run from "Check inbox now", on opening My Outlook, and every 10 minutes while
+person (unique user_id + ms_message_id). Checks run from "Check inbox now", on opening My Outlook, and every minute while
 the app is open (no scheduled function). An expired delta link is cleared, so the next check starts again from 7 days back.
+Fix (031): "one check at a time" is outlook_connections.sync_started_at (cleared after the check, ignored after 2 minutes),
+not a session advisory lock — the Supabase transaction pooler left that lock held, so every later check returned busy.
+A check stops fetching new pages after ~6 s (25 emails a page) and the next check carries on from the saved link.
