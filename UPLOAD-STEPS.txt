@@ -1,27 +1,40 @@
-RFS Ops — update up to Release M, in one upload
+RFS CRM — update up to Release N, in one upload
 =================================================
 
-What is inside (everything since Release I — safe even if you already uploaded the J+K+L zip)
+What is inside (everything since Release I — safe even if you already uploaded the J-K-L or M zip)
   J  Organisation hierarchy: job titles, reporting lines, team rights, People page, roles grid
   K  Your workflow: Customer Service, default handlers, handover routing, Ops <-> Documentation,
      Cross Trade agents, Clearance & Delivery, My performance
   L  Live status and team chat on each shipment
-  M  Checklists: enquiry checklist and agent quote checklist, with ready emails asking for what is missing
-     Fixes (17 Nov): no duplicate job titles; division optional for Salesmen / Coordinators; team managers can own
-     enquiries and choose the Coordinator; job type as two tick boxes; notifications only to the people on the job
+  M  Checklists: enquiry and agent quote checklists, with ready emails asking for what is missing
+  N  (new) - The app is now called RFS CRM on screen (the web address stays rfsops.netlify.app)
+           - Documents are kept for good: the 30-day clean-up is switched off
+           - Outlook: pilot users connect their own Outlook and send emails from it
+           - Invitation email: a new person gets a one-time link (48 hours) to choose their own password
 
-Step 1 — Database (Supabase -> SQL Editor). Run these four files from this zip, one at a time, in this order:
+Step 1 — Database (Supabase -> SQL Editor). Run these files from this zip, one at a time, in this order:
   db/migrations/025_hierarchy.sql
   db/migrations/026_workflow.sql
   db/migrations/027_status_chat.sql
   db/migrations/028_checklists.sql
-  Each one is safe to run again if you already ran it. Wait for "Success" before the next.
+  db/migrations/029_outlook.sql      <- the only new one if you already ran 025-028
+  Each one is safe to run again. Wait for "Success" before the next.
 
-Step 2 — Code (GitHub). Upload every other file in this zip to the same paths, in ONE commit.
+Step 2 — Netlify settings (Site configuration -> Environment variables). Add these four:
+  MS_TENANT_ID      95acc64b-7fde-4edc-b2db-063774e47e36
+  MS_CLIENT_ID      3e1eca78-f72a-41a9-b05d-1d140ae5fb6f
+  MS_CLIENT_SECRET  the secret value IT gave you (paste it yourself; do not send it to anyone)
+  APP_URL           https://rfsops.netlify.app
+  Do not change any other setting.
+
+Step 3 — Code (GitHub). Upload every other file in this zip to the same paths, in ONE commit.
+  (This includes netlify/functions/document-cleanup.mjs, which switches the old clean-up off.)
   Netlify then builds once.
 
-Step 3 — Quick checks after the deploy
-  1. Commercials -> Checklists: both tabs show their lists.
-  2. Open an enquiry with something missing: the yellow "Missing details" box shows, and "Ask the customer by email" opens a draft.
-  3. New enquiry as a manager: "Owner of the enquiry" offers "Me"; Job type shows two tick boxes.
-  4. Administration -> People: Designations no longer offers Salesman or Coordinator.
+Step 4 — Quick checks after the deploy
+  1. The browser tab and the menu say RFS CRM.
+  2. Settings -> Documents says "All documents are kept for good".
+  3. Administration -> People: next to a person, "Outlook pilot: off" -> press it to switch on for your test user.
+  4. Sign in as that test user -> menu -> My Outlook -> Connect -> sign in with Microsoft -> it shows "Connected".
+  5. As that user, open a shipment -> Email -> "Send from my Outlook" -> the email arrives and shows in Sent Items.
+  6. Add a test person with your own second email -> the invitation arrives -> the link lets you choose a password.

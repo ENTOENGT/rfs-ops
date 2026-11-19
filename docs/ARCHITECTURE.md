@@ -697,3 +697,19 @@ Only the look and the navigation changed. Every URL, permission check, API and w
 | Enquiry and agent quote checklists, missing-details emails (migration 028) | Done |
 | Freight + 3PL — remaining phases: see `docs/FREIGHT_3PL_PLAN.md` | Planned |
 | 7 Email notifications · 8 Saved views, column prefs, live ops table, performance | Planned |
+
+### 15s. Documents are kept for good (migration 029, 19 Nov 2026)
+The 30-day document clean-up is switched off. Migration 029 empties `document_types.retention_days` and the `expires_at`
+of every file not yet deleted. `runDocumentCleanup` returns without deleting (DOCUMENTS_KEPT_FOR_GOOD), the Netlify scheduled
+function has no schedule, and a file counts as "expired" only if it was really deleted earlier (`purged_at`). Files the old
+rule already deleted cannot be brought back; their records and history stay. Settings → Documents shows the old history.
+
+### 15t. RFS CRM name, sending from Outlook, invitation email (19 Nov 2026)
+- The app is called **RFS CRM** on screen (title, phone-app name, texts). The web address stays rfsops.netlify.app.
+- Outlook step 2: the Email box shows **Send from my Outlook** for a pilot user whose Outlook is connected (`emailSend` →
+  `outlook.sendMail`, Graph `/me/sendMail`, saved in their Sent Items). It is noted as *sent* (email_messages.status 'sent')
+  in the same histories as a prepared email. Others keep "Open in my email" / "Copy text".
+- Invitation: after **Add person** (office staff) and from **Send invitation** on People, `inviteUser` makes a one-time
+  join link (app_links, 48 hours, older links switched off) and emails it from the sender's Outlook, or returns the email
+  to copy / open when Outlook is not connected. No password is ever put in the email; the temporary password stays as a backup.
+  The /join page has an office version that signs the person straight into RFS CRM. No database change.

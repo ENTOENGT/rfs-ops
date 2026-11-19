@@ -1,15 +1,4 @@
-// Netlify scheduled function: every hour, ask the app to delete request documents older than 30 days.
-// Netlify runs this automatically on the published site — nothing to start by hand.
-// The app checks the key (made from SESSION_SECRET) before doing anything.
-import { createHmac } from 'node:crypto';
-
-export default async () => {
-  const site = process.env.URL;
-  const key = createHmac('sha256', process.env.SESSION_SECRET || '').update('document-cleanup').digest('hex');
-  const res = await fetch(`${site}/api/cron/document-cleanup`, { method: 'POST', headers: { 'x-cron-key': key } });
-  const text = await res.text();
-  console.log('Document clean-up', res.status, text.slice(0, 300));
-  return new Response(text, { status: res.status });
-};
-
-export const config = { schedule: '@hourly' };
+// The hourly clean-up of request documents is switched off (19 Nov 2026): the company keeps every document for good.
+// No schedule is exported, so Netlify never runs this. The app's clean-up finds nothing to delete anyway
+// (migration 029 removed every expiry date). Kept as a file only so an upload of changed files can replace the old one.
+export default async () => new Response('Document clean-up is switched off: documents are kept for good.', { status: 200 });

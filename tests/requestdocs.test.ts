@@ -105,9 +105,9 @@ test('Several request documents per heading; only PDF/JPG/PNG', async () => {
   await rejects(requestUpload(seaImp, jobId, { file_name: 'big.pdf', mime_type: 'application/pdf', size: 11 * 1024 * 1024, document_type_code: 'bl' }), 'VALIDATION');
   const full = await getJob(seaImp, jobId);
   assert.equal(full.request_docs.ready, 5);
-  // retention counts from each file's own upload time
-  const d = await one(`select created_at, expires_at from job_documents where storage_path = $1`, [invoiceKey]);
-  assert.equal(Math.round((new Date(d.expires_at).getTime() - new Date(d.created_at).getTime()) / 86400000), 30);
+  // documents are kept for good: no expiry date
+  const d = await one(`select expires_at from job_documents where storage_path = $1`, [invoiceKey]);
+  assert.equal(d.expires_at, null);
 });
 
 test('Transport can open and print them; other departments cannot', async () => {
@@ -123,7 +123,7 @@ test('Transport can open and print them; other departments cannot', async () => 
 
 test('Documents can be added or replaced until the trip starts, not after', async () => {
   const doc = (await getJob(seaImp, jobId)).documents.find((d: any) => d.file_name === 'INV-2.pdf');
-  await deleteDocument(seaImp, doc.id);                       // replace = remove + upload again (fresh 30 days)
+  await deleteDocument(seaImp, doc.id);                       // replace = remove + upload again 
   await upload(seaImp, jobId, 'shipment_invoice', 'INV-2b.pdf');
   await assignJob(tm, jobId, { driver_id: driverId, vehicle_id: vehicleId, planned_pickup_at: `${D}T10:00`, confirm_warnings: true });
   await upload(seaImp, jobId, 'supporting_doc', 'late-but-ok.pdf');               // assigned: still before dispatch
@@ -134,41 +134,23 @@ test('Documents can be added or replaced until the trip starts, not after', asyn
   assert.ok(!(await getJob(seaImp, jobId)).permissions.upload_types.some((t: any) => t.code === 'bl'));
 });
 
-test('After 30 days: file and record are cleaned up; job, history and reports stay', async () => {
-  // a POD is never touched by the 30-day rule
+test('Documents are kept for good: the clean-up deletes nothing, even an old date left over', async () => {
   await changeStatus(tm, jobId, { to: 'picked_up' }); await changeStatus(tm, jobId, { to: 'delivered' });
-  const pod = await upload(tm, jobId, 'pod', 'pod.jpg', 'image/jpeg');
+  // a file with an old expiry date from before the change is still kept
   await q(`update job_documents set created_at = now() - interval '31 days', expires_at = now() - interval '1 day'
-    where job_id = $1 and expires_at is not null and file_name in ('INV-1.pdf', 'PL.jpg')`, [jobId]);
-  assert.ok(existsSync(localPath(invoiceKey)));
-  const r = await runDocumentCleanup('manual');
-  assert.deepEqual(r, { skipped: false, deleted: 2, failed: 0 });
-  assert.ok(!existsSync(localPath(invoiceKey)), 'the stored file itself is gone');
-  const full = await getJob(seaImp, jobId);
-  const inv = full.documents.find((d: any) => d.file_name === 'INV-1.pdf');
-  assert.equal(inv.expired, true); assert.equal(inv.can_delete, false);
-  await rejects(downloadUrl(tm, inv.id, true), 'EXPIRED');
-  assert.equal(full.request_docs.expired, 2);
-  assert.ok(full.activity.some((a: any) => a.action === 'Invoice deleted (30-day rule)' && a.old_value === 'INV-1.pdf'));
-  assert.ok(existsSync(localPath(pod.key)), 'POD kept');
-  assert.equal(full.job_no, (await one('select job_no from transport_requests where id = $1', [jobId])).job_no);
-  const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Dubai' });
-  const rep = await runReport(admin, 'messenger', { from: today, to: today, job_no: full.job_no });
-  assert.equal(rep.rows.length, 1); assert.match(String(rep.rows[0].documents), /2 expired/);
-  // running again does nothing more
-  assert.equal((await runDocumentCleanup('manual')).deleted, 0);
-});
-
-test('A failed deletion is logged and retried on the next run', async () => {
-  await q(`update job_documents set expires_at = now() - interval '1 minute' where job_id = $1 and file_name = 'BL.png'`, [jobId]);
-  const broken = { remove: async () => { throw new Error('Storage is down'); } };
-  assert.deepEqual(await runDocumentCleanup('schedule', 500, broken), { skipped: false, deleted: 0, failed: 1 });
-  const d = await one(`select purged_at, purge_attempts, purge_error from job_documents where file_name = 'BL.png'`);
-  assert.equal(d.purged_at, null); assert.equal(d.purge_attempts, 1); assert.equal(d.purge_error, 'Storage is down');
+    where job_id = $1 and file_name = 'INV-1.pdf'`, [jobId]);
+  assert.deepEqual(await runDocumentCleanup('manual'), { skipped: true, deleted: 0, failed: 0 });
+  assert.deepEqual(await runDocumentCleanup('schedule'), { skipped: true, deleted: 0, failed: 0 });
+  assert.ok(existsSync(localPath(invoiceKey)), 'the stored file is still there');
+  const inv = (await getJob(seaImp, jobId)).documents.find((d: any) => d.file_name === 'INV-1.pdf');
+  assert.equal(inv.expired, false);
+  assert.match(await downloadUrl(tm, inv.id, true), /inline=1/);
+  // the migration clears left-over dates, safely twice
+  for (let i = 0; i < 2; i++) await pool().query(readFileSync('db/migrations/029_outlook.sql', 'utf8'));
+  assert.equal(Number((await one(`select count(*) n from job_documents where expires_at is not null and purged_at is null`))!.n), 0);
+  assert.equal(Number((await one(`select count(*) n from document_types where retention_days is not null`))!.n), 0);
   const st = await cleanupStatus(admin);
-  assert.equal(st.runs[0].failed, 1); assert.equal(st.problems[0].file_name, 'BL.png'); assert.equal(st.waiting, 1);
-  assert.equal((await runDocumentCleanup('schedule')).deleted, 1);          // retried, now fine
-  assert.equal((await one(`select purge_error from job_documents where file_name = 'BL.png'`)).purge_error, null);
+  assert.equal(st.kept_for_good, true);
   await rejects(cleanupStatus(tm), 'FORBIDDEN');
 });
 
