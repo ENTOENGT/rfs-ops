@@ -70,7 +70,7 @@ const emailId = async () => (await one(`select id from email_messages where job_
 test('AI key not set: nothing happens, the box stays hidden', async () => {
   assert.equal((await suggestionsFor(sam, fileId)).configured, false);
   await assert.rejects(readEmail(sam, await emailId()), (e: any) => e.code === 'AI_NOT_SET_UP');
-  process.env.ANTHROPIC_API_KEY = 'sk-ant-test-0123456789abcdefghij';
+  process.env.ANTHROPIC_API_KEY = 'fake-key-for-tests-only-0123456789';
 });
 
 test('the AI gets the missing details and the full email; its answers are checked before they are kept', async () => {
