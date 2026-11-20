@@ -23,9 +23,12 @@ import { HOME_COUNTRY } from './agents';
 import { parseField } from './masters';
 import { MASTERS } from '../lib/masters';
 import { INCOTERMS } from '../lib/jobfileRules';
+import { PACKAGE_TYPES, cargoTotals, lineProblem } from '../lib/cargoRules';
 
 const isUuid = (v: unknown): v is string => typeof v === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v);
 const PUBLIC = new Set(['gmail.com', 'googlemail.com', 'yahoo.com', 'hotmail.com', 'outlook.com', 'live.com', 'icloud.com', 'aol.com', 'msn.com', 'yandex.com', 'proton.me', 'protonmail.com']);
+/** Raised when the reading gets better (attachments, cargo lines, HS codes…): drafts kept from before are read again once. */
+const DRAFT_VERSION = 3;
 const today = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Dubai' });
 
 // ---------------------------------------------------------------- 1. the quick look
@@ -81,10 +84,19 @@ const EXTRACT = {
     mode: { type: 'string', enum: ['sea_fcl', 'sea_lcl', 'air', 'road', 'courier', 'other', 'unknown'] },
     incoterm: { type: 'string', description: '3-letter Incoterm if stated (EXW, FOB, CIF, DAP, DDP…), else empty.' },
     origin_country: { type: 'string', description: 'Country name where the cargo starts.' }, origin_port: { type: 'string', description: 'Port or airport of loading if named.' },
+    origin_port_code: { type: 'string', description: 'The UN/LOCODE of that port or airport if you know it (e.g. INNSA for Nhava Sheva, AEJEA for Jebel Ali). Empty if unsure.' },
     destination_country: { type: 'string' }, destination_port: { type: 'string', description: 'Port or airport of discharge if named.' },
+    destination_port_code: { type: 'string', description: 'The UN/LOCODE of that port or airport if you know it. Empty if unsure.' },
     pickup_address: { type: 'string', description: 'Full pickup / collection address if given.' }, delivery_address: { type: 'string' },
     cargo_description: { type: 'string', description: 'What the goods are.' },
     containers: { type: 'string', description: 'Containers asked for, e.g. "2x40HC".' }, packages: { type: 'string', description: 'Packages and sizes as written, e.g. "5 pallets 120x80x150 cm".' },
+    cargo_lines: { type: 'array', description: 'The packing list: one line per package size (only lines with real numbers).', items: { type: 'object', properties: {
+      package_type: { type: 'string', description: 'Cartons, Pallets, Crates, Wooden boxes, Drums, Bags, Bales, Rolls, Bundles, Pieces or Loose' },
+      pieces: { type: 'number', description: 'Number of packages' }, length: { type: 'number' }, width: { type: 'number' }, height: { type: 'number' },
+      dim_unit: { type: 'string', enum: ['cm', 'in', 'm'] },
+      weight_per_package_kg: { type: 'number' }, total_weight_kg: { type: 'number', description: 'Total weight of this line, if given' },
+    }, required: ['pieces'] } },
+    hs_codes: { type: 'array', items: { type: 'string' }, description: 'Every HS code mentioned (digits only, e.g. "64041100"). Each once.' },
     gross_weight_kg: { type: 'number', description: 'Total weight in kg if given (convert tons to kg).' },
     cargo_ready_date: { type: 'string', description: 'YYYY-MM-DD if given as a real date; empty otherwise.' }, hazardous: { type: 'string', enum: ['yes', 'no', 'unknown'] },
     stackable: { type: 'string', enum: ['yes', 'no', 'unknown'] }, insurance: { type: 'string', enum: ['yes', 'no', 'unknown'], description: 'Does the customer want cargo / marine insurance?' },
@@ -113,12 +125,22 @@ async function countryCode(name: unknown) {
   if (alias[n]) return alias[n];
   return (await one(`select code from countries where lower(name) = $1 or code = upper($1) or lower(name) like $1 || ',%' or lower(name) like $1 || ' (%' limit 1`, [n]))?.code ?? null;
 }
-async function portOf(name: unknown, country: string | null, air: boolean) {
-  const n = String(name ?? '').trim().toLowerCase();
+async function portOf(name: unknown, country: string | null, air: boolean, code?: unknown) {
+  const kind = `($3::boolean and kind in ('air', 'both') or not $3::boolean and kind in ('sea', 'both', 'inland'))`;
+  // 1. the official code the AI gave (e.g. INNSA), when it is in the list and in the right country
+  const c = String(code ?? '').trim().toUpperCase();
+  if (/^[A-Z]{2}[A-Z0-9]{3}$/.test(c)) {
+    const p = await one(`select code, name, country_code from ports where is_active and code = $1 and ($2::text is null or country_code = $2) and ${kind}`, [c, country, air]);
+    if (p) return p;
+  }
+  const n = String(name ?? '').trim().toLowerCase().replace(/\s+(port|seaport|sea port|airport|terminal)$/, '').replace(/^port of\s+/, '');
   if (!n) return null;
-  return one(`select code, name, country_code from ports where is_active and ($3::boolean and kind in ('air', 'both') or not $3::boolean and kind in ('sea', 'both', 'inland'))
-      and (lower(code) = $1 or lower(iata) = $1 or lower(name) = $1 or lower(name) like $1 || '%' or lower(plain_name) like $1 || '%')
-    order by coalesce(lower(code) = $1 or lower(iata) = $1 or lower(name) = $1, false) desc, coalesce(country_code = $2, false) desc, weight desc limit 1`, [n.replace(/\s+port$/, ''), country, air]);
+  // 2. the same name or a name that starts with it; 3. the name inside a longer one ("Jawaharlal Nehru (Nhava Sheva)") — same country first, bigger ports first
+  return one(`select code, name, country_code from ports where is_active and ${kind}
+      and (lower(code) = $1 or lower(iata) = $1 or lower(name) = $1 or lower(name) like $1 || '%' or lower(plain_name) like $1 || '%'
+        or (length($1) >= 4 and (lower(name) like '%' || $1 || '%' or lower(plain_name) like '%' || $1 || '%')))
+    order by coalesce(lower(code) = $1 or lower(iata) = $1 or lower(name) = $1, false) desc, coalesce(country_code = $2, false) desc,
+      coalesce(lower(name) like $1 || '%', false) desc, weight desc limit 1`, [n, country, air]);
 }
 
 async function myWaiting(actor: Actor, id: string) {
@@ -141,8 +163,8 @@ export async function draftEnquiry(actor: Actor, id: string) {
   const made = await alreadyMade(m);
   if (made) return { already: made };
   if (m.status !== 'unmatched') throw bad('This email is already handled');
-  // kept from before — unless it was read before attachments were read (then it is read again, once)
-  if (m.ai_draft && !(m.has_attachments && !Array.isArray(m.ai_draft.attachments_read))) return { draft: m.ai_draft, email: emailInfo(m) };
+  // kept from before — unless it was read by an older version (then it is read again, once, with the newer reading)
+  if (m.ai_draft && m.ai_draft.v === DRAFT_VERSION) return { draft: m.ai_draft, email: emailInfo(m) };
   await ensurePortsLoaded();
   const full: any = await graph(actor.id, `/me/messages/${encodeURIComponent(m.ms_message_id)}?$select=body`, { headers: { Prefer: 'outlook.body-content-type="text"' } })
     .catch((e) => { if (e instanceof ApiError && e.code === 'MS_GRAPH') return null; throw e; });
@@ -180,7 +202,7 @@ Use only what the email says; leave a field empty when it is not there. Never gu
   const mode = ['sea_fcl', 'sea_lcl', 'air', 'road', 'courier', 'other'].includes(x.mode) ? x.mode : null;
   const air = mode === 'air';
   let oc = await countryCode(x.origin_country), dc = await countryCode(x.destination_country);
-  const pol = await portOf(x.origin_port, oc, air), pod = await portOf(x.destination_port, dc, air);
+  const pol = await portOf(x.origin_port, oc, air, x.origin_port_code), pod = await portOf(x.destination_port, dc, air, x.destination_port_code);
   oc = oc ?? pol?.country_code ?? null; dc = dc ?? pod?.country_code ?? null;
   const direction = oc === HOME_COUNTRY ? 'export' : dc === HOME_COUNTRY ? 'import' : oc && dc ? 'cross_trade' : null;
   const inc = String(x.incoterm ?? '').toUpperCase().match(/\b[A-Z]{3}\b/)?.[0];
@@ -193,6 +215,18 @@ Use only what the email says; leave a field empty when it is not there. Never gu
   const st = checks.find((c: any) => /stack/i.test(c.label)); if (st && ['yes', 'no'].includes(x.stackable)) details[st.id] = x.stackable;
   const ins = checks.find((c: any) => /insur/i.test(c.label)); if (ins && ['yes', 'no'].includes(x.insurance)) details[ins.id] = x.insurance;
   const cargo = [x.cargo_description, x.containers, x.packages].map((s) => String(s ?? '').trim()).filter(Boolean).join(' · ').slice(0, 500) || null;
+  // the packing list → cargo lines (only lines that pass the same checks as the form)
+  const lines = (Array.isArray(x.cargo_lines) ? x.cargo_lines : []).map((l: any) => {
+    const t = String(l?.package_type ?? '').trim().toLowerCase();
+    const type = PACKAGE_TYPES.find((p) => p.toLowerCase() === t || p.toLowerCase().replace(/s$/, '') === t.replace(/s$/, '') || (t && p.toLowerCase().startsWith(t.slice(0, 4))));
+    const pieces = Math.round(Number(l?.pieces));
+    const weight = Number(l?.total_weight_kg) > 0 ? Number(l.total_weight_kg) : Number(l?.weight_per_package_kg) > 0 ? Number(l.weight_per_package_kg) * pieces : 0;
+    return { package_type: type ?? (t ? 'Other' : 'Cartons'), package_other: type ? '' : String(l?.package_type ?? '').slice(0, 40), pieces, length: Number(l?.length) || '',
+      width: Number(l?.width) || '', height: Number(l?.height) || '', dim_unit: ['cm', 'in', 'm'].includes(l?.dim_unit) ? l.dim_unit : 'cm', weight_kg: Math.round(weight * 100) / 100 };
+  }).filter((l: any) => !lineProblem(l)).slice(0, 20);
+  // every HS code, once
+  const hsCodes = [...new Set((Array.isArray(x.hs_codes) ? x.hs_codes : []).map((h: any) => String(h).replace(/[^0-9]/g, '')).filter((h: string) => h.length >= 4 && h.length <= 12))];
+  const hs = checks.find((c: any) => /hs\s*code/i.test(c.label)); if (hs && hsCodes.length) details[hs.id] = hsCodes.join(', ');
   const draft = {
     status: 'enquiry', customer_id: known?.id ?? null, customer_name: known?.name ?? null, new_customer: newCustomer, salesman_id: salesman,
     division: direction === 'export' ? 'exports' : direction === 'import' ? 'imports' : direction === 'cross_trade' ? 'cross_trade' : null,
@@ -201,12 +235,13 @@ Use only what the email says; leave a field empty when it is not there. Never gu
     port_of_loading: pol?.name ?? (String(x.origin_port ?? '').trim() || null), pol_code: pol?.code ?? null,
     port_of_discharge: pod?.name ?? (String(x.destination_port ?? '').trim() || null), pod_code: pod?.code ?? null,
     pickup_address: String(x.pickup_address ?? '').trim() || null, delivery_address: String(x.delivery_address ?? '').trim() || null,
-    cargo_description: cargo, gross_weight_kg: Number(x.gross_weight_kg) > 0 ? Number(x.gross_weight_kg) : null,
+    cargo_description: cargo, gross_weight_kg: Number(x.gross_weight_kg) > 0 ? Number(x.gross_weight_kg) : lines.length ? cargoTotals(lines).weight : null,
+    cargo_lines: lines.length ? lines : undefined, hs_codes: hsCodes,
     cargo_value: Number(x.cargo_value) > 0 ? Math.round(Number(x.cargo_value) * 100) / 100 : null,
     cargo_value_currency: Number(x.cargo_value) > 0 && ['AED', 'USD', 'EUR', 'INR', 'CNY'].includes(String(x.cargo_value_currency ?? '').toUpperCase()) ? String(x.cargo_value_currency).toUpperCase() : null,
     enquiry_details: Object.keys(details).length ? details : undefined,
     summary: String(x.summary ?? '').slice(0, 300), mode_unknown: !mode,
-    attachments_read: att.names, attachments_notes: att.notes,
+    attachments_read: att.names, attachments_notes: att.notes, v: DRAFT_VERSION,
   };
   await q('update outlook_inbox set ai_draft = $2 where id = $1', [m.id, JSON.stringify(draft)]);
   return { draft, email: emailInfo(m) };
@@ -227,7 +262,8 @@ export async function createFromEmail(actor: Actor, id: string, b: any) {
     let created: string | null = null;
     if (!customerId) {
       if (!nc?.name) throw new ApiError(400, 'VALIDATION', 'Choose the customer, or fill in the new customer', { fields: { customer_id: 'Choose the customer' } });
-      if (!actor.isSuperAdmin && !actor.has('customers.manage')) throw forbidden('You cannot add customers — choose an existing one');
+      // a new customer from an enquiry email: anyone who may open enquiries may add it (it is checked on the form first)
+      if (!actor.isSuperAdmin && !actor.has('customers.manage') && !actor.has('jobfiles.create')) throw forbidden('You cannot add customers — choose an existing one');
       const f = (k: string) => MASTERS.customers.fields.find((x) => x.key === k)!;
       const vals = { name: parseField(f('name'), nc.name), contact_person: parseField(f('contact_person'), nc.contact_person),
         contact_number: parseField(f('contact_number'), nc.contact_number), email: parseField(f('email'), nc.email) } as Record<string, any>;

@@ -1,5 +1,6 @@
 'use client';
 import { CountryPicker, PortPicker } from './PortPicker';
+import { HsCheck } from './HsCheck';
 import { useEffect, useState } from 'react';
 import { api } from './api';
 import { checksFor, EnquiryCheck } from '@/lib/enquiryGaps';
@@ -158,7 +159,9 @@ function DetailsPanel({ f, setF }: { f: any; setF: (v: any) => void }) {
     <div className="grid g3">{items.map((c) => (
       <label key={c.id} className="f"><span>{c.label}</span>
         {c.field_type === 'yes_no' ? <select value={v[c.id] ?? ''} onChange={(e) => put(c.id, e.target.value)}><option value="">Not known yet</option><option value="yes">Yes</option><option value="no">No</option></select>
-          : <input type={c.field_type === 'date' ? 'date' : c.field_type === 'number' ? 'number' : 'text'} value={v[c.id] ?? ''} onChange={(e) => put(c.id, e.target.value)} />}
+          : <input type={c.field_type === 'date' ? 'date' : c.field_type === 'number' ? 'number' : 'text'} value={v[c.id] ?? ''} onChange={(e) => put(c.id, e.target.value)}
+            placeholder={/hs\s*code/i.test(c.label) ? 'One or more, separated by commas' : undefined} />}
+        {/hs\s*code/i.test(c.label) && <HsCheck codes={v[c.id]} />}
       </label>))}</div>
   </div>;
 }

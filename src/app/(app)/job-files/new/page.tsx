@@ -28,7 +28,7 @@ export default function NewJobFile() {
     setFromEmail(id); setAiState('reading');
     api(`/api/outlook/inbox/${id}/draft`, { body: {} }).then((r) => {
       if (r.already) { setAlready(r.already); setAiState('done'); return; }
-      const { new_customer, customer_name, summary, mode_unknown, attachments_read, attachments_notes, ...fields } = r.draft;
+      const { new_customer, customer_name, summary, mode_unknown, attachments_read, attachments_notes, hs_codes, v, ...fields } = r.draft;
       const clean = Object.fromEntries(Object.entries(fields).filter(([, v]) => v !== null && v !== undefined));
       setF((x: any) => ({ ...x, ...clean }));
       setNc(new_customer); setSrc({ ...r.email, summary, customer_name, mode_unknown, attachments_read, attachments_notes }); setAiState('done');

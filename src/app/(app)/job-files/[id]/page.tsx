@@ -15,6 +15,7 @@ import { noVessel } from '@/lib/jobfileRules';
 import { INCOTERM_INFO } from '@/lib/incotermRules';
 import { TeamChat } from '@/components/TeamChat';
 import { AiSuggestions } from '@/components/AiSuggestions';
+import { HsCheck } from '@/components/HsCheck';
 import { StageHeader, HandlersPanel, RatesAndQuotes, BookingPanel, PrealertPanel, HandoverPanel, LclPanel } from '@/components/CommercialPanels';
 
 const RUN_STATUS: Record<string, string> = { pending: 'Waiting', assigned: 'Assigned', collected: 'Collected', delivered: 'Delivered', failed: 'Could not complete', cancelled: 'Cancelled' };
@@ -197,7 +198,8 @@ export default function JobFile({ params }: { params: { id: string } }) {
               {(d.direction === 'cross_trade' || d.destination_agent_name || d.destination_is_us) && kv('Destination agent', d.destination_is_us ? 'Ourselves (RFS)' : d.destination_agent_name ?? 'Not chosen yet')}
               {kv('Services', [d.needs_clearance && 'Customs clearance', d.needs_transport && 'Transport', d.needs_warehouse && 'Warehouse'].filter(Boolean).join(', '))}
               {(d.enquiry_checks ?? []).filter((c: any) => d.enquiry_details?.[c.id]).map((c: any) => <Fragment key={c.id}>{kv(c.label,
-                c.field_type === 'yes_no' ? (d.enquiry_details[c.id] === 'yes' ? 'Yes' : 'No') : d.enquiry_details[c.id])}</Fragment>)}
+                c.field_type === 'yes_no' ? (d.enquiry_details[c.id] === 'yes' ? 'Yes' : 'No')
+                  : /hs\s*code/i.test(c.label) ? <>{d.enquiry_details[c.id]}<HsCheck codes={d.enquiry_details[c.id]} /></> : d.enquiry_details[c.id])}</Fragment>)}
               {kv('Customer reference', d.customer_reference)}{kv('Incoterm', d.incoterm && `${d.incoterm} — ${INCOTERM_INFO[d.incoterm]?.name ?? ''}`)}
               {d.pickup_address && kv('Pickup address', [d.pickup_address, d.pickup_contact].filter(Boolean).join(' · '))}
               {d.named_place && kv('Handover place', d.named_place)}

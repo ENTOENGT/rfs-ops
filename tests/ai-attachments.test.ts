@@ -34,7 +34,7 @@ before(async () => {
   await q(`update enquiry_checks set is_active = true where label ~* '(stack|insur)'`);          // switched on, as in your checklist
   rowId = (await one(`insert into outlook_inbox (user_id, ms_message_id, internet_message_id, from_addr, from_name, subject, received_at, body_excerpt, has_attachments, status, ai_kind, ai_checked_at,
       ai_draft) values ($1, 'MSG1', '<m1@x>', 'jrrrahman@gmail.com', 'Mohamed Rahman', 'New enquiry', now(), 'Please find the attached sheet, kindly provide the best rate.', true, 'unmatched', 'new_enquiry', now(),
-      '{"mode": "sea_fcl", "summary": "old draft without attachments"}') returning id`, [cora.id]))!.id;
+      '{"mode": "sea_fcl", "summary": "old draft without attachments", "v": 1}') returning id`, [cora.id]))!.id;
   ol.setNetwork((async (url: any) => {
     const u = decodeURIComponent(String(url));
     const json = (j: any) => new Response(JSON.stringify(j), { status: 200, headers: { 'Content-Type': 'application/json' } });

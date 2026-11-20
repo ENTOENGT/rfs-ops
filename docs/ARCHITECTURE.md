@@ -801,3 +801,14 @@ giving customers to other salesmen is for the Commercials Manager. Up to 1,000 r
   as text (10,000 characters), PDF and pictures as Claude content blocks; .xls and others are named in a note. A draft kept from
   before attachments were read is read again once. The draft call gets 9 seconds.
 - No dark-mode colours: the app is always light.
+
+### 15z++. Enquiry from email: more details, HS code list (migration 036, 20 Nov 2026)
+
+- "Create enquiry" (`newenquiry.ts`, draft version 3): a Coordinator (or anyone with `jobfiles.create`) may add the new
+  customer; the packing list fills the cargo lines (package type, pieces, size, weight); ports match by the AI's UN/LOCODE first,
+  then the name (exact → starts with → contains), so "Nhava Sheva" → INNSA; every HS code goes once into the "HS code" detail.
+- `hs_tariff` / `hs_controls` (`src/server/hscodes.ts`, `/api/hs-codes`, page Commercials → HS codes): the Dubai Customs
+  "Tariff Report" Excel is uploaded (tab "HSCode" + tab "PR"; leading zeros put back; the Active line wins). A newer report updates
+  codes and replaces the PR list; the "as on" date, counts and who loaded it are kept in setting `hs_tariff_info`; audited.
+- Check (`HsCheck` component, under the HS code field and on the enquiry Overview): 4–6 digits = heading, 8 = the code,
+  10–12 = its first 8; shows duty %, In Active, Prohibited / Restricted with the authority (active, not ended), or "Not in our record".

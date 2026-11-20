@@ -21,7 +21,8 @@ export const MODULES: NavModule[] = [
     { href: '/settings/quote-terms', label: 'Quotation terms', section: 'Templates', perm: 'templates.manage' },
     { href: '/settings/email-templates', label: 'Email templates', section: 'Templates', perm: 'templates.manage' },
     { href: '/commercials/checklists', label: 'Checklists', section: 'Templates', perm: ['commercial.manage', 'settings.manage'] },   // migration 028
-    { href: '/commercials/places', label: 'Ports & regions', section: 'Templates', perm: ['commercial.manage', 'settings.manage'] }] },   // migration 034
+    { href: '/commercials/places', label: 'Ports & regions', section: 'Templates', perm: ['commercial.manage', 'settings.manage'] },
+    { href: '/commercials/hs-codes', label: 'HS codes', section: 'Templates', perm: ['commercial.manage', 'settings.manage'] }] },   // migration 034
   { key: 'enquiries', label: 'Enquiries', icon: 'inbox', perm: COMMERCIAL, items: [
     { href: '/commercials/enquiries', label: 'All enquiries' },
     { href: '/commercials/enquiries?mine=1', label: 'My enquiries' },
