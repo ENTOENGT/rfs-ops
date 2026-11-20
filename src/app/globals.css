@@ -841,8 +841,6 @@ table.t, .kpi b, .stat-n, .num, .bar b, .funnel-n, .pager { font-variant-numeric
 .ai-answers input[type=checkbox] { width: auto; margin-top: 3px; }
 .ai-quote { display: block; color: var(--muted, #6b7280); font-size: 12px; font-style: italic; }
 .ai-hand { width: 13px; text-align: center; color: #6B46C1; }
-@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .ai-box { background: #231a3a; border-color: #4c3a80; } :root:not([data-theme="light"]) .ai-item { border-color: #3a2d63; } }
-:root[data-theme="dark"] .ai-box { background: #231a3a; border-color: #4c3a80; }
 
 /* Port picker (migration 034) */
 .port-pick { position: relative; }
@@ -850,20 +848,12 @@ table.t, .kpi b, .stat-n, .num, .bar b, .funnel-n, .pager { font-variant-numeric
 .port-code { position: absolute; right: 8px; top: 50%; transform: translateY(-50%); font-size: 11px; font-weight: 700; color: var(--navy-700, #1e3a5f); background: #E8EEF7; border-radius: 5px; padding: 1px 6px; pointer-events: none; }
 .port-list { position: absolute; z-index: 40; left: 0; right: 0; top: calc(100% + 4px); background: var(--panel, #fff); border: 1px solid var(--line, #d9dee7); border-radius: 10px; box-shadow: 0 8px 24px rgba(15, 23, 42, .14); max-height: 300px; overflow: auto; padding: 4px; }
 .port-list button { display: block; width: 100%; text-align: left; border: 0; background: none; padding: 7px 9px; border-radius: 7px; cursor: pointer; font: inherit; color: inherit; }
-.port-list button.on { background: #EEF3FA; }
-@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .port-list button.on { background: #1e2a3d; } :root:not([data-theme="light"]) .port-code { background: #1e2a3d; color: #cfe0f5; } }
-:root[data-theme="dark"] .port-list button.on { background: #1e2a3d; }
+.port-list button.on { background: #E6EEF9; box-shadow: inset 3px 0 0 var(--navy-700, #1e3a5f); color: inherit; }
 /* Ports & regions: country chips */
 .chips { display: flex; flex-wrap: wrap; gap: 6px; }
 .chip { display: inline-flex; align-items: center; gap: 4px; background: #EEF3FA; border: 1px solid #D5E0EE; border-radius: 999px; padding: 2px 4px 2px 10px; font-size: 13px; }
 .chip button { border: 0; background: none; cursor: pointer; font-size: 15px; line-height: 1; padding: 0 5px; color: inherit; }
-@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .chip { background: #1e2a3d; border-color: #2c3d57; } }
-:root[data-theme="dark"] .chip { background: #1e2a3d; border-color: #2c3d57; }
 .agent-sugg { background: #F4F8FD; border: 1px solid #D5E0EE; border-radius: 10px; padding: 8px 10px; }
-@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .agent-sugg { background: #16202f; border-color: #2c3d57; } }
-:root[data-theme="dark"] .agent-sugg { background: #16202f; border-color: #2c3d57; }
 
 /* AI: new enquiry emails (migration 035) */
 tr.row-new-enq td { background: #F7F3FF; }
-@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) tr.row-new-enq td { background: #231a3a; } }
-:root[data-theme="dark"] tr.row-new-enq td { background: #231a3a; }
