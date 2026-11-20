@@ -249,6 +249,48 @@ Use only what the email says; leave a field empty when it is not there. Never gu
 const emailInfo = (m: any) => ({ id: m.id, from_name: m.from_name, from_addr: m.from_addr, subject: m.subject, received_at: m.received_at, web_link: m.web_link, summary: m.ai_summary });
 
 // ---------------------------------------------------------------- 3. Save: customer (when new) + enquiry + the email filed
+
+/**
+ * A new customer typed on an enquiry (from an email, or chosen as "New customer" / "Walk-in customer" on New enquiry).
+ * Anyone who may open enquiries may add one. Never a duplicate: a company with the same name is used as it is; a walk-in
+ * (a person, no company) with the same name and the same mobile is used, with another mobile it is refused.
+ */
+export async function addCustomer(c: any, actor: Actor, nc: any, salesmanId: unknown, how: string): Promise<{ id: string; created: string | null }> {
+  const walkIn = !!nc?.walk_in;
+  const need = (k: string, m: string) => { throw new ApiError(400, 'VALIDATION', m, { fields: { [k]: m } }); };
+  if (!String(nc?.name ?? '').trim()) need('new_customer_name', walkIn ? 'Enter the person\'s name' : 'Enter the company name');
+  if (walkIn && !String(nc?.contact_number ?? '').trim()) need('new_customer_phone', 'Enter the mobile number');
+  if (!actor.isSuperAdmin && !actor.has('customers.manage') && !actor.has('jobfiles.create')) throw forbidden('You cannot add customers — choose an existing one');
+  const f = (k: string) => MASTERS.customers.fields.find((x) => x.key === k)!;
+  const vals = { name: parseField(f('name'), nc.name), contact_person: parseField(f('contact_person'), walkIn ? nc.name : nc.contact_person),
+    contact_number: parseField(f('contact_number'), nc.contact_number), email: parseField(f('email'), nc.email) } as Record<string, any>;
+  const ex = await one('select id, contact_number from customers where lower(name) = lower($1) and deleted_at is null', [vals.name], c);
+  if (ex) {
+    const digits = (v: unknown) => String(v ?? '').replace(/\D/g, '').slice(-9);
+    if (walkIn && digits(ex.contact_number) !== digits(vals.contact_number))
+      need('new_customer_name', `A customer named "${vals.name}" is already in RFS CRM with another number. Choose it from the list, or add something to the name (e.g. the area).`);
+    return { id: ex.id, created: null };                                   // same name already there: use it, never a duplicate
+  }
+  const id = (await one(`insert into customers (name, contact_person, contact_number, email, remarks, is_active) values ($1,$2,$3,$4,$5,true) returning id`,
+    [vals.name, vals.contact_person, vals.contact_number, vals.email, walkIn ? 'Walk-in customer (person, no company)' : null], c))!.id;
+  if (vals.email || vals.contact_number) await c.query(`insert into customer_contacts (customer_id, full_name, email, mobile, is_primary, email_as) values ($1, $2, $3, $4, true, $5)`,
+    [id, vals.contact_person || vals.name, vals.email, vals.contact_number, vals.email ? 'to' : null]);
+  const owner = isUuid(salesmanId) ? salesmanId : actor.role_code === 'sales' ? actor.id : null;
+  if (owner) await c.query(`insert into customer_salesmen (customer_id, user_id, is_main, created_by) values ($1, $2, true, $3) on conflict do nothing`, [id, owner, actor.id]);
+  await audit(c, actor, { entity_type: 'customers', entity_id: id, action: walkIn ? `${how} — walk-in` : how, new_value: vals.name });
+  return { id, created: vals.name };
+}
+
+/** New enquiry / Job File from the form: when "New customer" or "Walk-in customer" was chosen, the customer is added first (same save). */
+export async function createWithCustomer(actor: Actor, b: any) {
+  const { new_customer: nc, ...e } = b ?? {};
+  if (isUuid(e.customer_id) || !nc) return createJobFile(actor, e);
+  return tx(async (c) => {
+    const r = await addCustomer(c, actor, nc, e.salesman_id, 'Customer created on New enquiry');
+    const jf = await createJobFile(actor, { ...e, customer_id: r.id }, c);
+    return { ...jf, customer_created: r.created };
+  });
+}
 export async function createFromEmail(actor: Actor, id: string, b: any) {
   const m = await myWaiting(actor, id);
   const made = await alreadyMade(m);
@@ -261,24 +303,8 @@ export async function createFromEmail(actor: Actor, id: string, b: any) {
     let customerId: string | null = isUuid(e.customer_id) ? e.customer_id : null;
     let created: string | null = null;
     if (!customerId) {
-      if (!nc?.name) throw new ApiError(400, 'VALIDATION', 'Choose the customer, or fill in the new customer', { fields: { customer_id: 'Choose the customer' } });
-      // a new customer from an enquiry email: anyone who may open enquiries may add it (it is checked on the form first)
-      if (!actor.isSuperAdmin && !actor.has('customers.manage') && !actor.has('jobfiles.create')) throw forbidden('You cannot add customers — choose an existing one');
-      const f = (k: string) => MASTERS.customers.fields.find((x) => x.key === k)!;
-      const vals = { name: parseField(f('name'), nc.name), contact_person: parseField(f('contact_person'), nc.contact_person),
-        contact_number: parseField(f('contact_number'), nc.contact_number), email: parseField(f('email'), nc.email) } as Record<string, any>;
-      const ex = await one('select id from customers where lower(name) = lower($1) and deleted_at is null', [vals.name], c);
-      if (ex) customerId = ex.id;                                            // same name already there: use it, never a duplicate
-      else {
-        customerId = (await one(`insert into customers (name, contact_person, contact_number, email, is_active) values ($1,$2,$3,$4,true) returning id`,
-          [vals.name, vals.contact_person, vals.contact_number, vals.email], c))!.id;
-        created = vals.name;
-        if (vals.email) await c.query(`insert into customer_contacts (customer_id, full_name, email, mobile, is_primary, email_as) values ($1, $2, $3, $4, true, 'to')`,
-          [customerId, vals.contact_person || vals.name, vals.email, vals.contact_number]);
-        const owner = isUuid(e.salesman_id) ? e.salesman_id : actor.role_code === 'sales' ? actor.id : null;
-        if (owner) await c.query(`insert into customer_salesmen (customer_id, user_id, is_main, created_by) values ($1, $2, true, $3) on conflict do nothing`, [customerId, owner, actor.id]);
-        await audit(c, actor, { entity_type: 'customers', entity_id: customerId, action: 'Customer created from an email (AI, checked)', new_value: vals.name });
-      }
+      const r = await addCustomer(c, actor, nc, e.salesman_id, 'Customer created from an email (AI, checked)');
+      customerId = r.id; created = r.created;
     }
     const jf = await createJobFile(actor, { ...e, customer_id: customerId }, c);
     // the email, in every inbox it came to, is filed on the new enquiry (later replies follow it)

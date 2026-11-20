@@ -11,6 +11,7 @@ import { INCOTERM_INFO, incotermNeeds, incotermRequired } from '@/lib/incotermRu
 import { CURRENCIES } from '@/lib/currency';
 import { PACKAGE_TYPES, DIM_UNITS, blankLine, cargoTotals, dimsRequired, lineCbm, typedLines } from '@/lib/cargoRules';
 
+const NEW_COMPANY = '__new_company', NEW_WALKIN = '__new_walkin';
 const Err = ({ m }: { m?: string }) => (m ? <small className="ferr">{m}</small> : null);
 
 /** The Job File fields, shared by "New Job File" and "Edit" so both check and look the same. */
@@ -29,6 +30,10 @@ export function JobFileFields({ f, setF, fe = {}, isNew }: { f: any; setF: (v: a
     if (enquiry && !f.division && defDivision) setF({ ...f, division: defDivision, direction: directionOfDivision(defDivision) });
   }, [enquiry, defDivision]);  // eslint-disable-line react-hooks/exhaustive-deps
   const set = (k: string) => (e: any) => setF({ ...f, [k]: e.target.type === 'checkbox' ? e.target.checked : e.target.value });
+  // a customer not in the list: "New customer" (company) or "Walk-in customer" (person) — added when the enquiry is saved
+  const nc = f.new_customer;
+  const addCust = enquiry && (can('jobfiles.create') || can('customers.manage'));
+  const putNc = (k: string) => (e: any) => setF({ ...f, new_customer: { ...nc, [k]: e.target.value } });
   const air = f.mode === 'air', road = f.mode === 'road';
   // Step 3: at enquiry stage the customer doesn't choose the carrier — vessel, booking, BL and dates come later from booking / pre-alert
   const enq = f.status === 'enquiry';
@@ -63,8 +68,24 @@ export function JobFileFields({ f, setF, fe = {}, isNew }: { f: any; setF: (v: a
         {isNew && !enquiry && <label className={`f${fe.job_no ? ' bad' : ''}`}><span>Job No. (from the ERP) <em>*</em></span>
           <input value={f.job_no ?? ''} onChange={set('job_no')} autoFocus maxLength={40} /><Err m={fe.job_no} /></label>}
         <label className={`f ${isNew && !enquiry ? 'span2' : ''}${fe.customer_id ? ' bad' : ''}`}><span>Customer <em>*</em></span>
-          <select value={f.customer_id ?? ''} onChange={set('customer_id')}><option value="">Choose customer</option>
-            {lk.customers.map((c: any) => <option key={c.id} value={c.id}>{c.name}</option>)}</select><Err m={fe.customer_id} /></label>
+          <select value={f.customer_id ?? (nc ? (nc.walk_in ? NEW_WALKIN : NEW_COMPANY) : '')} onChange={(e) => {
+            const v = e.target.value;
+            if (v === NEW_COMPANY || v === NEW_WALKIN) setF({ ...f, customer_id: null, new_customer: { ...(nc ?? {}), walk_in: v === NEW_WALKIN } });
+            else setF({ ...f, customer_id: v || null, new_customer: null });
+          }}><option value="">Choose customer</option>
+            {addCust && <optgroup label="Not in the list?"><option value={NEW_COMPANY}>+ New customer (company)</option><option value={NEW_WALKIN}>+ Walk-in customer (person)</option></optgroup>}
+            {addCust ? <optgroup label="Customers">{lk.customers.map((c: any) => <option key={c.id} value={c.id}>{c.name}</option>)}</optgroup>
+              : lk.customers.map((c: any) => <option key={c.id} value={c.id}>{c.name}</option>)}</select><Err m={fe.customer_id} /></label>
+        {nc && !f.customer_id && <div className="span3 new-cust">
+          <div className="small"><b>{nc.walk_in ? 'Walk-in customer' : 'New customer'}</b> — added to Customers when you save. {nc.walk_in ? 'A person without a company.' : ''}</div>
+          <div className="grid g4">
+            <label className={`f${fe.new_customer_name ? ' bad' : ''}`}><span>{nc.walk_in ? 'Person\'s name' : 'Company name'} <em>*</em></span>
+              <input value={nc.name ?? ''} onChange={putNc('name')} autoFocus /><Err m={fe.new_customer_name} /></label>
+            {!nc.walk_in && <label className="f"><span>Contact person</span><input value={nc.contact_person ?? ''} onChange={putNc('contact_person')} /></label>}
+            <label className={`f${fe.new_customer_phone ? ' bad' : ''}`}><span>Mobile {nc.walk_in && <em>*</em>}</span>
+              <input value={nc.contact_number ?? ''} onChange={putNc('contact_number')} /><Err m={fe.new_customer_phone} /></label>
+            <label className="f"><span>Email</span><input type="email" value={nc.email ?? ''} onChange={putNc('email')} /></label>
+          </div></div>}
         {enquiry && me.role_code !== 'sales' && <label className={`f${fe.salesman_id ? ' bad' : ''}`}><span>{me.role_is_manager ? 'Owner of the enquiry' : 'Responsible Salesman'} {me.role_code === 'coordinator' && <em>*</em>}</span>
           <select value={f.salesman_id ?? ''} onChange={(e) => { const dv = f.division || lk.salesmen?.find((s: any) => s.id === e.target.value)?.division || ''; setF({ ...f, salesman_id: e.target.value, division: dv, direction: directionOfDivision(dv) ?? f.direction }); }}>
             <option value="">{me.role_code === 'coordinator' ? 'Choose the Salesman' : 'None'}</option>

@@ -41,7 +41,7 @@ export default function NewJobFile() {
     try {
       const payload = { ...f, cargo_lines: typedLines(f.cargo_lines), containers: containersNeeded ? conts.filter((k) => k.container_no.trim()) : [] };
       const r = fromEmail && aiState === 'done'
-        ? await api(`/api/outlook/inbox/${fromEmail}/enquiry`, { body: { enquiry: payload, new_customer: f.customer_id ? null : nc } })
+        ? await api(`/api/outlook/inbox/${fromEmail}/enquiry`, { body: { enquiry: { ...payload, new_customer: undefined }, new_customer: f.customer_id ? null : (f.new_customer ?? nc) } })
         : await api('/api/job-files', { body: payload });
       router.push(`/job-files/${r.id}`);
     } catch (e: any) {
@@ -65,7 +65,7 @@ export default function NewJobFile() {
         {src.attachments_read?.length > 0 && <p className="small" style={{ margin: '0 0 6px' }}>📎 Also read from the attachments: <b>{src.attachments_read.join(', ')}</b></p>}
         {src.attachments_notes?.length > 0 && <p className="small flag" style={{ margin: '0 0 6px' }}>📎 {src.attachments_notes.join(' · ')}</p>}
         {src.mode_unknown && <p className="small flag" style={{ margin: '0 0 6px' }}>The email doesn't say the mode — choose it below.</p>}
-        {!f.customer_id && nc && <div className="grid g2" style={{ marginTop: 8 }}>
+        {!f.customer_id && !f.new_customer && nc && <div className="grid g2" style={{ marginTop: 8 }}>
           <div className="span2 small"><b>New customer</b> — made when you save (the sender becomes the main contact, in To). Or choose an existing customer below instead.</div>
           <label className="f"><span>Company name <em>*</em></span><input value={nc.name ?? ''} onChange={(e) => setNc({ ...nc, name: e.target.value })} /></label>
           <label className="f"><span>Contact person</span><input value={nc.contact_person ?? ''} onChange={(e) => setNc({ ...nc, contact_person: e.target.value })} /></label>
@@ -91,7 +91,7 @@ export default function NewJobFile() {
         <button className="btn small" type="button" onClick={() => setConts([...conts, { container_no: '', size_type: conts[conts.length - 1]?.size_type ?? '40HC', seal_no: '' }])}>+ Add container</button>
       </div>}
       <div className="form-actions"><Link className="btn" href="/job-files">Cancel</Link>
-        <button className="btn primary" disabled={busy || aiState === 'reading' || !!already} onClick={save}>{busy ? 'Saving…' : f.status === 'enquiry' ? (fromEmail && !f.customer_id && nc ? 'Create customer and open enquiry' : 'Open enquiry') : 'Create Job File'}</button></div>
+        <button className="btn primary" disabled={busy || aiState === 'reading' || !!already} onClick={save}>{busy ? 'Saving…' : f.status === 'enquiry' ? (!f.customer_id && (f.new_customer || (fromEmail && nc)) ? 'Create customer and open enquiry' : 'Open enquiry') : 'Create Job File'}</button></div>
     </div>
   );
 }

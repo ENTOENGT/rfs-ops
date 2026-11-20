@@ -864,3 +864,7 @@ tr.row-new-enq td { background: #F7F3FF; }
 .hs-line.hs-ok { border-color: #2F855A; background: #F0F9F4; }
 .hs-line.hs-warn { border-color: #B7791F; background: #FFF8E6; }
 .hs-line.hs-bad { border-color: #C53030; background: #FDF0F0; }
+
+/* New customer / walk-in typed on New enquiry */
+.new-cust { grid-column: 1 / -1; border: 1px dashed #b9c6d8; background: #F6F9FD; border-radius: 8px; padding: 10px 12px; }
+.new-cust .grid { margin-top: 6px; }

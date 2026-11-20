@@ -1,14 +1,13 @@
-RFS CRM — fix 3 (enquiry from email: new customer, cargo lines, ports, HS codes + HS code list)
+RFS CRM — fix 4 (includes everything from fix 3: use this zip instead of fix 3)
 
 1. Supabase → SQL editor: open db/migrations/036_hs_codes.sql from this zip, paste it all, Run.
-   (Safe to run twice. It only adds two new tables.)
+   (Safe to run twice. It only adds two new tables. If you already ran it for fix 3, nothing more to do here.)
 
 2. GitHub: upload all the files in this zip, in their folders, in ONE commit. Netlify builds by itself.
 
-3. When the site is published: Commercials → Templates → HS codes.
-   Choose Tariff_Report.xlsx → Load. You should see: 9,464 codes (7,855 active), 3,232 prohibited / restricted lines,
-   as on 03rd February 2022.
+3. Test as the Coordinator: Enquiries → New enquiry → Customer box → "+ New customer (company)" or
+   "+ Walk-in customer (person)". Fill the name (and mobile for walk-in), the rest of the enquiry, save.
+   The customer appears in Customers, with the chosen Salesman as owner.
 
-4. Test: My Outlook → Emails to file → the Gmail test enquiry → Create enquiry.
-   It reads the email again by itself. Check: customer can be created, cargo lines filled, POL = INNSA Jawaharlal Nehru
-   (Nhava Sheva), HS codes in Additional details with the check under them.
+4. Commercials → Templates → HS codes: choose Tariff_Report.xlsx → Load.
+   You should see 9,464 codes (7,855 active), 3,232 prohibited / restricted lines, as on 03rd February 2022.

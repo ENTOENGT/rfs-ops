@@ -812,3 +812,7 @@ giving customers to other salesmen is for the Commercials Manager. Up to 1,000 r
   codes and replaces the PR list; the "as on" date, counts and who loaded it are kept in setting `hs_tariff_info`; audited.
 - Check (`HsCheck` component, under the HS code field and on the enquiry Overview): 4–6 digits = heading, 8 = the code,
   10–12 = its first 8; shows duty %, In Active, Prohibited / Restricted with the authority (active, not ended), or "Not in our record".
+- New enquiry: the Customer box also offers "+ New customer (company)" and "+ Walk-in customer (person)" (anyone who may open
+  enquiries). The customer is added in the same save as the enquiry (`createWithCustomer` / `addCustomer` in `newenquiry.ts`,
+  also used by "Create enquiry" from an email). Same company name → that customer is used; a walk-in needs a mobile, is marked
+  "Walk-in customer" in remarks, and the same name with another mobile is refused (never a duplicate).
