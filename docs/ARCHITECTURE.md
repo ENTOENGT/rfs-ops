@@ -791,3 +791,13 @@ giving customers to other salesmen is for the Commercials Manager. Up to 1,000 r
 - `createFromEmail`: one transaction — the new customer (never twice: same name is reused) with the sender as main contact (To)
   and the Salesman as main owner, `createJobFile`, the email filed on it, and every inbox copy of the same email marked filed.
   Nothing is created until a person presses Save on the New enquiry page (`/job-files/new?from_email=…`).
+
+### 15z+. Fixes after the first live test (20 Nov 2026)
+- Our own domains (`ourDomains`): a connected Outlook mailbox's domain, the company email, or a domain shared by 2+ users.
+  `knownSender` never takes our own address as a customer; automatic senders are dropped before anything else; waiting rows
+  that are ours / automatic are wiped at the next check (`tidyWaiting`). AI "other" emails from customers are hidden behind a
+  "show them" link. The quick look is told that "please quote the attached sheet" is a new enquiry and whether there are attachments.
+- `src/server/attachments.ts`: "Create enquiry" also reads up to 3 attachments (3 MB each): .xlsx / .xlsm / .csv / .txt / .docx
+  as text (10,000 characters), PDF and pictures as Claude content blocks; .xls and others are named in a note. A draft kept from
+  before attachments were read is read again once. The draft call gets 9 seconds.
+- No dark-mode colours: the app is always light.

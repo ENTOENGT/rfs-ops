@@ -1,44 +1,26 @@
-RFS CRM — Release R (To/CC follow the shipment · port list · agents by port, country or region · bulk upload · AI new enquiries)
-=================================================================================================
+RFS CRM — Fix 1 + Fix 2 together (after Release R)
+====================================================
 
-Upload this after Release Q (and the fixed ai-agent.test.ts).
+Upload this after Release R. It holds everything from Fix 1 and Fix 2 — use it instead of those two zips.
+No database change — nothing to run in Supabase.
 
-What is new
-  1. Emails to customers: To and CC fill in by themselves and follow the shipment.
-     - Customers -> Contacts: each contact now has "On emails: To / CC / Not by default".
-     - Our people handling the shipment are copied (CC) by themselves; Settings has "Always CC on emails to customers".
-     - People the customer had in To / CC on their emails, and addresses you type in, stay on that shipment's emails.
-     - x next to a person takes them off that shipment's emails for good.
-  2. Ports: every seaport and airport in the UN list (about 25,000) — the port boxes on the enquiry suggest as you type.
-     The enquiry also has Origin country / Destination country (for "collection anywhere in Germany").
-     Commercials -> Ports & regions: your regions (groups of countries) and your own ports / inland depots.
-  3. Agents: Vendors -> Coverage says where each agent works (port, country or region). "Ask agents for a rate" then ticks
-     every agent covering the enquiry's origin / destination, and "Email all from my Outlook" emails each one separately.
-  4. Bulk upload: Administration -> Bulk upload. Download the Excel template, fill in customers (with their main salesman
-     and contacts) and vendors (with their coverage), Check (row by row, nothing saved), then Import. Never duplicates.
-  5. AI finds new enquiries: emails in the Salesman's / Coordinator's inbox that match no shipment are looked at by the AI.
-     New enquiries (also from new customers) show first on My Outlook -> Emails to file with "Create enquiry": the AI fills
-     the enquiry (and the new customer from the email signature), you check it and press Save. The same email in the
-     Salesman's and the Coordinator's inbox becomes one enquiry. Emails from unknown senders that are not enquiries are not kept.
-  Also: the AI box no longer offers answers that are already filled in.
+Fix 1
+  - Port list highlight and country tags were dark when the computer is in dark mode (RFS CRM is always light).
+  - Internal emails (colleagues, birthday mails, postmaster) no longer show as "Customer: ..." on My Outlook.
+    Those already waiting are cleared at the next check.
+  - "Our own company" is only: a connected Outlook mailbox's domain, the company email in Settings, or a domain two or
+    more of our users share.
+  - The AI treats "please find the attached sheet, kindly quote / best rate" as a new enquiry.
+  - Customer emails the AI says are not about a shipment are tucked away ("show them" link on My Outlook).
+Fix 2
+  - "Create enquiry" also reads the attachments: Excel (.xlsx), CSV, Word (.docx) as text; PDF and pictures by the AI.
+    Old .xls and files over 3 MB are named in an orange note. Merged cells are read once.
+  - The AI also fills Stackable, Insurance and the cargo value + currency.
+  - An email opened with "Create enquiry" before this is read again once, with its attachments.
 
-Step 1 — Database (Supabase -> SQL Editor). Run these three files, one at a time, in this order:
-  db/migrations/033_email_people.sql
-  db/migrations/034_ports_agents.sql
-  db/migrations/035_ai_new_enquiry.sql
-  Each one is safe to run again. Wait for "Success" before the next.
-  (The 25,000 ports are not in the SQL: the app loads them by itself the first time someone types in a port box.)
+Step 1 — Code (GitHub). Upload the files in this zip to the same paths, in ONE commit.
 
-Step 2 — Code (GitHub). Upload every other file in this zip to the same paths, in ONE commit.
-  It includes src/data/ports.json (about 1 MB) — upload it too.
-
-Step 3 — Checks
-  1. Customers -> Contacts: set one contact to CC. Open an enquiry -> Email: To and CC fill in by themselves.
-  2. Edit an enquiry -> Port of loading: type "hamb" -> Hamburg (DEHAM) is first. (The very first search may take a few
-     seconds while the port list loads.)
-  3. Vendors -> Coverage on an agent -> add a country (e.g. Germany).
-  4. An enquiry with Origin country Germany -> Ask agents / carriers for a rate: that agent is ticked by itself.
-  5. Administration -> Bulk upload -> Download template -> add 2 test customers -> Check -> Import.
-  6. From a personal email (e.g. Gmail) send the pilot Salesman: "Please quote 1x20GP Shanghai to Jebel Ali, FOB, 8 tons
-     furniture" with a company name in the signature. Within a minute it shows on My Outlook as "New enquiry?" ->
-     Create enquiry -> check the form -> Create customer and open enquiry.
+Step 2 — Check
+  1. My Outlook -> Check inbox now: the birthday / postmaster emails are gone from the list.
+  2. Emails to file -> "Create enquiry" on the Gmail test email: the purple box shows
+     "Also read from the attachments: ..." and the form is filled from the sheet.

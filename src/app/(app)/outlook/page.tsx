@@ -54,7 +54,8 @@ function Inbox() {
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState<{ t: 'ok' | 'err'; m: string } | null>(null);
   const [refs, setRefs] = useState<Record<string, string>>({});
-  const load = () => api('/api/outlook/inbox').then(setD).catch((e) => setNote({ t: 'err', m: e.message }));
+  const [showAll, setShowAll] = useState(false);
+  const load = (all = showAll) => api(`/api/outlook/inbox${all ? '?all=1' : ''}`).then(setD).catch((e) => setNote({ t: 'err', m: e.message }));
   const check = async (quiet = false) => {
     setBusy(true); if (!quiet) setNote(null);
     try {
@@ -68,7 +69,7 @@ function Inbox() {
     setBusy(false); load();
   };
   // check on opening, then show what the every-minute check finds
-  useEffect(() => { load(); check(true); const t = setInterval(load, 60_000); return () => clearInterval(t); }, []);
+  useEffect(() => { load(); check(true); const t = setInterval(() => load(), 60_000); return () => clearInterval(t); }, []);
   const act = async (id: string, b: any, ok: string) => {
     try { await api(`/api/outlook/inbox/${id}`, { body: b }); setNote({ t: 'ok', m: ok }); load(); } catch (e: any) { setNote({ t: 'err', m: e.message }); }
   };
@@ -81,7 +82,9 @@ function Inbox() {
         no shipment wait here; the AI marks the ones that are <b>new enquiries</b> — also from new customers — and puts them at the top.
         Other emails are not saved. It also checks by itself every minute while RFS CRM is open.</p>
       {note && <div className={`msg ${note.t}`}>{note.m}</div>}
-      {d?.last_sync_at && <p className="muted small">Last checked {fmtDateTime(d.last_sync_at)}</p>}
+      {d?.last_sync_at && <p className="muted small">Last checked {fmtDateTime(d.last_sync_at)}
+        {d.other_hidden > 0 && <> · {d.other_hidden} other email(s) from customers hidden (the AI says they are not about a shipment) — <button className="linkish small" onClick={() => { setShowAll(true); load(true); }}>show them</button></>}
+        {showAll && <> · <button className="linkish small" onClick={() => { setShowAll(false); load(false); }}>hide other emails</button></>}</p>}
       {!d ? <p className="muted">Loading…</p> : d.rows.length === 0 ? <div className="empty small">Nothing waiting. Every email from your customers and agents is on its shipment.</div>
         : <div className="table-wrap"><table className="t">
           <thead><tr><th>Received</th><th>From</th><th style={{ width: '45%' }}>Subject</th><th>File on shipment</th></tr></thead>

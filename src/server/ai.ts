@@ -23,11 +23,12 @@ export function aiConfig() {
 export type Tool = { name: string; description: string; input_schema: Record<string, unknown> };
 
 /** One call to Claude that must answer by filling in `tool`. Returns the filled-in object and the model used. */
-export async function askWithTool(system: string, user: string, tool: Tool, maxTokens = 1500): Promise<{ input: any; model: string }> {
+/** `user` is the text, or a list of content blocks (text + PDF documents / pictures from email attachments). */
+export async function askWithTool(system: string, user: string | any[], tool: Tool, maxTokens = 1500, timeoutMs = TIMEOUT_MS): Promise<{ input: any; model: string }> {
   const c = aiConfig();
   if (!c.ready) throw new ApiError(503, 'AI_NOT_SET_UP', 'The AI agent is not switched on yet (the Anthropic key is missing in the hosting settings)');
   const ctl = new AbortController();
-  const timer = setTimeout(() => ctl.abort(), TIMEOUT_MS);
+  const timer = setTimeout(() => ctl.abort(), timeoutMs);
   let res: Response;
   try {
     res = await net('https://api.anthropic.com/v1/messages', {

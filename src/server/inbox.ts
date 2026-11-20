@@ -41,6 +41,8 @@ export async function shipmentFromSubject(subject: string | null | undefined, db
 /** "Customer: X" / "Agent: Y" when the sender is one of ours (the exact address, or the same company domain). */
 export async function knownSender(email: string, db?: Db): Promise<string | null> {
   if (!email.includes('@')) return null;
+  // our own colleagues (our users / our company domain) are never "the customer", even when a test contact uses our domain
+  if (await (await import('./emailpeople')).isOurs(email, undefined, db)) return null;
   const exact = await one(`select label from (
       select 'Customer: ' || c.name label, 1 o from customers c where lower(c.email) = $1 and c.deleted_at is null
       union all select 'Customer: ' || c.name, 1 from customer_contacts k join customers c on c.id = k.customer_id
@@ -85,7 +87,7 @@ async function shipmentFromConversation(conversationId: string | null, db?: Db) 
 
 /** Look at one email from Microsoft. Returns what happened to it. */
 /** Automatic senders that are never enquiries (not kept, not sent to the AI). */
-const AUTOMATIC = /^(no-?reply|do-?not-?reply|mailer-daemon|postmaster|notifications?|newsletters?|marketing|news|bounce|alerts?|updates?|info-noreply)[@+.-]/i;
+export const AUTOMATIC = /^(no-?reply|do-?not-?reply|mailer-daemon|postmaster|notifications?|newsletters?|marketing|news|bounce|alerts?|updates?|info-noreply|calendar|microsoft|sharepoint)[@+.-]/i;
 
 async function takeOne(actor: Actor, msg: any): Promise<'filed' | 'unmatched' | 'screen' | 'skipped'> {
   if (msg['@removed'] || msg.isDraft || !msg.id) return 'skipped';
@@ -100,12 +102,13 @@ async function takeOne(actor: Actor, msg: any): Promise<'filed' | 'unmatched' | 
   // migration 035: the same email already made into an enquiry from another person's inbox (Salesman and Coordinator both get it)
   const sameEmail = !byTag && m.internet_message_id ? (await one(`select job_file_id from outlook_inbox where internet_message_id = $1 and job_file_id is not null limit 1`,
     [m.internet_message_id]))?.job_file_id ?? null : null;
+  if (!byTag && m.from_addr && AUTOMATIC.test(m.from_addr)) return 'skipped';
   const fileId = byTag ?? sameEmail ?? await shipmentFromConversation(m.conversation_id);
   const known = !fileId && m.from_addr ? await knownSender(m.from_addr) : null;
   // an unknown sender: kept only for the AI to look at (new enquiry or not) — never automatic mail or our own colleagues
   let screen = false;
   if (!fileId && !known) {
-    if (!m.from_addr || AUTOMATIC.test(m.from_addr) || !aiConfig().ready) return 'skipped';
+    if (!m.from_addr || !aiConfig().ready) return 'skipped';
     const { isOurs } = await import('./emailpeople');
     if (await isOurs(m.from_addr)) return 'skipped';
     screen = true;
@@ -132,6 +135,7 @@ async function takeOne(actor: Actor, msg: any): Promise<'filed' | 'unmatched' | 
  */
 export async function syncInbox(actor: Actor, budgetMs = TIME_BUDGET_MS) {
   if (!(await canSend(actor.id))) throw new ApiError(409, 'NOT_CONNECTED', 'Connect your Outlook first (menu → My Outlook)');
+  await tidyWaiting(actor.id);
   const got = await one(`update outlook_connections set sync_started_at = now()
       where user_id = $1 and (sync_started_at is null or sync_started_at < now() - interval '2 minutes') returning delta_link`, [actor.id]);
   if (!got) return { busy: true };
@@ -169,13 +173,25 @@ export async function syncInbox(actor: Actor, budgetMs = TIME_BUDGET_MS) {
   }
 }
 
+/** Waiting emails from our own colleagues or automatic senders are not for a shipment: wiped, never shown again. */
+async function tidyWaiting(userId: string) {
+  const { ourDomains } = await import('./emailpeople');
+  const domains = [...(await ourDomains())];
+  await q(`update outlook_inbox o set status = 'ignored', subject = null, body_excerpt = null, from_name = null, to_addrs = null, cc_addrs = null, web_link = null
+    where o.user_id = $1 and o.status in ('unmatched', 'screen')
+      and (o.from_addr ~* $2 or split_part(lower(o.from_addr), '@', 2) = any($3)
+        or exists (select 1 from users u where lower(u.email) = lower(o.from_addr) and u.deleted_at is null))`,
+    [userId, AUTOMATIC.source, domains]);
+}
+
 // ---------------------------------------------------------------- "Emails to file"
-export async function listToFile(actor: Actor) {
+export async function listToFile(actor: Actor, all = false) {
   const rows = await q(`select id, from_addr, from_name, subject, received_at, body_excerpt, has_attachments, web_link, known_as, ai_kind, ai_summary, ai_checked_at
-      from outlook_inbox where user_id = $1 and status = 'unmatched'
-      order by (ai_kind = 'new_enquiry') desc nulls last, received_at desc nulls last limit 200`, [actor.id]);
+      from outlook_inbox where user_id = $1 and status = 'unmatched' and ($2::boolean or ai_kind is distinct from 'other')
+      order by coalesce(ai_kind = 'new_enquiry', false) desc, received_at desc nulls last limit 200`, [actor.id, !!all]);
+  const other = Number((await one(`select count(*) n from outlook_inbox where user_id = $1 and status = 'unmatched' and ai_kind = 'other'`, [actor.id]))!.n);
   const c = await one('select last_sync_at, last_sync_result from outlook_connections where user_id = $1', [actor.id]);
-  return { rows, last_sync_at: c?.last_sync_at ?? null, last_sync_result: c?.last_sync_result ?? null };
+  return { rows, other_hidden: all ? 0 : other, last_sync_at: c?.last_sync_at ?? null, last_sync_result: c?.last_sync_result ?? null };
 }
 
 async function myWaiting(actor: Actor, id: string, c: Db) {

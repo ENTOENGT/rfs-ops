@@ -15,8 +15,15 @@ const real = (e: unknown): e is string => typeof e === 'string' && EMAIL.test(e)
 const isUuid = (v: unknown): v is string => typeof v === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v);
 
 /** Our own addresses: a user's email, or the same company domain as our users / the company email (not Gmail etc.). */
+/**
+ * Our own company domains: the domain of a connected Outlook mailbox, the company email in Settings, or a domain that two or
+ * more of our users share. One user logging in with another company's address (e.g. shamsheer@entoen.ae) does not make that
+ * whole company "us" — that person's own address still counts as ours (isOurs checks users' exact emails).
+ */
 export async function ourDomains(db?: Db) {
-  const rows = await q(`select distinct lower(split_part(email, '@', 2)) d from users where deleted_at is null and email like '%@%'`, [], db);
+  const rows = await q(`select d from (
+      select lower(split_part(email, '@', 2)) d from users where deleted_at is null and email like '%@%' group by 1 having count(*) >= 2
+      union select lower(split_part(ms_email, '@', 2)) from outlook_connections where ms_email like '%@%') x`, [], db);
   const set = new Set(rows.map((r) => r.d as string).filter((d) => d && !PUBLIC.has(d) && !d.endsWith('.local') && !/^(users|drivers)\.app$/.test(d)));
   const co = String(await getSetting('company_email', '', db)).toLowerCase();
   if (co.includes('@') && !PUBLIC.has(co.split('@')[1])) set.add(co.split('@')[1]);

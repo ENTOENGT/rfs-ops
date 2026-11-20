@@ -15,6 +15,7 @@ import { Actor } from './auth';
 import { ApiError, audit, bad, forbidden, notFound, one, q, tx } from './db';
 import { aiConfig, askWithTool } from './ai';
 import { graph } from './outlook';
+import { readAttachments } from './attachments';
 import { createJobFile } from './jobfiles';
 import { fileOnShipment } from './inbox';
 import { ensurePortsLoaded } from './ports';
@@ -33,7 +34,7 @@ const CLASSIFY = {
   description: 'Say what kind of email this is for a freight forwarder.',
   input_schema: { type: 'object', properties: {
     kind: { type: 'string', enum: ['new_enquiry', 'reply', 'other'],
-      description: 'new_enquiry: someone asks for a rate / quotation / to move a new shipment (sea, air, road, customs, transport, warehousing). reply: about a shipment, quote, booking or invoice already going on. other: anything else (newsletters, adverts, rate sheets or offers from vendors, personal, system mails, spam).' },
+      description: 'new_enquiry: someone asks us for a rate, a quotation, "the best rate", or to move / clear / deliver / store a new shipment — also when the details are only in an attached sheet or file ("please find attached, kindly quote"). reply: about a shipment, quote, booking or invoice already going on (mentions a reference, booking, BL, invoice). other: anything else (newsletters, adverts, greetings, rate sheets or offers that vendors send us, personal, system mails, spam).' },
     summary: { type: 'string', description: 'One short line of what they want, e.g. "2x40HC Hamburg to Jebel Ali, FOB, ready 25 Nov". Empty for other.' },
   }, required: ['kind', 'summary'] },
 };
@@ -52,7 +53,7 @@ export async function screenInbox(actor: Actor, max = 4) {
       try {
         const { input } = await askWithTool(
           'You sort the inbox of a salesman at Reliance Freight Systems, a freight forwarder in Dubai. Decide what kind of email this is. Judge only from what is shown.',
-          `From: ${m.from_name ? `${m.from_name} <${m.from_addr}>` : m.from_addr}${m.known_as ? ` (${m.known_as})` : ' (not a known customer yet)'}\nSubject: ${m.subject ?? ''}\n\n${String(m.body_excerpt ?? '').slice(0, 1000)}`,
+          `From: ${m.from_name ? `${m.from_name} <${m.from_addr}>` : m.from_addr}${m.known_as ? ` (${m.known_as})` : ' (not a known customer yet)'}\nSubject: ${m.subject ?? ''}${m.has_attachments ? '\nHas attachments: yes' : ''}\n\n${String(m.body_excerpt ?? '').slice(0, 1000)}`,
           CLASSIFY, 300);
         res = { kind: ['new_enquiry', 'reply', 'other'].includes(input?.kind) ? input.kind : 'other', summary: String(input?.summary ?? '').slice(0, 200) };
       } catch (e) { if (screened) break; throw e; }
@@ -85,7 +86,10 @@ const EXTRACT = {
     cargo_description: { type: 'string', description: 'What the goods are.' },
     containers: { type: 'string', description: 'Containers asked for, e.g. "2x40HC".' }, packages: { type: 'string', description: 'Packages and sizes as written, e.g. "5 pallets 120x80x150 cm".' },
     gross_weight_kg: { type: 'number', description: 'Total weight in kg if given (convert tons to kg).' },
-    cargo_ready_date: { type: 'string', description: 'YYYY-MM-DD if given.' }, hazardous: { type: 'string', enum: ['yes', 'no', 'unknown'] },
+    cargo_ready_date: { type: 'string', description: 'YYYY-MM-DD if given as a real date; empty otherwise.' }, hazardous: { type: 'string', enum: ['yes', 'no', 'unknown'] },
+    stackable: { type: 'string', enum: ['yes', 'no', 'unknown'] }, insurance: { type: 'string', enum: ['yes', 'no', 'unknown'], description: 'Does the customer want cargo / marine insurance?' },
+    cargo_value: { type: 'number', description: 'Invoice / cargo value as a number (e.g. 195635.14), if given.' },
+    cargo_value_currency: { type: 'string', description: 'Currency of that value: AED, USD, EUR, INR or CNY.' },
     summary: { type: 'string', description: 'One line: what the customer asks for.' },
   }, required: ['mode', 'hazardous', 'summary'] },
 };
@@ -137,17 +141,23 @@ export async function draftEnquiry(actor: Actor, id: string) {
   const made = await alreadyMade(m);
   if (made) return { already: made };
   if (m.status !== 'unmatched') throw bad('This email is already handled');
-  if (m.ai_draft) return { draft: m.ai_draft, email: emailInfo(m) };
+  // kept from before — unless it was read before attachments were read (then it is read again, once)
+  if (m.ai_draft && !(m.has_attachments && !Array.isArray(m.ai_draft.attachments_read))) return { draft: m.ai_draft, email: emailInfo(m) };
   await ensurePortsLoaded();
   const full: any = await graph(actor.id, `/me/messages/${encodeURIComponent(m.ms_message_id)}?$select=body`, { headers: { Prefer: 'outlook.body-content-type="text"' } })
     .catch((e) => { if (e instanceof ApiError && e.code === 'MS_GRAPH') return null; throw e; });
   const text = String(full?.body?.content ?? m.body_excerpt ?? '').replace(/\r\n/g, '\n').replace(/\n{3,}/g, '\n\n').slice(0, 12000);
+  // the attachments too (customers often send the details in a sheet): Excel / CSV / Word as text, PDF / pictures as they are
+  const att = m.has_attachments ? await readAttachments(actor.id, m.ms_message_id) : { blocks: [], text: '', notes: [], names: [] };
+  const emailText = `From: ${m.from_name ? `${m.from_name} <${m.from_addr}>` : m.from_addr}\nSubject: ${m.subject ?? ''}\nReceived: ${m.received_at ? new Date(m.received_at).toISOString().slice(0, 10) : ''}\n\n${text}`
+    + (att.text ? `\n\n--- Attached files (read them too: they often hold the shipment details) ---\n${att.text}` : '')
+    + (att.blocks.length ? '\n\nThe attached PDF / pictures are included above: read them too.' : '');
   const { input: x } = await askWithTool(
     `You read a customer's email to Reliance Freight Systems, a freight forwarder in Dubai, UAE, and fill a new enquiry.
 Use only what the email says; leave a field empty when it is not there. Never guess prices. Dates as YYYY-MM-DD (today is ${today()}; with no year use the next such date).
 "Dubai", "Jebel Ali", "Sharjah", "Abu Dhabi" and "UAE" are in the United Arab Emirates.`,
-    `From: ${m.from_name ? `${m.from_name} <${m.from_addr}>` : m.from_addr}\nSubject: ${m.subject ?? ''}\nReceived: ${m.received_at ? new Date(m.received_at).toISOString().slice(0, 10) : ''}\n\n${text}`,
-    EXTRACT, 1200);
+    att.blocks.length ? [...att.blocks, { type: 'text', text: emailText }] : emailText,
+    EXTRACT, 1200, 9000);
 
   // the customer: existing (by email / company domain) or new from the signature
   const known = m.from_addr ? await customerOf(m.from_addr) : null;
@@ -180,6 +190,8 @@ Use only what the email says; leave a field empty when it is not there. Never gu
   const ready = /^\d{4}-\d{2}-\d{2}$/.test(String(x.cargo_ready_date ?? '')) ? x.cargo_ready_date : null;
   const rc = checks.find((c: any) => /ready/i.test(c.label)); if (rc && ready) details[rc.id] = ready;
   const dg = checks.find((c: any) => /hazard|\bdg\b/i.test(c.label)); if (dg && ['yes', 'no'].includes(x.hazardous)) details[dg.id] = x.hazardous;
+  const st = checks.find((c: any) => /stack/i.test(c.label)); if (st && ['yes', 'no'].includes(x.stackable)) details[st.id] = x.stackable;
+  const ins = checks.find((c: any) => /insur/i.test(c.label)); if (ins && ['yes', 'no'].includes(x.insurance)) details[ins.id] = x.insurance;
   const cargo = [x.cargo_description, x.containers, x.packages].map((s) => String(s ?? '').trim()).filter(Boolean).join(' · ').slice(0, 500) || null;
   const draft = {
     status: 'enquiry', customer_id: known?.id ?? null, customer_name: known?.name ?? null, new_customer: newCustomer, salesman_id: salesman,
@@ -190,8 +202,11 @@ Use only what the email says; leave a field empty when it is not there. Never gu
     port_of_discharge: pod?.name ?? (String(x.destination_port ?? '').trim() || null), pod_code: pod?.code ?? null,
     pickup_address: String(x.pickup_address ?? '').trim() || null, delivery_address: String(x.delivery_address ?? '').trim() || null,
     cargo_description: cargo, gross_weight_kg: Number(x.gross_weight_kg) > 0 ? Number(x.gross_weight_kg) : null,
+    cargo_value: Number(x.cargo_value) > 0 ? Math.round(Number(x.cargo_value) * 100) / 100 : null,
+    cargo_value_currency: Number(x.cargo_value) > 0 && ['AED', 'USD', 'EUR', 'INR', 'CNY'].includes(String(x.cargo_value_currency ?? '').toUpperCase()) ? String(x.cargo_value_currency).toUpperCase() : null,
     enquiry_details: Object.keys(details).length ? details : undefined,
     summary: String(x.summary ?? '').slice(0, 300), mode_unknown: !mode,
+    attachments_read: att.names, attachments_notes: att.notes,
   };
   await q('update outlook_inbox set ai_draft = $2 where id = $1', [m.id, JSON.stringify(draft)]);
   return { draft, email: emailInfo(m) };

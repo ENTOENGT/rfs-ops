@@ -28,10 +28,10 @@ export default function NewJobFile() {
     setFromEmail(id); setAiState('reading');
     api(`/api/outlook/inbox/${id}/draft`, { body: {} }).then((r) => {
       if (r.already) { setAlready(r.already); setAiState('done'); return; }
-      const { new_customer, customer_name, summary, mode_unknown, ...fields } = r.draft;
+      const { new_customer, customer_name, summary, mode_unknown, attachments_read, attachments_notes, ...fields } = r.draft;
       const clean = Object.fromEntries(Object.entries(fields).filter(([, v]) => v !== null && v !== undefined));
       setF((x: any) => ({ ...x, ...clean }));
-      setNc(new_customer); setSrc({ ...r.email, summary, customer_name, mode_unknown }); setAiState('done');
+      setNc(new_customer); setSrc({ ...r.email, summary, customer_name, mode_unknown, attachments_read, attachments_notes }); setAiState('done');
     }).catch((e) => { setErr({ m: `The AI could not read the email: ${e.message} — you can still fill in the enquiry by hand.` }); setAiState('error'); });
   }, []);
   if (!can('jobfiles.create')) return <div className="page"><div className="msg err">You can't create Job Files.</div></div>;
@@ -62,6 +62,8 @@ export default function NewJobFile() {
         <p className="small" style={{ margin: '6px 0' }}>From <b>{src.from_name || src.from_addr}</b> · {src.subject || '(no subject)'} · {fmtDateTime(src.received_at)}
           {src.web_link && <> · <a href={src.web_link} target="_blank" rel="noopener">Open in Outlook</a></>}</p>
         {src.summary && <p className="small" style={{ margin: '0 0 6px' }}>{src.summary}</p>}
+        {src.attachments_read?.length > 0 && <p className="small" style={{ margin: '0 0 6px' }}>📎 Also read from the attachments: <b>{src.attachments_read.join(', ')}</b></p>}
+        {src.attachments_notes?.length > 0 && <p className="small flag" style={{ margin: '0 0 6px' }}>📎 {src.attachments_notes.join(' · ')}</p>}
         {src.mode_unknown && <p className="small flag" style={{ margin: '0 0 6px' }}>The email doesn't say the mode — choose it below.</p>}
         {!f.customer_id && nc && <div className="grid g2" style={{ marginTop: 8 }}>
           <div className="span2 small"><b>New customer</b> — made when you save (the sender becomes the main contact, in To). Or choose an existing customer below instead.</div>
