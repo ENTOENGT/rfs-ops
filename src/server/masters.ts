@@ -9,7 +9,7 @@ function def(key: string): MasterDef {
 }
 const UUID = /^[0-9a-f-]{36}$/i;
 
-function parseField(f: MasterField, raw: unknown): unknown {
+export function parseField(f: MasterField, raw: unknown): unknown {
   if (f.type === 'bool') return raw === true || raw === 'true';
   if (raw === undefined || raw === null || (typeof raw === 'string' && raw.trim() === '')) {
     if (f.required) throw bad(`${f.label} is required`);

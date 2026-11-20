@@ -153,3 +153,25 @@ test('nothing useful in an email: kept as "nothing", no box; AI errors give a cl
   assert.equal(s.status, 'nothing'); assert.equal(s.unclear[0].label, 'Cargo ready date');
   await dismissSuggestion(sam, s.id).catch((e) => assert.match(e.message, /already handled/));
 });
+
+test('a second email repeating answers already filled in: not offered again', async () => {
+  // two emails read before either was applied: the second repeats the weight (filled in by the first) and adds the ready date
+  await q(`insert into email_messages (job_file_id, direction, status, from_addr, subject, body_excerpt, source, created_by, sent_at)
+    values ($1, 'in', 'received', 'shamsheer@cust.ae', 'Again', 'weight 40, ready 22 Nov', 'upload', $2, now())`, [fileId, sam.id]);
+  const id4 = (await one(`select id from email_messages where job_file_id = $1 and subject = 'Again'`, [fileId])).id;
+  const s = await one(`insert into ai_suggestions (job_file_id, email_id, kind, status, answers, unclear) values ($1, $2, 'enquiry', 'open', $3, '[]') returning id`,
+    [fileId, id4, JSON.stringify([{ key: 'gross_weight_kg', label: 'Cargo weight', value: '40', quote: 'weight 40' }, { key: ready, label: 'Cargo ready date', value: '2026-11-22', quote: 'ready 22 Nov' }])]);
+  const open = (await suggestionsFor(sam, fileId)).open;
+  assert.equal(open.length, 1);
+  assert.deepEqual(open[0].answers.map((a: any) => a.key), [ready], 'the weight is already filled in, so it is not offered');
+  await assert.rejects(applySuggestion(sam, s.id, { keys: ['gross_weight_kg'] }), /already filled in/);
+  assert.equal((await applySuggestion(sam, s.id, { keys: [ready] })).applied, 1);
+  // a suggestion whose answers are all filled in by now closes by itself
+  const s2 = await one(`insert into ai_suggestions (job_file_id, email_id, kind, status, answers, unclear) values ($1, $2, 'enquiry', 'open', $3, '[]') returning id`,
+    [fileId, (await one(`select id from email_messages where job_file_id = $1 and subject = 'More'`, [fileId])).id,
+      JSON.stringify([{ key: ready, label: 'Cargo ready date', value: '2026-11-22', quote: 'x' }])]).catch(() => null);
+  if (s2) {
+    assert.equal((await suggestionsFor(sam, fileId)).open.length, 0);
+    assert.equal((await one('select status from ai_suggestions where id = $1', [s2.id])).status, 'nothing');
+  }
+});

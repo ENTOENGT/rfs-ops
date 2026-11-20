@@ -8,6 +8,7 @@ import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { api, fmtDate, fmtDateTime, fmtMoney } from './api';
 import { useMe } from './Shell';
+import { SendAllRates } from './SendAllRates';
 import { StatusDot, statusText } from './Presence';
 import { EmailButton } from './EmailButton';
 import { NewVendorRequest } from './NewVendorRequest';
@@ -177,6 +178,7 @@ export function RatesAndQuotes({ d, reload }: { d: any; reload: () => void }) {
         {rt && gs.length === 0 && <p className="muted small" style={{ margin: '0 0 8px' }}>No rate asked for this option yet.</p>}
         {gs.map((g) => <div key={g[0].rate_group ?? g[0].id} style={{ marginBottom: 12 }}>
           <div className="small" style={{ display: 'flex', gap: 8, alignItems: 'center' }}><span className="muted">{g[0].description.slice(0, 100)}</span><span className="spacer" />
+            {d.can.ask_vendor && <SendAllRates requests={g} onDone={reload} />}
             {canAsk && <button className="linkish" onClick={() => setAsk({ sameAs: { id: g[0].id, asked: g.filter((r) => r.status !== 'cancelled').map((r) => r.vendor_id) } })}>+ Ask more</button>}</div>
           <div className="table-wrap"><table className="t"><thead><tr><th>Request</th><th>Agent / carrier</th><th>Source</th>{cost && <th className="num">Rate</th>}
             <th>Transit</th><th>Free days</th><th>ETD</th><th>Routing</th><th>Valid until</th><th>Status</th>{d.can.ask_vendor && <th />}</tr></thead>

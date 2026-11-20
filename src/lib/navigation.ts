@@ -20,7 +20,8 @@ export const MODULES: NavModule[] = [
     { href: '/commercials?division=cross_trade', label: 'Cross Trade', section: 'Divisions', perm: COMMERCIAL },
     { href: '/settings/quote-terms', label: 'Quotation terms', section: 'Templates', perm: 'templates.manage' },
     { href: '/settings/email-templates', label: 'Email templates', section: 'Templates', perm: 'templates.manage' },
-    { href: '/commercials/checklists', label: 'Checklists', section: 'Templates', perm: ['commercial.manage', 'settings.manage'] }] },   // migration 028
+    { href: '/commercials/checklists', label: 'Checklists', section: 'Templates', perm: ['commercial.manage', 'settings.manage'] },   // migration 028
+    { href: '/commercials/places', label: 'Ports & regions', section: 'Templates', perm: ['commercial.manage', 'settings.manage'] }] },   // migration 034
   { key: 'enquiries', label: 'Enquiries', icon: 'inbox', perm: COMMERCIAL, items: [
     { href: '/commercials/enquiries', label: 'All enquiries' },
     { href: '/commercials/enquiries?mine=1', label: 'My enquiries' },
@@ -97,7 +98,8 @@ export const MODULES: NavModule[] = [
     { href: '/roles', label: 'Roles & permissions', perm: ['roles.manage', 'roles.manage_department'] },
     { href: '/settings', label: 'Settings', perm: 'settings.manage' },
     { href: '/customers', label: 'Customers', perm: ['jobs.view', 'customers.manage'], section: 'Master data' },
-    { href: '/vendors', label: 'Vendors', perm: 'vendors.manage', section: 'Master data' }], paths: ['/users', '/roles', '/settings', '/customers', '/vendors'] },
+    { href: '/vendors', label: 'Vendors', perm: 'vendors.manage', section: 'Master data' },
+    { href: '/bulk-upload', label: 'Bulk upload', perm: ['customers.manage', 'vendors.manage'], section: 'Master data' }], paths: ['/users', '/roles', '/settings', '/customers', '/vendors', '/bulk-upload'] },
 ];
 // shipment records opened from these modules stay under the module they were opened from
 for (const m of MODULES) if (['commercials', 'enquiries', 'bookings', 'prealerts'].includes(m.key)) m.paths = [...(m.paths ?? []), '/job-files'];

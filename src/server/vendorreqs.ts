@@ -135,7 +135,7 @@ export async function createVendorRequest(actor: Actor, b: any, client?: PoolCli
     }
     const vendorIds: string[] = Array.isArray(b.vendor_ids) ? [...new Set(b.vendor_ids as string[])] : b.vendor_id ? [b.vendor_id] : [];
     if (!vendorIds.length || !vendorIds.every(isUuid)) throw bad('Choose the vendor');
-    if (vendorIds.length > 10) throw bad('Up to 10 vendors at a time');
+    if (vendorIds.length > 40) throw bad('Up to 40 vendors at a time');
     if (!VR_SERVICES[b.service]) throw bad('Choose the service');
     if (vendorIds.length > 1 && b.service !== 'rate') throw bad('Several vendors at once is for rate requests');
     const description = txt(b.description, 2000);

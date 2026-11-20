@@ -1,4 +1,5 @@
 'use client';
+import Link from 'next/link';
 /** "My Outlook" (pilot users): connect or disconnect your own Outlook (step 1), check the inbox and file the emails no shipment matched (step 3). */
 import { useEffect, useState } from 'react';
 import { api, fmtDateTime } from '@/components/api';
@@ -58,8 +59,11 @@ function Inbox() {
     setBusy(true); if (!quiet) setNote(null);
     try {
       const r = await api('/api/outlook/sync', { body: {} });
+      // migration 035: the AI looks at the emails that matched no shipment (new enquiry or not)
+      let s: any = null;
+      if (r.to_screen > 0) { setBusy(true); s = await api('/api/outlook/screen', { body: {} }).catch(() => null); }
       if (!quiet && r.busy) setNote({ t: 'ok', m: 'A check is already running. Wait a minute and press Check again.' });
-      else if (!quiet) setNote({ t: 'ok', m: `Checked: ${r.filed} email(s) filed on shipments, ${r.waiting} waiting below.${r.more ? ' More to read — press Check again.' : ''}` });
+      else if (!quiet) setNote({ t: 'ok', m: `Checked: ${r.filed} email(s) filed on shipments.${s?.new_enquiries ? ` The AI found ${s.new_enquiries} new enquiry email(s) — at the top below.` : ''}${r.more || s?.left ? ' More to read — press Check again.' : ''}` });
     } catch (e: any) { setNote({ t: 'err', m: e.message }); }
     setBusy(false); load();
   };
@@ -74,22 +78,27 @@ function Inbox() {
         <button className="btn" disabled={busy} onClick={() => check()}>{busy ? 'Checking…' : 'Check inbox now'}</button></div>
       <p className="muted small" style={{ marginTop: 0 }}>RFS CRM reads your inbox (it never changes or deletes anything) and files each email on its shipment by the
         tag in the subject, like [ENQ-…] or the Job No., or by the same email conversation. Emails from your customers and agents that match
-        no shipment wait here. Other emails are not saved. It also checks by itself every minute while RFS CRM is open.</p>
+        no shipment wait here; the AI marks the ones that are <b>new enquiries</b> — also from new customers — and puts them at the top.
+        Other emails are not saved. It also checks by itself every minute while RFS CRM is open.</p>
       {note && <div className={`msg ${note.t}`}>{note.m}</div>}
       {d?.last_sync_at && <p className="muted small">Last checked {fmtDateTime(d.last_sync_at)}</p>}
       {!d ? <p className="muted">Loading…</p> : d.rows.length === 0 ? <div className="empty small">Nothing waiting. Every email from your customers and agents is on its shipment.</div>
         : <div className="table-wrap"><table className="t">
           <thead><tr><th>Received</th><th>From</th><th style={{ width: '45%' }}>Subject</th><th>File on shipment</th></tr></thead>
-          <tbody>{d.rows.map((m: any) => <tr key={m.id}>
+          <tbody>{d.rows.map((m: any) => <tr key={m.id} className={m.ai_kind === 'new_enquiry' ? 'row-new-enq' : undefined}>
             <td className="small" style={{ whiteSpace: 'nowrap' }}>{fmtDateTime(m.received_at)}</td>
             <td style={{ minWidth: 170 }}><b>{m.from_name || m.from_addr}</b><div className="muted small">{m.from_addr}</div>{m.known_as && <div className="small">{m.known_as}</div>}</td>
-            <td>{m.subject || <span className="muted">(no subject)</span>}{m.has_attachments && <span className="muted small"> · 📎</span>}
+            <td>{m.ai_kind === 'new_enquiry' && <div style={{ marginBottom: 4 }}><span className="ai-tag">AI</span> <b className="small">New enquiry?</b>
+                {m.ai_summary && <span className="small"> {m.ai_summary}</span>}</div>}
+              {m.subject || <span className="muted">(no subject)</span>}{m.has_attachments && <span className="muted small"> · 📎</span>}
               {m.body_excerpt && <div className="muted small">{String(m.body_excerpt).slice(0, 200)}</div>}
               {m.web_link && <a className="small" href={m.web_link} target="_blank" rel="noopener">Open in Outlook</a>}</td>
-            <td style={{ minWidth: 250 }}><div style={{ display: 'flex', gap: 6 }}>
+            <td style={{ minWidth: 250 }}>
+              {m.ai_kind === 'new_enquiry' && <Link className="btn small primary" style={{ marginBottom: 8, display: 'inline-block' }} href={`/job-files/new?from_email=${m.id}`}>Create enquiry</Link>}
+              <div style={{ display: 'flex', gap: 6 }}>
               <input style={{ flex: 1, minWidth: 0 }} placeholder="ENQ / Job No. / Shipping Ref" value={refs[m.id] ?? ''} onChange={(e) => setRefs({ ...refs, [m.id]: e.target.value })}
                 onKeyDown={(e) => e.key === 'Enter' && refs[m.id]?.trim() && act(m.id, { action: 'file', ref: refs[m.id] }, 'Filed on the shipment.')} />
-              <button className="btn small primary" disabled={!refs[m.id]?.trim()} onClick={() => act(m.id, { action: 'file', ref: refs[m.id] }, 'Filed on the shipment.')}>File</button></div>
+              <button className={`btn small${m.ai_kind === 'new_enquiry' ? '' : ' primary'}`} disabled={!refs[m.id]?.trim()} onClick={() => act(m.id, { action: 'file', ref: refs[m.id] }, 'Filed on the shipment.')}>File</button></div>
               <button className="linkish small" style={{ marginTop: 6 }} onClick={() => act(m.id, { action: 'ignore' }, 'Hidden: not for a shipment.')}>Not for a shipment</button></td>
           </tr>)}</tbody></table></div>}
     </div>

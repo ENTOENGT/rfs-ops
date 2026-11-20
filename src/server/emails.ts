@@ -23,8 +23,8 @@ import { label, MODES, DIRECTIONS } from '../lib/jobfileRules';
 import { EMAIL_TEMPLATES, fillTemplate } from '../lib/templateRules';
 import { pickEmailTemplate } from './templates';
 
-export type Recipient = { name: string; email: string; role?: string | null; picked: boolean };
-export type Draft = { kind: string; id: string; recipients: Recipient[]; subject: string; body: string; note?: string; options?: [string, string][]; update?: string;
+export type Recipient = { name: string; email: string; role?: string | null; picked: boolean; place?: 'to' | 'cc'; side?: 'customer' | 'ours'; removable?: boolean };
+export type Draft = { kind: string; id: string; file_id?: string | null; recipients: Recipient[]; subject: string; body: string; note?: string; options?: [string, string][]; update?: string;
   template?: { key: string; name: string; source: string }; missing?: string[] };
 
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -63,21 +63,13 @@ async function signature(actor: Actor) {
     me?.email && !String(me.email).endsWith('.local') ? me.email : co.company_email].filter(Boolean).join('\n');
 }
 
-/** The customer's email addresses: main email and every contact with an email; the primary contact(s) are ticked. */
-async function customerRecipients(customerId: string, extra?: string | null): Promise<Recipient[]> {
-  const c = await one('select name, email, contact_person from customers where id = $1', [customerId]);
-  const contacts = await q(`select full_name, role, email, is_primary from customer_contacts where customer_id = $1 and deleted_at is null and email is not null
-    order by is_primary desc, full_name`, [customerId]);
-  const out: Recipient[] = [];
-  const add = (r: Recipient) => { if (EMAIL.test(r.email) && !out.some((x) => x.email.toLowerCase() === r.email.toLowerCase())) out.push(r); };
-  if (extra && EMAIL.test(extra.trim())) add({ name: 'Contact on this case', email: extra.trim(), picked: true });
-  for (const k of contacts) add({ name: k.full_name, email: k.email, role: k.role, picked: !!k.is_primary });
-  if (c?.email) add({ name: c.contact_person || c.name, email: c.email, role: 'Main email', picked: false });
-  if (out.length && !out.some((r) => r.picked)) out[0].picked = true;
-  return out;
+/** The customer's To / CC (migration 033): see emailpeople.ts — contacts, the shipment's people, our team in CC. */
+async function customerRecipients(actor: Actor, customerId: string, fileId?: string | null, extra?: string | null): Promise<Recipient[]> {
+  const { customerPeople } = await import('./emailpeople');
+  return customerPeople(actor, customerId, fileId, extra);
 }
 const dear = (r: Recipient[], fallback: string) => {
-  const p = r.filter((x) => x.picked && x.name && x.role !== 'Main email' && x.name !== 'Contact on this case');
+  const p = r.filter((x) => x.picked && x.place !== 'cc' && x.side !== 'ours' && x.name && !x.name.includes('@') && x.role !== 'Main email' && x.name !== 'Contact on this case');
   return `Dear ${p.length === 1 ? p[0].name.split(' ')[0] : fallback},`;
 };
 
@@ -165,7 +157,7 @@ async function quotationDraft(actor: Actor, id: string, key?: string): Promise<D
   if (!actor.fin.sellingView) throw new ApiError(403, 'FORBIDDEN', 'You need to see selling prices to send a quotation');
   const d = await getQuotation(actor, id);
   if (!d.can.customer_copy) throw new ApiError(409, 'QUOTE_NOT_READY', 'Only an approved quotation that has not expired can go to the customer.');
-  const recipients = await customerRecipients(d.customer_id);
+  const recipients = await customerRecipients(actor, d.customer_id, d.job_file_id ?? null);
   const cur = d.currency;
   const options = optionsFor('quotation');
   if (!options.some(([k]) => k === key)) key = d.version_no > 1 ? 'quotation_revision' : 'quotation_submission';
@@ -206,7 +198,7 @@ async function jobFileDraft(actor: Actor, id: string, choice: string): Promise<D
       : `shipment_update:${f.ata ? 'arrived' : f.atd ? 'departed' : f.booking_reference ? 'booking_confirmed' : 'general'}`;
   }
   const [key, upd] = choice.split(':');
-  const recipients = await customerRecipients(f.customer_id);
+  const recipients = await customerRecipients(actor, f.customer_id, id);
   const missing = (g.checklist ?? []).filter((c: any) => c.status === 'missing' || c.status === 'rejected').map((c: any) => `- ${c.name}`);
   const opening: Record<string, string> = {
     booking_confirmed: `We are pleased to confirm the booking for your shipment${f.etd ? `, planned to depart on ${D(f.etd)}` : ''}.`,
@@ -230,7 +222,7 @@ async function missingDraft(actor: Actor, id: string): Promise<Draft> {
   const g: any = await getJobFile(actor, id);
   if (!g.can.edit) throw new ApiError(403, 'FORBIDDEN', 'You can\'t send emails on this shipment');
   const f = await shipment(id);
-  const recipients = await customerRecipients(f.customer_id);
+  const recipients = await customerRecipients(actor, f.customer_id, id);
   const gaps: { ask: string }[] = g.enquiry_gaps ?? [];
   const body = [
     dear(recipients, `${f.customer_name} team`), '',
@@ -279,7 +271,7 @@ async function vendorMissingDraft(actor: Actor, id: string): Promise<Draft> {
 async function caseDraft(actor: Actor, id: string): Promise<Draft> {
   const k = await getCase(actor, id);
   if (!k.can.manage) throw new ApiError(403, 'FORBIDDEN', 'You can\'t reply on cases');
-  const recipients = await customerRecipients(k.customer_id, k.contact_detail);
+  const recipients = await customerRecipients(actor, k.customer_id, null, k.contact_detail);
   const subject = `Re: ${k.subject} – Case ${k.case_no}${k.job_no ? ` – Job ${k.job_no}` : ''}`;
   const done = ['resolved', 'closed'].includes(k.status);
   const body = [
@@ -292,6 +284,13 @@ async function caseDraft(actor: Actor, id: string): Promise<Draft> {
 }
 
 export async function emailDraft(actor: Actor, p: Record<string, string>): Promise<Draft> {
+  const d = await draftOf(actor, p);
+  // the shipment whose To / CC people this email uses (for × on a person)
+  const fileId = ['job_file', 'enquiry_missing'].includes(p.kind) ? p.id
+    : p.kind === 'quotation' ? (await one('select job_file_id from quotations where id = $1', [p.id]))?.job_file_id ?? null : null;
+  return { ...d, file_id: fileId };
+}
+async function draftOf(actor: Actor, p: Record<string, string>): Promise<Draft> {
   switch (p.kind) {
     case 'vendor_request': return vendorDraft(actor, p.id, p.update);
     case 'quotation': return quotationDraft(actor, p.id, p.update);
@@ -306,8 +305,9 @@ export async function emailDraft(actor: Actor, p: Record<string, string>): Promi
 /** Record that the email was prepared (opened in the user's email program): in that record's history and on the shipment's Emails tab. */
 export async function emailPrepared(actor: Actor, b: any) {
   const draft = await emailDraft(actor, { kind: b.kind, id: b.id, update: b.update }); // also re-checks permission
-  const to = (Array.isArray(b.to) ? b.to : []).map((x: unknown) => String(x).trim()).filter((x: string) => EMAIL.test(x)).slice(0, 20);
-  await recordEmail(actor, b, draft, to, String(b.subject ?? draft.subject).slice(0, 300), null);
+  const clean = (l: unknown) => (Array.isArray(l) ? l : []).map((x: unknown) => String(x).trim()).filter((x: string) => EMAIL.test(x)).slice(0, 20);
+  const to = clean(b.to), cc = clean(b.cc).filter((x) => !to.includes(x));
+  await recordEmail(actor, b, draft, to, cc, String(b.subject ?? draft.subject).slice(0, 300), null);
   return { ok: true };
 }
 
@@ -317,14 +317,14 @@ export async function emailSend(actor: Actor, b: any) {
   const { sendMail } = await import('./outlook');
   const sent = await sendMail(actor.id, { to: Array.isArray(b.to) ? b.to : [], cc: Array.isArray(b.cc) ? b.cc : [],
     subject: String(b.subject ?? draft.subject), body: String(b.body ?? draft.body) });
-  await recordEmail(actor, { ...b, body: b.body ?? draft.body }, draft, sent.to, sent.subject, sent.from);
+  await recordEmail(actor, { ...b, body: b.body ?? draft.body }, draft, sent.to, sent.cc, sent.subject, sent.from);
   return { ok: true, sent: true, to: sent.to };
 }
 
 /** One email in the record's own history and on the shipment's Emails tab. `sentFrom` = sent from Outlook; null = only prepared. */
-async function recordEmail(actor: Actor, b: any, draft: Draft, to: string[], subject: string, sentFrom: string | null) {
+async function recordEmail(actor: Actor, b: any, draft: Draft, to: string[], cc: string[], subject: string, sentFrom: string | null) {
   const sent = sentFrom !== null;
-  const detail = `To ${to.join(', ') || '(typed in email program)'} — "${subject}"${sent ? ' — sent from Outlook' : ''}`;
+  const detail = `To ${to.join(', ') || '(typed in email program)'}${cc.length ? ` · CC ${cc.join(', ')}` : ''} — "${subject}"${sent ? ' — sent from Outlook' : ''}`;
   const t = (prepared: string, done: string) => sent ? done : prepared;
   await tx(async (c) => {
     let fileId: string | null = null, vr: string | null = null, qid: string | null = null;
@@ -345,9 +345,12 @@ async function recordEmail(actor: Actor, b: any, draft: Draft, to: string[], sub
     if (fileId) {
       const me = await one('select email from users where id = $1', [actor.id], c);
       await c.query(`insert into email_messages (job_file_id, direction, status, template_key, vendor_request_id, quotation_id, from_addr, from_name, to_addrs, subject,
-          sent_at, body_excerpt, source, created_by, created_by_name) values ($1,'out',$12,$2,$3,$4,$5,$6,$7,$8, now(), $9, 'button', $10, $11)`,
+          sent_at, body_excerpt, source, created_by, created_by_name, cc_addrs) values ($1,'out',$12,$2,$3,$4,$5,$6,$7,$8, now(), $9, 'button', $10, $11, $13)`,
         [fileId, draft.template?.key ?? null, vr, qid, sentFrom || me?.email || null, actor.full_name, to.join(', ') || null, subject,
-          String(b.body ?? draft.body).slice(0, 2000), actor.id, actor.full_name, sent ? 'sent' : 'prepared']);
+          String(b.body ?? draft.body).slice(0, 2000), actor.id, actor.full_name, sent ? 'sent' : 'prepared', cc.join(', ') || null]);
+      // migration 033: addresses typed in by hand stay on this shipment's later customer emails
+      if (['job_file', 'enquiry_missing', 'quotation'].includes(b.kind))
+        await (await import('./emailpeople')).rememberTyped(c, actor, fileId, draft.recipients, to, cc);
     }
   });
 }

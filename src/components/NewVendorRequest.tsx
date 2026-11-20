@@ -1,5 +1,5 @@
 'use client';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { routeLabel } from '@/lib/routingRules';
 import { api } from '@/components/api';
 import { useMe } from '@/components/Shell';
@@ -24,6 +24,17 @@ export function NewVendorRequest({ jobNo, jobFileId, service = 'rate', sameAs, d
   const [busy, setBusy] = useState(false);
   const multi = nw.service === 'rate';
   const vendors = (lk.vendors ?? []).filter((v: any) => !sameAs?.asked.includes(v.id));
+  // migration 034: the agents covering this enquiry's origin / destination are ticked by themselves
+  const [sugg, setSugg] = useState<any>(null);
+  useEffect(() => {
+    if (!jobFileId || sameAs || service !== 'rate') return;
+    api(`/api/job-files/${jobFileId}/agents`).then((r) => {
+      setSugg(r);
+      const ids = [...new Set<string>(r.ends.flatMap((e: any) => e.agents.map((a: any) => a.vendor_id)))];
+      if (ids.length) setNw((x: any) => x.vendor_ids.length ? x : { ...x, vendor_ids: ids });
+    }).catch(() => setSugg(null));
+  }, [jobFileId]);
+  const setMany = (ids: string[], on: boolean) => setNw({ ...nw, vendor_ids: on ? [...new Set([...nw.vendor_ids, ...ids])] : nw.vendor_ids.filter((x: string) => !ids.includes(x)) });
   const pick = (id: string) => setNw({ ...nw, vendor_ids: nw.vendor_ids.includes(id) ? nw.vendor_ids.filter((x: string) => x !== id) : [...nw.vendor_ids, id] });
   const save = async () => {
     setErr(''); setBusy(true);
@@ -49,7 +60,16 @@ export function NewVendorRequest({ jobNo, jobFileId, service = 'rate', sameAs, d
           <select value={nw.assigned_to ?? ''} onChange={(e) => setNw({ ...nw, assigned_to: e.target.value || undefined })}>
             <option value="">I contact the agents / carriers myself</option>
             {lk.agent_coordinators.map((u: any) => <option key={u.id} value={u.id}>Agent Coordinator: {u.name}</option>)}</select></label>}
-        {multi || sameAs ? <div className="f span2"><span>Vendors <em>*</em> <span className="muted small">— tick all the vendors you want to ask; the same request goes to each one</span></span>
+        {multi && !sameAs && sugg && <div className="f span2 agent-sugg"><span>Agents for this enquiry <span className="muted small">— from each agent's coverage (Vendors → Coverage)</span></span>
+          {sugg.ends.length === 0 && <span className="muted small">Choose the origin / destination country or port on the enquiry to see the agents who cover it.</span>}
+          {sugg.ends.map((e: any) => <div key={e.end} style={{ marginTop: 6 }}>
+            <div className="small"><b>{e.label}</b>{e.agents.length > 0 && <> · <button type="button" className="linkish" onClick={() => setMany(e.agents.map((a: any) => a.vendor_id), true)}>tick all</button>
+              <button type="button" className="linkish" onClick={() => setMany(e.agents.map((a: any) => a.vendor_id), false)}>untick all</button></>}</div>
+            {e.agents.length === 0 ? <span className="muted small">No agent covers {e.country_name} yet — add it under Vendors → Coverage.</span>
+              : <div className="checks">{e.agents.map((a: any) => <label key={a.vendor_id} className="check"><input type="checkbox" checked={nw.vendor_ids.includes(a.vendor_id)} onChange={() => pick(a.vendor_id)} />
+                {a.name} <span className="muted small">{a.matched}{a.priority === 1 ? ' · preferred' : a.priority === 3 ? ' · backup' : ''}{a.email ? '' : ' · no email saved'}</span></label>)}</div>}
+          </div>)}</div>}
+        {multi || sameAs ? <div className="f span2"><span>{sugg?.ends?.some((e: any) => e.agents.length) ? 'All vendors' : 'Vendors'} <em>*</em> <span className="muted small">— tick all the vendors you want to ask; the same request goes to each one</span></span>
           <div className="checks">{vendors.map((v: any) => <label key={v.id} className="check"><input type="checkbox" checked={nw.vendor_ids.includes(v.id)} onChange={() => pick(v.id)} /> {v.name}</label>)}</div>
           {nw.vendor_ids.length > 0 && <div className="muted small">{nw.vendor_ids.length} vendor(s) chosen</div>}</div>
           : <label className="f"><span>Vendor <em>*</em></span><select value={nw.vendor_id ?? ''} onChange={(e) => setNw({ ...nw, vendor_id: e.target.value })}><option value="">Choose vendor</option>

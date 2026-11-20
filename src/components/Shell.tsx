@@ -164,7 +164,8 @@ function useInboxCheck() {
     const check = () => {
       if (!on || document.visibilityState !== 'visible' || Date.now() - last < 50_000) return;
       last = Date.now();
-      api('/api/outlook/sync', { body: {} }).catch(() => { /* shown on My Outlook */ });
+      api('/api/outlook/sync', { body: {} }).then((r) => { if (r?.to_screen > 0) return api('/api/outlook/screen', { body: {} }); })
+        .catch(() => { /* shown on My Outlook */ });
     };
     api('/api/outlook').then((s) => {
       on = !!(s?.configured && s?.pilot && s?.connected && !s?.last_error);

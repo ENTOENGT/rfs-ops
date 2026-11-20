@@ -376,6 +376,9 @@ const SETTINGS: Record<string, (v: any) => unknown> = {
   company_address: (v) => { const s = String(v ?? '').trim(); if (s.length > 300) throw bad('Company address: up to 300 characters'); return s; },
   company_phone: (v) => { const s = String(v ?? '').trim(); if (s.length > 60) throw bad('Company phone: up to 60 characters'); return s; },
   company_email: (v) => { const s = String(v ?? '').trim(); if (s && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s)) throw bad('Company email is not valid'); return s; },
+  customer_email_cc: (v) => { const l = String(v ?? '').split(/[,;\s]+/).filter(Boolean);
+    for (const e of l) if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e)) throw bad(`Company CC: ${e} is not a valid email`);
+    if (l.length > 5) throw bad('Company CC: up to 5 addresses'); return l.join(', '); },
   company_trn: (v) => { const s = String(v ?? '').trim(); if (s.length > 30) throw bad('TRN: up to 30 characters'); return s; },
   quote_vat_note: (v) => { const s = String(v ?? '').trim(); if (s.length > 300) throw bad('VAT note: up to 300 characters'); return s; },
   // multi-currency: 1 unit = x AED (blank = not set; then people type the rate themselves)

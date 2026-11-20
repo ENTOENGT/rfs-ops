@@ -13,6 +13,7 @@ export function EmailButton({ kind, id, label = 'Email', className = 'btn', upda
   const [d, setD] = useState<any>(null);
   const [err, setErr] = useState('');
   const [extra, setExtra] = useState('');
+  const [extraCc, setExtraCc] = useState('');
   const [copied, setCopied] = useState(false);
   const [outlook, setOutlook] = useState<any>(null);
   const [sending, setSending] = useState(false);
@@ -23,21 +24,32 @@ export function EmailButton({ kind, id, label = 'Email', className = 'btn', upda
     try { const r = await api(`/api/email-draft?${new URLSearchParams({ kind, id, ...(u ?? update ? { update: (u ?? update)! } : {}) })}`); setD(r); }
     catch (e: any) { setErr(e.message); setD({ error: true }); }
   };
-  const to = d?.recipients ? [...d.recipients.filter((r: any) => r.picked).map((r: any) => r.email),
-    ...extra.split(/[,;\s]+/).filter((x) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(x))] : [];
+  const typed = (t: string) => t.split(/[,;\s]+/).filter((x) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(x));
+  const to = d?.recipients ? [...d.recipients.filter((r: any) => r.picked && r.place !== 'cc').map((r: any) => r.email), ...typed(extra)] : [];
+  const cc = d?.recipients ? [...d.recipients.filter((r: any) => r.picked && r.place === 'cc').map((r: any) => r.email), ...typed(extraCc)].filter((x) => !to.includes(x)) : [];
+  const toggle = (email: string) => setD({ ...d, recipients: d.recipients.map((x: any) => x.email === email ? { ...x, picked: !x.picked } : x) });
+  const removeP = async (email: string) => {
+    if (!confirm(`Take ${email} off this shipment's emails? They will not be added again unless someone types them in.`)) return;
+    try { await api(`/api/job-files/${d.file_id}/email-people`, { body: { email } }); setD({ ...d, recipients: d.recipients.filter((x: any) => x.email !== email) }); }
+    catch (e: any) { setErr(e.message); }
+  };
+  const row = (r: any) => <label key={r.email} className="check" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+    <input type="checkbox" checked={r.picked} onChange={() => toggle(r.email)} />
+    <span>{r.name !== r.email ? <>{r.name} </> : null}<span className="muted small">&lt;{r.email}&gt;{r.role ? ` · ${r.role}` : ''}</span></span>
+    {r.removable && d.file_id && <button type="button" className="linkish small" title="Take off this shipment's emails" onClick={(e) => { e.preventDefault(); removeP(r.email); }}>×</button>}</label>;
   const mailto = d?.subject !== undefined
-    ? `mailto:${to.map(encodeURIComponent).join(',')}?subject=${encodeURIComponent(d.subject)}&body=${encodeURIComponent(d.body.replace(/\r?\n/g, '\r\n'))}` : '';
-  const log = () => api('/api/email-draft', { body: { kind, id, update: d.update, to, subject: d.subject, body: d.body } }).then(() => onLogged?.()).catch(() => {});
+    ? `mailto:${to.map(encodeURIComponent).join(',')}?${cc.length ? `cc=${cc.map(encodeURIComponent).join(',')}&` : ''}subject=${encodeURIComponent(d.subject)}&body=${encodeURIComponent(d.body.replace(/\r?\n/g, '\r\n'))}` : '';
+  const log = () => api('/api/email-draft', { body: { kind, id, update: d.update, to, cc, subject: d.subject, body: d.body } }).then(() => onLogged?.()).catch(() => {});
   const open = () => { window.location.href = mailto; log(); };
   const canSend = !!(outlook?.configured && outlook?.pilot && outlook?.connected);
   const send = async () => {
     setSending(true); setErr('');
-    try { const r = await api('/api/email-send', { body: { kind, id, update: d.update, to, subject: d.subject, body: d.body } }); setSentTo(r.to); onLogged?.(); }
+    try { const r = await api('/api/email-send', { body: { kind, id, update: d.update, to, cc, subject: d.subject, body: d.body } }); setSentTo(r.to); onLogged?.(); }
     catch (e: any) { setErr(e.message); }
     setSending(false);
   };
   const copy = async () => {
-    try { await navigator.clipboard.writeText(`To: ${to.join(', ')}\nSubject: ${d.subject}\n\n${d.body}`); setCopied(true); log(); } catch { setErr('Copy did not work — select the text and copy it by hand.'); }
+    try { await navigator.clipboard.writeText(`To: ${to.join(', ')}${cc.length ? `\nCC: ${cc.join(', ')}` : ''}\nSubject: ${d.subject}\n\n${d.body}`); setCopied(true); log(); } catch { setErr('Copy did not work — select the text and copy it by hand.'); }
   };
   return <>
     <button className={className} type="button" onClick={() => load()}>✉ {label}</button>
@@ -54,10 +66,12 @@ export function EmailButton({ kind, id, label = 'Email', className = 'btn', upda
         {d.template && <p className="muted small" style={{ margin: '0 0 8px' }}>Template: {d.template.name} ({d.template.source === 'saved' ? 'your company\'s template' : 'standard text'})</p>}
         {d.missing?.length > 0 && <div className="msg warn small">Not known yet — fill these in before sending: {d.missing.map((m: string) => `[${m}]`).join(', ')}</div>}
         <div className="f"><span>To</span>
-          {d.recipients.length > 0 && <div className="checks">{d.recipients.map((r: any, i: number) => <label key={r.email} className="check">
-            <input type="checkbox" checked={r.picked} onChange={() => setD({ ...d, recipients: d.recipients.map((x: any, j: number) => j === i ? { ...x, picked: !x.picked } : x) })} />
-            {r.name} <span className="muted small">&lt;{r.email}&gt;{r.role ? ` · ${r.role}` : ''}</span></label>)}</div>}
-          <input style={{ marginTop: 6 }} value={extra} onChange={(e) => setExtra(e.target.value)} placeholder="Other email address(es), separated by commas" /></div>
+          {d.recipients.some((r: any) => r.place !== 'cc') && <div className="checks">{d.recipients.filter((r: any) => r.place !== 'cc').map(row)}</div>}
+          <input style={{ marginTop: 6 }} value={extra} onChange={(e) => setExtra(e.target.value)} placeholder="Other To address(es), separated by commas" /></div>
+        <div className="f"><span>CC</span>
+          {d.recipients.some((r: any) => r.place === 'cc') && <div className="checks">{d.recipients.filter((r: any) => r.place === 'cc').map(row)}</div>}
+          <input style={{ marginTop: 6 }} value={extraCc} onChange={(e) => setExtraCc(e.target.value)} placeholder="Other CC address(es), separated by commas" />
+          {d.file_id && <span className="muted small">Addresses you type here stay on this shipment's later emails. × takes someone off for good.</span>}</div>
         <label className="f"><span>Subject</span><input value={d.subject} onChange={(e) => setD({ ...d, subject: e.target.value })} /></label>
         <label className="f"><span>Message (you can change it here or in your email program)</span>
           <textarea rows={14} value={d.body} onChange={(e) => setD({ ...d, body: e.target.value })} style={{ fontFamily: 'inherit' }} /></label>

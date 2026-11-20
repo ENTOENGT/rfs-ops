@@ -21,6 +21,7 @@ const FIELDS: [string, string, string, string?][] = [
   ['company_address', 'Company address (on quotations)', 'text'],
   ['company_phone', 'Company phone (on quotations)', 'text'],
   ['company_email', 'Company email (on quotations)', 'text'],
+  ['customer_email_cc', 'Always CC on emails to customers', 'text', 'Optional, e.g. a shared mailbox (ops@…). Separate several with commas. The people handling each shipment are copied anyway.'],
   ['company_trn', 'Company TRN (on quotations)', 'text'],
   ['quote_vat_note', 'VAT note on quotations', 'text', 'Printed under the total on every quotation'],
   ['jobfile_docs_required_to_close', 'Job Files need their documents to close', 'onoff', 'On: every required document must be approved or marked not needed before a Job File closes'],

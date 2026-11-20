@@ -11,7 +11,7 @@ export async function listContacts(actor: Actor, customerId: string) {
   if (!UUID.test(customerId)) throw notFound('Customer');
   const c = await one('select id, name, service_instructions from customers where id = $1 and deleted_at is null', [customerId]);
   if (!c) throw notFound('Customer');
-  const rows = await q(`select id, full_name, role, mobile, email, is_primary, remarks from customer_contacts
+  const rows = await q(`select id, full_name, role, mobile, email, is_primary, remarks, email_as from customer_contacts
     where customer_id = $1 and deleted_at is null order by is_primary desc, full_name`, [customerId]);
   return { customer: c, contacts: rows, can_edit: actor.has('customers.manage') };
 }
@@ -38,16 +38,18 @@ export async function saveContact(actor: Actor, customerId: string, b: any) {
     const role = String(b.role ?? '').trim().slice(0, 60) || null;
     const remarks = String(b.remarks ?? '').trim().slice(0, 500) || null;
     const primary = !!b.is_primary;
+    // migration 033: how this contact gets emails by default (empty = main contact in To, others offered)
+    const emailAs = ['to', 'cc', 'none'].includes(String(b.email_as)) ? String(b.email_as) : null;
     if (primary) await c.query('update customer_contacts set is_primary = false where customer_id = $1', [customerId]);
     if (b.id) {
       if (!UUID.test(String(b.id))) throw bad('Choose the contact');
-      const r = await one(`update customer_contacts set full_name = $3, role = $4, mobile = $5, email = $6, is_primary = $7, remarks = $8
-        where id = $1 and customer_id = $2 and deleted_at is null returning id`, [b.id, customerId, name, role, mobile, email, primary, remarks], c);
+      const r = await one(`update customer_contacts set full_name = $3, role = $4, mobile = $5, email = $6, is_primary = $7, remarks = $8, email_as = $9
+        where id = $1 and customer_id = $2 and deleted_at is null returning id`, [b.id, customerId, name, role, mobile, email, primary, remarks, emailAs], c);
       if (!r) throw notFound('Contact');
       await audit(c, actor, { entity_type: 'customer', entity_id: customerId, action: 'Contact changed', new_value: name });
     } else {
-      await c.query(`insert into customer_contacts (customer_id, full_name, role, mobile, email, is_primary, remarks) values ($1,$2,$3,$4,$5,$6,$7)`,
-        [customerId, name, role, mobile, email, primary, remarks]);
+      await c.query(`insert into customer_contacts (customer_id, full_name, role, mobile, email, is_primary, remarks, email_as) values ($1,$2,$3,$4,$5,$6,$7,$8)`,
+        [customerId, name, role, mobile, email, primary, remarks, emailAs]);
       await audit(c, actor, { entity_type: 'customer', entity_id: customerId, action: 'Contact added', new_value: name });
     }
   });

@@ -1,4 +1,5 @@
 'use client';
+import { CountryPicker, PortPicker } from './PortPicker';
 import { useEffect, useState } from 'react';
 import { api } from './api';
 import { checksFor, EnquiryCheck } from '@/lib/enquiryGaps';
@@ -106,13 +107,21 @@ export function JobFileFields({ f, setF, fe = {}, isNew }: { f: any; setF: (v: a
     </div></div>
     <div className="panel"><h2>{enq ? 'Route' : 'Route and carrier'}</h2><div className="grid g3">
       <label className="f"><span>Origin (city / country)</span><input value={f.origin ?? ''} onChange={set('origin')} /></label>
+      <label className="f"><span>Origin country</span><CountryPicker value={f.origin_country} onChange={(v) => setF({ ...f, origin_country: v })} /></label>
       {!portless && <>
       <label className={`f${fe.port_of_loading ? ' bad' : ''}`}><span>{air ? 'Airport of departure' : road ? 'Loading point' : 'Port of loading'}{terms.need.has('port_of_loading') && <em> *</em>}</span>
-        <input value={f.port_of_loading ?? ''} onChange={set('port_of_loading')} /><Err m={fe.port_of_loading} /></label>
-      <label className={`f${fe.port_of_discharge ? ' bad' : ''}`}><span>{air ? 'Airport of arrival' : road ? 'Border / unloading point' : 'Port of discharge'}{terms.need.has('port_of_discharge') && <em> *</em>}</span>
-        <input value={f.port_of_discharge ?? ''} onChange={set('port_of_discharge')} /><Err m={fe.port_of_discharge} /></label>
+        {road ? <input value={f.port_of_loading ?? ''} onChange={set('port_of_loading')} />
+          : <PortPicker name={f.port_of_loading} code={f.pol_code} kind={air ? 'air' : 'sea'} country={f.origin_country}
+            onChange={(v) => setF({ ...f, port_of_loading: v.name, pol_code: v.code, ...(v.country_code ? { origin_country: v.country_code } : {}) })} />}
+        <Err m={fe.port_of_loading} /></label>
       </>}
       <label className="f"><span>Final destination</span><input value={f.destination ?? ''} onChange={set('destination')} /></label>
+      <label className="f"><span>Destination country</span><CountryPicker value={f.destination_country} onChange={(v) => setF({ ...f, destination_country: v })} /></label>
+      {!portless && <label className={`f${fe.port_of_discharge ? ' bad' : ''}`}><span>{air ? 'Airport of arrival' : road ? 'Border / unloading point' : 'Port of discharge'}{terms.need.has('port_of_discharge') && <em> *</em>}</span>
+        {road ? <input value={f.port_of_discharge ?? ''} onChange={set('port_of_discharge')} />
+          : <PortPicker name={f.port_of_discharge} code={f.pod_code} kind={air ? 'air' : 'sea'} country={f.destination_country}
+            onChange={(v) => setF({ ...f, port_of_discharge: v.name, pod_code: v.code, ...(v.country_code ? { destination_country: v.country_code } : {}) })} />}
+        <Err m={fe.port_of_discharge} /></label>}
       {!enq && <>
       <label className="f"><span>{air ? 'Airline' : road ? 'Transporter' : 'Shipping line'}</span><input value={f.carrier ?? ''} onChange={set('carrier')} /></label>
       <label className="f"><span>{air ? 'Flight' : road ? 'Truck / trip' : 'Vessel'}</span><input value={f.vessel_flight ?? ''} onChange={set('vessel_flight')} /></label>

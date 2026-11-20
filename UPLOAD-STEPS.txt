@@ -1,27 +1,44 @@
-RFS CRM — Release Q (AI agent part A: customer replies -> missing details)
-=========================================================================
+RFS CRM — Release R (To/CC follow the shipment · port list · agents by port, country or region · bulk upload · AI new enquiries)
+=================================================================================================
 
-Upload this after Release P.
+Upload this after Release Q (and the fixed ai-agent.test.ts).
 
 What is new
-  When a customer replies on an enquiry that still has Missing details, the AI reads the reply and shows what it found
-  in a purple "Suggestions from emails" box under Missing details. Nothing changes until you tick the answers and press
-  "Fill in". Then "Ask the customer by email" asks only for what is still missing.
+  1. Emails to customers: To and CC fill in by themselves and follow the shipment.
+     - Customers -> Contacts: each contact now has "On emails: To / CC / Not by default".
+     - Our people handling the shipment are copied (CC) by themselves; Settings has "Always CC on emails to customers".
+     - People the customer had in To / CC on their emails, and addresses you type in, stay on that shipment's emails.
+     - x next to a person takes them off that shipment's emails for good.
+  2. Ports: every seaport and airport in the UN list (about 25,000) — the port boxes on the enquiry suggest as you type.
+     The enquiry also has Origin country / Destination country (for "collection anywhere in Germany").
+     Commercials -> Ports & regions: your regions (groups of countries) and your own ports / inland depots.
+  3. Agents: Vendors -> Coverage says where each agent works (port, country or region). "Ask agents for a rate" then ticks
+     every agent covering the enquiry's origin / destination, and "Email all from my Outlook" emails each one separately.
+  4. Bulk upload: Administration -> Bulk upload. Download the Excel template, fill in customers (with their main salesman
+     and contacts) and vendors (with their coverage), Check (row by row, nothing saved), then Import. Never duplicates.
+  5. AI finds new enquiries: emails in the Salesman's / Coordinator's inbox that match no shipment are looked at by the AI.
+     New enquiries (also from new customers) show first on My Outlook -> Emails to file with "Create enquiry": the AI fills
+     the enquiry (and the new customer from the email signature), you check it and press Save. The same email in the
+     Salesman's and the Coordinator's inbox becomes one enquiry. Emails from unknown senders that are not enquiries are not kept.
+  Also: the AI box no longer offers answers that are already filled in.
 
-Step 1 — Anthropic key (only once)
-  1. Someone at your company opens https://console.anthropic.com, signs in, adds billing / credit,
-     then API keys -> Create key. Copy the key (it starts with sk-ant-...).
-  2. Netlify -> Site configuration -> Environment variables -> Add a variable:
-       ANTHROPIC_API_KEY    the key (paste it yourself; do not send it to anyone)
-     Scope: All scopes.
+Step 1 — Database (Supabase -> SQL Editor). Run these three files, one at a time, in this order:
+  db/migrations/033_email_people.sql
+  db/migrations/034_ports_agents.sql
+  db/migrations/035_ai_new_enquiry.sql
+  Each one is safe to run again. Wait for "Success" before the next.
+  (The 25,000 ports are not in the SQL: the app loads them by itself the first time someone types in a port box.)
 
-Step 2 — Database (Supabase -> SQL Editor). Run this one file:
-  db/migrations/032_ai_agent.sql
-  Safe to run again. Wait for "Success".
+Step 2 — Code (GitHub). Upload every other file in this zip to the same paths, in ONE commit.
+  It includes src/data/ports.json (about 1 MB) — upload it too.
 
-Step 3 — Code (GitHub). Upload every other file in this zip to the same paths, in ONE commit.
-  Netlify then builds once (and picks up the new key).
-
-Step 4 — Check
-  Open ENQ-EXP-26-00005 (the customer has already replied). The purple box should show what the AI found
-  (pickup address, weight, DG, ready date). Tick, press "Fill in", and Missing details gets shorter.
+Step 3 — Checks
+  1. Customers -> Contacts: set one contact to CC. Open an enquiry -> Email: To and CC fill in by themselves.
+  2. Edit an enquiry -> Port of loading: type "hamb" -> Hamburg (DEHAM) is first. (The very first search may take a few
+     seconds while the port list loads.)
+  3. Vendors -> Coverage on an agent -> add a country (e.g. Germany).
+  4. An enquiry with Origin country Germany -> Ask agents / carriers for a rate: that agent is ticked by itself.
+  5. Administration -> Bulk upload -> Download template -> add 2 test customers -> Check -> Import.
+  6. From a personal email (e.g. Gmail) send the pilot Salesman: "Please quote 1x20GP Shanghai to Jebel Ali, FOB, 8 tons
+     furniture" with a company name in the signature. Within a minute it shows on My Outlook as "New enquiry?" ->
+     Create enquiry -> check the form -> Create customer and open enquiry.

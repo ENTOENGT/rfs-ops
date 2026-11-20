@@ -738,3 +738,56 @@ answer (only listed keys; yes/no, YYYY-MM-DD, numbers, Incoterm codes; NA → "n
 (one per email; 'open' or 'nothing'). The enquiry page (AiSuggestions) reads the newest unread received email by itself when the
 enquiry still has gaps and the viewer can edit it. Nothing changes until a person ticks answers and presses "Fill in" →
 `updateJobFile` in their name + a history line; or Dismiss. Cargo lines are shown but filled by hand.
+
+### 15w. To / CC follow the shipment (migration 033, 19 Nov 2026)
+`src/server/emailpeople.ts`, used by every customer email (job file, missing details, quotation, case). To / CC are built from:
+the shipment's people (job_file_email_people: seen on the customer's own emails — sender in To, the people they copied in CC —
+or typed in by our team), the customer's contacts (customer_contacts.email_as To / CC / none; empty = main contact in To),
+our side in CC (salesman, coordinator, CS handler of the shipment; the sender never copies themselves) and the Settings
+"Always CC on emails to customers" (customer_email_cc). × (POST /api/job-files/:id/email-people) marks a person removed for
+that shipment only; nothing brings them back except someone typing them in again. Agents' emails never add people.
+The email box has To and CC rows; CC goes with Send from my Outlook, the mailto link and the history (email_messages.cc_addrs).
+Also: an email already on a shipment is never noted twice in its history.
+
+### 15x. Ports, regions and agent coverage (migration 034, 19 Nov 2026)
+- `src/data/ports.json`: UN/LOCODE seaports (function 1) and airports (function 4), about 24,800 places in 249 countries, with a
+  rough size `weight` (number of transport functions, +1 when approved). `ensurePortsLoaded` copies it into `ports` / `countries`
+  the first time anyone searches (safe to repeat; your own ports and changes stay). Letters that look like secret keys
+  ("sk-" in Russian place names) are written as \u escapes so the Netlify secret scan does not stop the build.
+- Port search (`/api/ports`): code / airport code, then the chosen country, then name match, then size. Your own ports
+  (inland depots / ICDs) get codes like AEX00. Regions are your own groups of countries (Commercials → Ports & regions).
+- Enquiries keep the port names as text and also `pol_code` / `pod_code` and `origin_country` / `destination_country`
+  ("collection anywhere in Germany" = a country without a port). The port boxes suggest from the list as you type.
+- `agent_coverage` (Vendors → Coverage): a port, a country or a region; modes; origin / destination / both; priority.
+  `suggestAgents` lists, for each end outside the UAE, every active agent covering it: that port first, then any port in the
+  same country and the country itself, then regions — preferred before normal before backup. "Ask agents for a rate" ticks
+  them all (up to 40 at once); "Email all from my Outlook" sends one separate email per agent that has not answered yet.
+- The old `vendor_regions` table (migration 018) was never used by any screen; it is left as it is.
+
+### 15y. Bulk upload of customers and vendors (20 Nov 2026)
+`src/server/bulkimport.ts`, Administration → Bulk upload. The Excel template (`GET /api/bulk-upload/template`) has four sheets —
+Customers (with main salesman / other salesmen by email), Customer contacts (main contact, On emails To / CC / Not by default),
+Vendors (type from the list) and Vendor coverage (Port code / Country / Region, modes, side, priority) — plus "Read me" and
+"Lists" (salesmen, choices) for drop-downs. `POST /api/bulk-upload` with `import: false` checks the file and returns, row by row,
+new / already there / problem (nothing saved); with `import: true` the good rows are saved in one transaction (multi-row inserts)
+and one audit line. Never a duplicate: customers match by name or code and vendors by name — only their empty fields are filled;
+a contact whose email is already on the customer is skipped; existing coverage is skipped; the main salesman is set only when the
+customer has none. Fields use the same checks as the Customers / Vendors forms. Salesmen may upload only their own customers;
+giving customers to other salesmen is for the Commercials Manager. Up to 1,000 rows per sheet, 5 MB.
+
+### 15z. AI finds new enquiries in the inbox (migration 035, 20 Nov 2026)
+`src/server/newenquiry.ts`. Enquiries arrive in the Salesman's and the Coordinator's own mailbox (both Outlook pilots).
+- Reading the inbox (`inbox.ts`): an email that matches no shipment is kept as before when the sender is a known customer /
+  agent; from an unknown sender it is now kept as `screen` (hidden) for the AI — never automatic mail (no-reply, news…) or our
+  own colleagues, and only when the AI key is set. An email whose internet message id was already made into an enquiry from
+  another inbox is filed on that enquiry ("same email").
+- `screenInbox` (after every check; `/api/outlook/screen`): Claude Haiku looks at sender, subject and first lines →
+  new_enquiry / reply / other. The same email in two inboxes is looked at once. An unknown sender's email that is not an
+  enquiry becomes `ignored` with its subject, text and names wiped. New enquiries show first on My Outlook → Emails to file.
+- `draftEnquiry` ("Create enquiry", read once and kept in outlook_inbox.ai_draft): the full email from Outlook → customer
+  (existing by sender email / company domain, else a new customer from the signature), Salesman (the customer's main one, else
+  the Salesman whose inbox it is / who was written to), mode, Incoterm, countries and ports from the port list, direction /
+  division from where the UAE is, addresses, cargo, weight, ready date and DG (checklist answers).
+- `createFromEmail`: one transaction — the new customer (never twice: same name is reused) with the sender as main contact (To)
+  and the Salesman as main owner, `createJobFile`, the email filed on it, and every inbox copy of the same email marked filed.
+  Nothing is created until a person presses Save on the New enquiry page (`/job-files/new?from_email=…`).

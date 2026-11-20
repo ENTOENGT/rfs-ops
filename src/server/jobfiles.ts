@@ -121,6 +121,8 @@ const pick = (list: [string, string, ...unknown[]][], lbl: string) => (v: unknow
 const flag = (v: unknown) => v === true || v === 'true' || v === 1 || v === '1';
 
 /** Editable fields, with their label (for the history) and how to check them. */
+const code5 = (v: unknown) => { const s = String(v ?? '').trim().toUpperCase(); if (!s) return null; if (!/^[A-Z]{2}[A-Z0-9]{3}$/.test(s)) throw bad('Choose the port from the list'); return s; };
+const code2 = (v: unknown) => { const s = String(v ?? '').trim().toUpperCase(); if (!s) return null; if (!/^[A-Z]{2}$/.test(s)) throw bad('Choose the country from the list'); return s; };
 const FIELDS: Record<string, { label: string; parse: (v: unknown) => unknown }> = {
   customer_id: { label: 'Customer', parse: (v) => { if (!isUuid(v)) throw bad('Choose the customer'); return v; } },
   direction: { label: 'Direction', parse: pick(DIRECTIONS, 'import, export, cross-trade or domestic') },
@@ -140,6 +142,9 @@ const FIELDS: Record<string, { label: string; parse: (v: unknown) => unknown }> 
   origin: { label: 'Origin', parse: (v) => txt(v, 120) }, destination: { label: 'Destination', parse: (v) => txt(v, 120) },
   port_of_loading: { label: 'Port / airport of loading', parse: (v) => txt(v, 120) },
   port_of_discharge: { label: 'Port / airport of discharge', parse: (v) => txt(v, 120) },
+  // migration 034: the ports as codes from the port list, and the countries (when the customer knows the country, not the port)
+  pol_code: { label: 'Port of loading (code)', parse: (v) => code5(v) }, pod_code: { label: 'Port of discharge (code)', parse: (v) => code5(v) },
+  origin_country: { label: 'Origin country', parse: (v) => code2(v) }, destination_country: { label: 'Destination country', parse: (v) => code2(v) },
   carrier: { label: 'Shipping line / airline / transporter', parse: (v) => txt(v, 120) },
   vessel_flight: { label: 'Vessel / flight', parse: (v) => txt(v, 80) }, voyage: { label: 'Voyage', parse: (v) => txt(v, 40) },
   booking_reference: { label: 'Carrier booking ref.', parse: (v) => txt(v, 80) },

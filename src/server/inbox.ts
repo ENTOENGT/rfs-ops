@@ -12,6 +12,7 @@
 import { Actor } from './auth';
 import { ApiError, bad, Db, forbidden, notFound, one, q, tx } from './db';
 import { canSend, graph } from './outlook';
+import { aiConfig } from './ai';
 import { event, loadFile } from './jobfiles';
 import { notifyGroup } from './notify';
 
@@ -57,13 +58,17 @@ export async function knownSender(email: string, db?: Db): Promise<string | null
 }
 
 /** Copy one inbox email onto a shipment: Emails tab, history, and tell the people handling it. */
-async function fileOnShipment(c: Db, actor: Actor, fileId: string, m: any, how: string) {
-  await c.query(`insert into email_messages (job_file_id, direction, status, from_addr, from_name, to_addrs, cc_addrs, subject, sent_at, message_id,
+export async function fileOnShipment(c: Db, actor: Actor, fileId: string, m: any, how: string) {
+  const ins = await c.query(`insert into email_messages (job_file_id, direction, status, from_addr, from_name, to_addrs, cc_addrs, subject, sent_at, message_id,
       conversation_id, body_excerpt, attachment_count, source, created_by, created_by_name, web_link)
     values ($1, 'in', 'received', $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 'mailbox', $12, $13, $14)
-    on conflict (job_file_id, message_id) where message_id is not null do nothing`,
+    on conflict (job_file_id, message_id) where message_id is not null do nothing returning id`,
     [fileId, m.from_addr, m.from_name, m.to_addrs, m.cc_addrs, m.subject, m.received_at, m.internet_message_id, m.conversation_id,
       String(m.body_excerpt ?? '').slice(0, 2000), m.has_attachments ? 1 : 0, actor.id, actor.full_name, m.web_link]);
+  if (!ins.rowCount) return;                                   // the same email is already on this shipment: no second history line
+  // migration 033: the customer's sender and the people they copied stay on this shipment's later emails
+  const box = await one('select ms_email from outlook_connections where user_id = $1', [actor.id], c);
+  await (await import('./emailpeople')).learnFromReceived(c, fileId, m, box?.ms_email ?? null);
   const who = m.from_name || m.from_addr || 'someone';
   await event(c, actor, fileId, { kind: 'note', title: `Email received from ${who}`, new_value: `"${String(m.subject ?? '').slice(0, 200)}"${how === 'hand' ? ' — filed by hand' : ''}` });
   await notifyGroup(c, actor, fileId, 'email_saved', `from ${who}`);
@@ -79,7 +84,10 @@ async function shipmentFromConversation(conversationId: string | null, db?: Db) 
 }
 
 /** Look at one email from Microsoft. Returns what happened to it. */
-async function takeOne(actor: Actor, msg: any): Promise<'filed' | 'unmatched' | 'skipped'> {
+/** Automatic senders that are never enquiries (not kept, not sent to the AI). */
+const AUTOMATIC = /^(no-?reply|do-?not-?reply|mailer-daemon|postmaster|notifications?|newsletters?|marketing|news|bounce|alerts?|updates?|info-noreply)[@+.-]/i;
+
+async function takeOne(actor: Actor, msg: any): Promise<'filed' | 'unmatched' | 'screen' | 'skipped'> {
   if (msg['@removed'] || msg.isDraft || !msg.id) return 'skipped';
   if (await one('select 1 from outlook_inbox where user_id = $1 and ms_message_id = $2', [actor.id, msg.id])) return 'skipped';
   const m = {
@@ -89,19 +97,30 @@ async function takeOne(actor: Actor, msg: any): Promise<'filed' | 'unmatched' | 
     has_attachments: !!msg.hasAttachments, web_link: msg.webLink ?? null,
   };
   const byTag = await shipmentFromSubject(m.subject);
-  const fileId = byTag ?? await shipmentFromConversation(m.conversation_id);
+  // migration 035: the same email already made into an enquiry from another person's inbox (Salesman and Coordinator both get it)
+  const sameEmail = !byTag && m.internet_message_id ? (await one(`select job_file_id from outlook_inbox where internet_message_id = $1 and job_file_id is not null limit 1`,
+    [m.internet_message_id]))?.job_file_id ?? null : null;
+  const fileId = byTag ?? sameEmail ?? await shipmentFromConversation(m.conversation_id);
   const known = !fileId && m.from_addr ? await knownSender(m.from_addr) : null;
-  if (!fileId && !known) return 'skipped';                       // not ours to keep
+  // an unknown sender: kept only for the AI to look at (new enquiry or not) — never automatic mail or our own colleagues
+  let screen = false;
+  if (!fileId && !known) {
+    if (!m.from_addr || AUTOMATIC.test(m.from_addr) || !aiConfig().ready) return 'skipped';
+    const { isOurs } = await import('./emailpeople');
+    if (await isOurs(m.from_addr)) return 'skipped';
+    screen = true;
+  }
   return tx(async (c) => {
     const row = await one(`insert into outlook_inbox (user_id, ms_message_id, internet_message_id, conversation_id, from_addr, from_name, to_addrs, cc_addrs,
         subject, received_at, body_excerpt, has_attachments, web_link, known_as, status, job_file_id, matched_by)
       values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
       on conflict (user_id, ms_message_id) do nothing returning id`,
       [actor.id, m.ms_message_id, m.internet_message_id, m.conversation_id, m.from_addr, m.from_name, m.to_addrs, m.cc_addrs, m.subject, m.received_at,
-        m.body_excerpt, m.has_attachments, m.web_link, known, fileId ? 'filed' : 'unmatched', fileId, fileId ? (byTag ? 'tag' : 'conversation') : null], c);
+        m.body_excerpt, m.has_attachments, m.web_link, known, fileId ? 'filed' : screen ? 'screen' : 'unmatched', fileId,
+        fileId ? (byTag ? 'tag' : sameEmail ? 'same email' : 'conversation') : null], c);
     if (!row) return 'skipped' as const;
     if (fileId) await fileOnShipment(c, actor, fileId, m, byTag ? 'tag' : 'conversation');
-    return fileId ? 'filed' as const : 'unmatched' as const;
+    return fileId ? 'filed' as const : screen ? 'screen' as const : 'unmatched' as const;
   });
 }
 
@@ -121,7 +140,7 @@ export async function syncInbox(actor: Actor, budgetMs = TIME_BUDGET_MS) {
     const since = new Date(Date.now() - FIRST_LOOK_BACK_DAYS * 86400_000).toISOString().replace(/\.\d+Z$/, 'Z');
     let url: string | null = got.delta_link
       || `/me/mailFolders/inbox/messages/delta?$select=${SELECT}&$filter=${encodeURIComponent(`receivedDateTime ge ${since}`)}`;
-    const n = { filed: 0, unmatched: 0, looked: 0 };
+    const n = { filed: 0, unmatched: 0, screen: 0, looked: 0 };
     let saveLink: string | null = got.delta_link ?? null, done = false;
     for (let page = 0; page < PAGES_PER_CHECK && url && (page === 0 || Date.now() - started < budgetMs); page++) {
       const r: any = await graph(actor.id, url, { headers: { Prefer: `odata.maxpagesize=${PAGE_SIZE}` } });
@@ -134,7 +153,9 @@ export async function syncInbox(actor: Actor, budgetMs = TIME_BUDGET_MS) {
       else { url = r?.['@odata.nextLink'] ?? null; if (url) saveLink = url; }
     }
     const waiting = Number((await one(`select count(*) n from outlook_inbox where user_id = $1 and status = 'unmatched'`, [actor.id]))!.n);
-    const result = { ...n, waiting, more: !done };
+    // migration 035: emails the AI has not looked at yet (new enquiry or not)
+    const toScreen = aiConfig().ready ? Number((await one(`select count(*) n from outlook_inbox where user_id = $1 and ai_checked_at is null and status in ('screen', 'unmatched')`, [actor.id]))!.n) : 0;
+    const result = { ...n, waiting, to_screen: toScreen, more: !done };
     await q(`update outlook_connections set delta_link = $2, last_sync_at = now(), last_sync_result = $3, last_error = null, updated_at = now() where user_id = $1`,
       [actor.id, saveLink, JSON.stringify(result)]);
     return result;
@@ -150,8 +171,9 @@ export async function syncInbox(actor: Actor, budgetMs = TIME_BUDGET_MS) {
 
 // ---------------------------------------------------------------- "Emails to file"
 export async function listToFile(actor: Actor) {
-  const rows = await q(`select id, from_addr, from_name, subject, received_at, body_excerpt, has_attachments, web_link, known_as
-      from outlook_inbox where user_id = $1 and status = 'unmatched' order by received_at desc nulls last limit 200`, [actor.id]);
+  const rows = await q(`select id, from_addr, from_name, subject, received_at, body_excerpt, has_attachments, web_link, known_as, ai_kind, ai_summary, ai_checked_at
+      from outlook_inbox where user_id = $1 and status = 'unmatched'
+      order by (ai_kind = 'new_enquiry') desc nulls last, received_at desc nulls last limit 200`, [actor.id]);
   const c = await one('select last_sync_at, last_sync_result from outlook_connections where user_id = $1', [actor.id]);
   return { rows, last_sync_at: c?.last_sync_at ?? null, last_sync_result: c?.last_sync_result ?? null };
 }

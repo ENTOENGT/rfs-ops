@@ -139,8 +139,16 @@ ${text || '(the email has no text)'}`;
 /** The AI box on an enquiry: open suggestions, and received emails the AI has not read yet. */
 export async function suggestionsFor(actor: Actor, fileId: string) {
   const f = await loadFile(actor, fileId);
-  const open = await q(`select s.*, e.from_name, e.from_addr, e.subject, e.sent_at from ai_suggestions s join email_messages e on e.id = s.email_id
+  const rows = await q(`select s.*, e.from_name, e.from_addr, e.subject, e.sent_at from ai_suggestions s join email_messages e on e.id = s.email_id
      where s.job_file_id = $1 and s.status = 'open' order by e.sent_at desc nulls last`, [fileId]);
+  // answers already filled in (e.g. by another email's suggestion) are not offered again; a suggestion with nothing left closes
+  const gapKeys = rows.length ? new Set(((await getJobFile(actor, fileId)) as any).enquiry_gaps?.map((g: any) => g.key) ?? []) : new Set();
+  const open: any[] = [];
+  for (const s of rows) {
+    const answers = (s.answers as any[]).filter((a) => gapKeys.has(a.key));
+    if (!answers.length) { await q(`update ai_suggestions set status = 'nothing' where id = $1 and status = 'open'`, [s.id]); continue; }
+    open.push({ ...s, answers, unclear: (s.unclear as any[]).filter((u) => gapKeys.has(u.key)) });
+  }
   const unread = f.status === 'enquiry' ? await q(`select e.id, e.from_name, e.from_addr, e.subject, e.sent_at from email_messages e
      where e.job_file_id = $1 and e.direction = 'in' and not exists (select 1 from ai_suggestions s where s.email_id = e.id)
      order by e.sent_at desc nulls last limit 3`, [fileId]) : [];
@@ -156,8 +164,9 @@ export async function applySuggestion(actor: Actor, id: string, b: any) {
   const d: any = await getJobFile(actor, s.job_file_id);
   if (!d.can?.edit) throw forbidden('You cannot change this enquiry');
   const keys: string[] = Array.isArray(b?.keys) ? b.keys.map(String) : [];
-  const picked = (s.answers as any[]).filter((a) => keys.includes(a.key) && !a.by_hand);
-  if (!picked.length) throw bad('Tick at least one answer to fill in');
+  const gapKeys = new Set((d.enquiry_gaps ?? []).map((g: any) => g.key));
+  const picked = (s.answers as any[]).filter((a) => keys.includes(a.key) && !a.by_hand && gapKeys.has(a.key));
+  if (!picked.length) throw bad(keys.length ? 'These details are already filled in' : 'Tick at least one answer to fill in');
   const patch: Record<string, unknown> = {};
   const details: Record<string, string> = { ...(d.enquiry_details ?? {}) };
   for (const a of picked) { if (a.key in BUILT_IN) patch[a.key] = a.value; else details[a.key] = a.value; }

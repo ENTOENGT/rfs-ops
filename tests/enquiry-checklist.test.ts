@@ -63,7 +63,8 @@ test('answers are saved in their format; an answered item is no longer missing',
 test('the email asks the customer for exactly what is missing, on the enquiry\'s own subject', async () => {
   const f = await createJobFile(sam, { customer_id: cust, division: 'imports', mode: 'sea_fcl', status: 'enquiry', incoterm: 'CIF', port_of_discharge: 'Jebel Ali' });
   const d = await emailDraft(sam, { kind: 'enquiry_missing', id: f.id });
-  assert.deepEqual(d.recipients.map((r) => r.email), ['nina@eta.ae']);
+  assert.deepEqual(d.recipients.filter((r) => r.place !== 'cc').map((r) => r.email), ['nina@eta.ae']);
+  assert.deepEqual(d.recipients.filter((r) => r.place === 'cc').map((r) => r.email), ['coracoord@x.ae'], 'our coordinator in CC (migration 033)');
   assert.match(d.subject, /^\[ENQ-IMP-/);
   assert.match(d.body, /could you please share:/);
   assert.match(d.body, /- The total cargo weight/);

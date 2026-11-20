@@ -1,5 +1,6 @@
 'use client';
 import CustomerContacts from './CustomerContacts';
+import AgentCoverage from './AgentCoverage';
 import SendAppLink from './SendAppLink';
 import { useEffect, useState } from 'react';
 import { api, fmtDate } from './api';
@@ -92,6 +93,8 @@ export default function MasterPage({ entity, embedded }: { entity: string; embed
   const [appFor, setAppFor] = useState<any>(null);
   const [contactsFor, setContactsFor] = useState<string | null>(null);
   const hasContacts = entity === 'customers';
+  const hasCoverage = entity === 'vendors';
+  const [coverageFor, setCoverageFor] = useState<string | null>(null);
   const load = () => api(`/api/masters/${entity}?q=${encodeURIComponent(q)}&page_size=500`).then(setData).catch((e) => setMsg({ t: 'err', m: e.message }));
   useEffect(() => { const t = setTimeout(load, 200); return () => clearTimeout(t); }, [q, entity]);
   const remove = async (r: any) => {
@@ -121,15 +124,16 @@ export default function MasterPage({ entity, embedded }: { entity: string; embed
       <p className="muted small" style={{ marginTop: -6 }}>{d.blurb}</p>
       {msg && <div className={`msg ${msg.t}`}>{msg.m}</div>}
       <div className="panel flush"><div className="table-wrap"><table className="t">
-        <thead><tr>{cols.map((x) => <th key={x.key}>{x.label}</th>)}{canSendApp && <th>Phone app</th>}{(canEdit || canSendApp || hasContacts) && <th />}</tr></thead>
+        <thead><tr>{cols.map((x) => <th key={x.key}>{x.label}</th>)}{canSendApp && <th>Phone app</th>}{(canEdit || canSendApp || hasContacts || hasCoverage) && <th />}</tr></thead>
         <tbody>
           {data?.rows.map((r: any) => (
             <tr key={r.id}>
               {cols.map((x, i) => <td key={x.key}>{i === 0 ? <b>{cell(r, x)}</b> : cell(r, x)}</td>)}
               {canSendApp && <td>{APP_STATE[r.app ?? 'none']}</td>}
-              {(canEdit || canSendApp || hasContacts) && <td style={{ whiteSpace: 'nowrap', textAlign: 'right' }}>
+              {(canEdit || canSendApp || hasContacts || hasCoverage) && <td style={{ whiteSpace: 'nowrap', textAlign: 'right' }}>
                 {canSendApp && <><button className="btn small" onClick={() => setAppFor(r)}>Send app link</button>{' '}</>}
                 {hasContacts && <><button className="btn small" onClick={() => setContactsFor(r.id)}>Contacts &amp; Salesmen</button>{' '}</>}
+                {hasCoverage && <><button className="btn small" onClick={() => setCoverageFor(r.id)}>Coverage</button>{' '}</>}
                 {canEdit && <><button className="btn small" onClick={() => setEdit(r)}>Edit</button>{' '}
                 <button className="btn small danger" onClick={() => remove(r)}>Remove</button></>}</td>}
             </tr>))}
@@ -141,6 +145,7 @@ export default function MasterPage({ entity, embedded }: { entity: string; embed
         <div className="pager"><span>{data ? `${data.total} ${data.total === 1 ? d.singular : d.title.toLowerCase()}` : 'Loading…'}</span></div>
       </div>
       {contactsFor && <CustomerContacts customerId={contactsFor} onClose={() => setContactsFor(null)} />}
+      {coverageFor && <AgentCoverage vendorId={coverageFor} onClose={() => setCoverageFor(null)} />}
       {appFor && <SendAppLink driverId={appFor.id} name={appFor.full_name} onClose={(ch) => { setAppFor(null); if (ch) load(); }} />}
       {edit && <Form entity={entity} row={edit} onClose={() => setEdit(null)}
         onDone={(m) => { setEdit(null); setMsg({ t: 'ok', m }); load(); reloadLookups(); }} />}
