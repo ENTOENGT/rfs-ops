@@ -56,12 +56,12 @@ test('replies are matched to their rate request; the customer\'s reply is not; a
   await assert.rejects(readEmail(admin, a.id), /vendor's reply/);
 });
 
-test('the AI reads the rate; the total is the sum of the lines; read once', async () => {
-  answer = { has_rate: true, total: 999, currency: 'usd', transit_days: 6, free_days: 14, etd: '2026-12-02', routing: 'Direct', carrier: 'MSC',
+test('the AI reads the rate and its lines; read once', async () => {
+  answer = { has_rate: true, total: 1050, currency: 'usd', transit_days: 6, free_days: 14, etd: '2026-12-02', routing: 'Direct', carrier: 'MSC',
     valid_until: '2026-12-15', vendor_reference: 'Q-778', quote: 'O/F USD 850/40HC', summary: 'USD 1,050 all in, MSC direct',
     charges: [{ section: 'freight', description: 'Ocean freight', basis: 'per 40HC', quantity: 1, amount: 850, currency: 'USD' },
       { section: 'origin', description: 'THC', basis: 'per 40HC', quantity: 1, amount: 200, currency: 'usd' }] };
-  const box = await quoteBox(admin, fileId);
+  const box: any = await quoteBox(admin, fileId);
   assert.equal(box.unread.length, 2);
   const e = box.unread.find((m: any) => m.request_no === reqA.request_no);
   const s: any = (await readQuote(admin, e.id)).suggestion;
@@ -73,7 +73,7 @@ test('the AI reads the rate; the total is the sum of the lines; read once', asyn
 
 test('a reply without a price: noted, the request keeps waiting', async () => {
   answer = { has_rate: false, no_rate_reason: 'will revert tomorrow', summary: 'No rate yet' };
-  const e = (await quoteBox(admin, fileId)).unread.find((m: any) => m.request_no === reqB.request_no);
+  const e = ((await quoteBox(admin, fileId)) as any).unread.find((m: any) => m.request_no === reqB.request_no);
   assert.equal((await readQuote(admin, e.id)).suggestion.status, 'nothing');
   const box: any = await quoteBox(admin, fileId);
   assert.equal(box.no_rate[0].unclear[0].note, 'will revert tomorrow');
@@ -109,4 +109,30 @@ test('a reply filed before this existed is matched when the enquiry is opened', 
   assert.ok(box.unread.some((m: any) => m.id === old));
   assert.equal((await one('select vendor_request_id from email_messages where id = $1', [old])).vendor_request_id, reqB.id);
   assert.equal(await one(`select 1 from job_file_email_people where job_file_id = $1 and email = 'quotes@nhavalog.in'`, [fileId]), null);
+});
+
+test('21 Nov: "all in 4500" with its breakup → 4500, the three parts as lines; our own ref and "not stated" are dropped', async () => {
+  const { settleTotal, blank } = await import('../src/server/quotereader');
+  const L = (description: string, amount: number) => ({ section: 'freight', description, basis: 'per container', quantity: 1, amount, currency: 'USD' });
+  const r = settleTotal(4500, 'USD', [L('Ocean freight all in', 4500), L('Transportation', 500), L('Customs', 75), L('Ocean freight', 3925)]);
+  assert.equal(r.total, 4500); assert.deepEqual(r.lines.map((l: any) => l.amount), [500, 75, 3925]);
+  assert.equal(settleTotal(4500, 'USD', [L('Transportation', 500), L('Customs', 75), L('Ocean freight', 3925)]).lines.length, 3);
+  const off = settleTotal(4500, 'USD', [L('Transportation', 500), L('Ocean freight', 3925)]);
+  assert.deepEqual([off.total, off.lines.length], [4500, 0]); assert.match(off.note!, /add up to USD 4,425, not the USD 4,500/);
+  assert.equal(settleTotal(null, 'USD', [L('a', 100), L('b', 50)]).total, 150);
+  assert.equal(blank('Not stated in reply'), null); assert.equal(blank('N/A'), null);
+  assert.equal(blank('Direct vessel via DP World (no transhipment stated)'), 'Direct vessel via DP World');
+
+  // the whole way, with the AI answering as it did on the real email
+  answer = { has_rate: true, total: 4500, currency: 'USD', free_days: 7, etd: '2026-11-28', transit_days: 12, carrier: 'DP World', vendor_reference: 'ENQ-IMP-26-00008',
+    exclusions: 'Not stated in reply', summary: 'USD 4,500 all in', charges: [L('Ocean freight (all-in breakup)', 4500), L('Transportation', 500), L('Customs', 75), L('Ocean freight', 3925)] };
+  const m = await file(mail({ from_addr: 'quotes@nhavalog.in', subject: `RE: ${reqB.request_no}` }));
+  const s: any = (await readQuote(admin, m.id)).suggestion;
+  assert.deepEqual([s.answers.quoted_cost, s.answers.charges.length, s.answers.vendor_reference, s.answers.exclusions, s.answers.v], [4500, 3, null, null, 2]);
+});
+
+test('a suggestion read the old way (not saved yet) is read again', async () => {
+  await q(`update ai_suggestions set answers = answers - 'v' where kind = 'quote' and status = 'open'`);
+  const box: any = await quoteBox(admin, fileId);
+  assert.equal(box.open.length, 0); assert.ok(box.unread.length >= 1);
 });

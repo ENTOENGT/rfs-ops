@@ -829,4 +829,5 @@ giving customers to other salesmen is for the Commercials Manager. Up to 1,000 r
   transit, free days, ETD, routing, carrier, valid until, their reference, not-included. Stored as `ai_suggestions` kind 'quote'.
 - Save rate (`/api/ai/quotes/[id]`, action apply): the person's checked / corrected values go through the normal
   `vendorRequestAction` (Quoted, or a revised rate version if one was in), in their name, with history. Charge lines are kept only
-  when in one currency and adding up to the rate. A reply with no price is shown as "replied without a rate — still waiting".
+  when in one currency and adding up to the rate (an all-in line listed with its own breakup is dropped; the all-in price wins;
+  our own ENQ / VR numbers are never "their reference"; "not stated" answers are left empty). A reply with no price is shown as "replied without a rate — still waiting".

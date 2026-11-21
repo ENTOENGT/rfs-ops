@@ -95,20 +95,20 @@ const TOOL = {
     properties: {
       has_rate: { type: 'boolean', description: 'true only when the email or its attachments give a price for this request.' },
       no_rate_reason: { type: 'string', description: 'When there is no price: what they said instead, in a few words (e.g. "will revert tomorrow", "no space").' },
-      total: { type: 'number', description: 'The total price for the whole shipment as asked (all containers / the full weight), digits only.' },
+      total: { type: 'number', description: 'The total price for the whole shipment as asked (all containers / the full weight), digits only. When they give an all-in price, this is the all-in price.' },
       currency: { type: 'string', description: '3-letter currency code of the total, e.g. USD, AED, EUR.' },
-      charges: { type: 'array', description: 'The charge lines when the vendor lists them.', items: { type: 'object', properties: {
+      charges: { type: 'array', description: 'The breakup lines when the vendor lists them. Only the parts — never the all-in / total line itself as one more line.', items: { type: 'object', properties: {
         section: { type: 'string', enum: CHARGE_SECTIONS.map(([k]) => k), description: 'freight (sea / air freight), origin (charges at loading side), destination (charges at the arrival side), other' },
         description: { type: 'string' }, basis: { type: 'string', description: 'per container, per kg, per CBM, per BL, per shipment…' },
         quantity: { type: 'number', description: 'How many of the basis for this shipment (e.g. 2 containers). 1 when per shipment.' },
         amount: { type: 'number', description: 'The price for one basis unit.' }, currency: { type: 'string' },
       }, required: ['section', 'description', 'amount', 'currency'] } },
-      transit_days: { type: 'integer' }, free_days: { type: 'integer', description: 'Free days at destination (detention / demurrage), when given.' },
+      transit_days: { type: 'integer', description: 'As stated, or the days from ETD to ETA when both are given.' }, free_days: { type: 'integer', description: 'Free days at destination (detention / demurrage), when given.' },
       etd: { type: 'string', description: 'Next sailing / departure date, YYYY-MM-DD.' },
       routing: { type: 'string', description: 'Direct, or via which port (transhipment).' },
-      carrier: { type: 'string', description: 'The shipping line or airline behind the rate.' },
+      carrier: { type: 'string', description: 'The shipping line or airline (MSC, Maersk, Emirates…). A terminal / port operator (DP World, AD Ports) is NOT a carrier. Leave out when not named.' },
       valid_until: { type: 'string', description: 'Rate valid until, YYYY-MM-DD.' },
-      vendor_reference: { type: 'string', description: 'Their quote / reference number.' },
+      vendor_reference: { type: 'string', description: 'The vendor\'s OWN quote number. Never our numbers (ENQ-…, VR-…, our job no.). Leave out when they give none.' },
       inclusions: { type: 'string' }, exclusions: { type: 'string', description: 'What is not included (subject to, excluding…), short.' },
       quote: { type: 'string', description: 'The few words in the email that give the price (copied, max 160 characters).' },
       summary: { type: 'string', description: 'One short sentence: what the vendor offers.' },
@@ -116,6 +116,31 @@ const TOOL = {
     required: ['has_rate', 'summary'],
   },
 };
+
+/** Raised when the reading changes: suggestions read the old way (not yet saved) are read again. */
+const QUOTE_V = 2;
+const NOT_SAID = /^\s*(not\s+(stated|mentioned|given|specified|provided|included)|n\/?a|none|nil|-+)\b/i;
+/** "Not stated in reply" and the like are no answer; "Direct (no transhipment stated)" → "Direct". */
+export const blank = (v: string | null) => { if (!v || NOT_SAID.test(v)) return null; const s = v.replace(/\s*\([^)]*\b(not|no)\b[^)]*\bstated\)/i, '').trim(); return s || null; };
+
+/**
+ * The rate total and its charge lines. The vendor's all-in price wins: when the lines also hold the all-in line itself
+ * ("all in 4500" + breakup 500 + 75 + 3925), that line is dropped. Lines that do not add up to the total are shown, not saved.
+ */
+export function settleTotal(total: number | null, currency: string | null, charges: any[]) {
+  const cent = (n: number) => Math.round(n * 100);
+  const val = (l: any) => cent(Number(l.quantity) * Number(l.amount));
+  const cur = currency || charges[0]?.currency || null;
+  const lines = charges.filter((l) => l.currency === cur);
+  const sum = (ls: any[]) => ls.reduce((t, l) => t + val(l), 0);
+  if (!lines.length || lines.length !== charges.length) return { total, currency: cur, lines: [] as any[], note: null as string | null };
+  if (total === null) return { total: sum(lines) / 100, currency: cur, lines, note: null };
+  if (sum(lines) === cent(total)) return { total, currency: cur, lines, note: null };
+  // the all-in line listed together with its own breakup
+  const allIn = lines.findIndex((l, i) => val(l) === cent(total) && sum(lines.filter((_, j) => j !== i)) === cent(total));
+  if (allIn >= 0) return { total, currency: cur, lines: lines.filter((_, j) => j !== allIn), note: null };
+  return { total, currency: cur, lines: [], note: `The charge lines add up to ${cur} ${(sum(lines) / 100).toLocaleString('en-US')}, not the ${cur} ${total.toLocaleString('en-US')} quoted — check the breakup` };
+}
 
 const num = (v: unknown) => { const n = Number(String(v ?? '').replace(/,/g, '')); return Number.isFinite(n) && n > 0 ? Math.round(n * 100) / 100 : null; };
 const int = (v: unknown, max: number) => { const n = Math.round(Number(v)); return Number.isFinite(n) && n >= 0 && n <= max ? n : null; };
@@ -134,7 +159,7 @@ export async function readQuote(actor: Actor, emailId: string) {
   const old = await one(`select * from ai_suggestions where email_id = $1 and kind = 'quote'`, [emailId]);
   if (old) return { suggestion: old };                                    // read once
   const r = await one(`select r.*, v.name vendor_name from vendor_requests r join vendors v on v.id = r.vendor_id where r.id = $1`, [e.vendor_request_id]);
-  const f = await one('select enquiry_ref, mode, port_of_loading, port_of_discharge, origin, destination, gross_weight_kg, volume_cbm from job_files where id = $1', [e.job_file_id]);
+  const f = await one('select enquiry_ref, job_no, mode, port_of_loading, port_of_discharge, origin, destination, gross_weight_kg, volume_cbm from job_files where id = $1', [e.job_file_id]);
 
   const body = (await emailText(e)).slice(0, 12000);
   const box = e.attachment_count && e.message_id
@@ -152,7 +177,9 @@ ${body || '(no text)'}`
     `You read an agent's or carrier's reply to a rate request from Reliance Freight Systems, a freight forwarder in Dubai, UAE.
 Pick out the price they offer for this shipment. Use only what the email and attachments say; never guess a price or fill from general knowledge.
 Our own request text is often quoted below their reply: prices only count when the VENDOR wrote them. Dates as YYYY-MM-DD (today is ${today()}; with no year, use the next such date).
-If they give several options (e.g. two carriers), take the cheapest complete one and mention the others in the summary.`,
+If they give several options (e.g. two carriers), take the cheapest complete one and mention the others in the summary.
+"All in 4500, breakup: 500 + 75 + 3925" → total 4500 and three charge lines (the all-in line is NOT a charge line).
+Leave a field out when the email does not say it — never write "not stated", "N/A" or similar.`,
     att.blocks.length ? [...att.blocks, { type: 'text', text }] : text, TOOL, 1500, 9000);
 
   // checked here, never taken on trust
@@ -160,21 +187,22 @@ If they give several options (e.g. two carriers), take the cheapest complete one
     section: CHARGE_SECTIONS.some(([k]) => k === l?.section) ? l.section : 'other', description: txt(l?.description, 200) ?? 'Charge', basis: txt(l?.basis, 60),
     quantity: num(l?.quantity) ?? 1, amount: num(l?.amount), currency: String(l?.currency ?? '').trim().toUpperCase().slice(0, 3) || null,
   })).filter((l: any) => l.amount !== null);
-  let currency = String(x?.currency ?? '').trim().toUpperCase().slice(0, 3) || charges[0]?.currency || null;
-  const oneCur = charges.length > 0 && charges.every((l: any) => l.currency === charges[0].currency);
-  let total = num(x?.total);
-  if (oneCur && (!currency || currency === charges[0].currency)) {          // the lines in one currency: the total is their sum
-    total = Math.round(charges.reduce((s: number, l: any) => s + l.quantity * l.amount * 100, 0)) / 100; currency = charges[0].currency;
-  }
+  const t = settleTotal(num(x?.total), String(x?.currency ?? '').trim().toUpperCase().slice(0, 3) || null, charges);
+  const { total, currency } = t;
   const hasRate = !!x?.has_rate && total !== null;
+  // our own numbers are not their reference; "not stated" is no answer
+  const ours = [r.request_no, f?.enquiry_ref, f?.job_no].filter(Boolean).map((v: string) => v.toUpperCase());
+  let ref = blank(txt(x?.vendor_reference, 80));
+  if (ref && (ours.includes(ref.toUpperCase()) || /^(ENQ|VR|SI|SE|AI|AE)-/i.test(ref))) ref = null;
   const rate = hasRate ? {
-    quoted_cost: total, currency, currency_ok: isCurrency(currency), charges: oneCur && isCurrency(currency) ? charges : [], charges_seen: charges,
-    transit_days: int(x?.transit_days, 365), free_days: int(x?.free_days, 365), etd: date(x?.etd), routing: txt(x?.routing, 300), carrier: txt(x?.carrier, 120),
-    rate_valid_until: date(x?.valid_until), vendor_reference: txt(x?.vendor_reference, 80), inclusions: txt(x?.inclusions, 2000), exclusions: txt(x?.exclusions, 2000),
+    v: QUOTE_V, quoted_cost: total, currency, currency_ok: isCurrency(currency), charges: isCurrency(currency) ? t.lines : [], charges_seen: charges,
+    transit_days: int(x?.transit_days, 365), free_days: int(x?.free_days, 365), etd: date(x?.etd), routing: blank(txt(x?.routing, 300)), carrier: blank(txt(x?.carrier, 120)),
+    rate_valid_until: date(x?.valid_until), vendor_reference: ref, inclusions: blank(txt(x?.inclusions, 2000)), exclusions: blank(txt(x?.exclusions, 2000)),
     quote: txt(x?.quote, 200),
-  } : null;
+  } : { v: QUOTE_V };
   const summary = txt(x?.summary, 300) ?? '';
-  const unclear = hasRate ? (att.notes.length ? att.notes.map((n: string) => ({ note: n })) : []) : [{ note: txt(x?.no_rate_reason, 200) ?? 'No price in this reply' }];
+  const unclear = hasRate ? [...(t.note ? [{ note: t.note }] : []), ...att.notes.map((n: string) => ({ note: n }))]
+    : [{ note: txt(x?.no_rate_reason, 200) ?? 'No price in this reply' }];
   const s = await one(`insert into ai_suggestions (job_file_id, email_id, kind, vendor_request_id, status, summary, answers, unclear, model, read_by)
       values ($1, $2, 'quote', $3, $4, $5, $6, $7, $8, $9)
     on conflict (email_id, kind) do nothing returning *`,
@@ -188,6 +216,9 @@ export async function quoteBox(actor: Actor, fileId: string) {
   if (!canRead(actor)) return { allowed: false };                          // rates are cost: nothing shown, nothing read
   await loadFile(actor, fileId);
   await linkOldReplies(fileId);
+  // read the old way and not handled yet: read again (they show up as "not read yet" and the AI reads them by itself)
+  await q(`delete from ai_suggestions where job_file_id = $1 and kind = 'quote' and status in ('open', 'nothing')
+    and coalesce((answers->>'v')::int, 1) < ${QUOTE_V}`, [fileId]);
   const open = await q(`select s.id, s.email_id, s.summary, s.answers rate, s.unclear, s.created_at, e.from_name, e.from_addr, e.subject, e.sent_at,
       r.id request_id, r.request_no, r.status request_status, r.quoted_cost current_cost, r.currency current_currency, v.name vendor_name
     from ai_suggestions s join email_messages e on e.id = s.email_id join vendor_requests r on r.id = s.vendor_request_id join vendors v on v.id = r.vendor_id

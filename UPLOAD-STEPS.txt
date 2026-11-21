@@ -1,14 +1,8 @@
-RFS CRM — fix 5 (includes everything from fix 3 and fix 4: use this zip instead of them)
+RFS CRM — fix 6 (AI vendor rate: all-in price)
 
-1. Supabase → SQL editor: open db/migrations/036_hs_codes.sql from this zip, paste it all, Run.
-   (If you already ran it for fix 3 or fix 4, skip this step. Part B needs no new SQL.)
+No SQL this time.
 
-2. GitHub: upload all the files in this zip, in their folders, in ONE commit. Netlify builds by itself.
+1. GitHub: upload the files in this zip, in their folders, in ONE commit.
 
-3. Test the vendor rate: open the enquiry where the vendor replied → Rates & quotation tab.
-   A purple box "Rates from vendors' emails" reads the reply by itself (a few seconds) and shows the rate.
-   Check it, correct anything, press Save rate. The status changes from "Waiting for rate" to "Quoted".
-
-4. Test new customer: Enquiries → New enquiry → Customer box → "+ New customer" or "+ Walk-in customer".
-
-5. Commercials → Templates → HS codes: choose Tariff_Report.xlsx → Load.
+2. When published, open the enquiry ENQ-IMP-26-00008 -> Rates & quotation.
+   The AI reads the vendor reply again by itself and should show USD 4,500 with 3 lines (500, 75, 3,925).
