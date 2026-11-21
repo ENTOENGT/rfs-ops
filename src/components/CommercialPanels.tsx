@@ -9,6 +9,7 @@ import { useEffect, useState } from 'react';
 import { api, fmtDate, fmtDateTime, fmtMoney } from './api';
 import { useMe } from './Shell';
 import { SendAllRates } from './SendAllRates';
+import { AiQuotes } from './AiQuotes';
 import { StatusDot, statusText } from './Presence';
 import { EmailButton } from './EmailButton';
 import { NewVendorRequest } from './NewVendorRequest';
@@ -170,6 +171,7 @@ export function RatesAndQuotes({ d, reload }: { d: any; reload: () => void }) {
     <div className="panel"><h2>Rates and quotation</h2>
       {d.vendor_requests !== null && <>
         <h3 className="small" style={{ margin: '6px 0' }}>Rates received</h3>
+        {cost && rates.length > 0 && <AiQuotes fileId={d.id} onSaved={reload} />}
         {groups.length === 0 && routes.length <= 1 && <p className="muted small">No agent or carrier has been asked for a rate yet.</p>}
         {sections.map(([rt, gs]) => <div key={rt?.id ?? 'all'}>
         {rt && <div className="small" style={{ display: 'flex', gap: 8, alignItems: 'center', margin: '10px 0 4px', borderTop: '1px solid var(--line-soft)', paddingTop: 8 }}>

@@ -24,7 +24,7 @@ const BUILT_IN: Record<string, 'text' | 'number' | 'incoterm' | 'by_hand'> = {
 };
 
 /** The email's full text: kept copy, else fetched from the Outlook it arrived in, else the short preview. */
-async function emailText(e: any): Promise<string> {
+export async function emailText(e: any): Promise<string> {
   if (e.body_text) return e.body_text;
   if (e.source === 'mailbox' && e.message_id) {
     const box = await one(`select ms_message_id from outlook_inbox where user_id = $1 and internet_message_id = $2 limit 1`, [e.created_by, e.message_id]);
@@ -83,6 +83,7 @@ export async function readEmail(actor: Actor, emailId: string) {
   const d: any = await getJobFile(actor, e.job_file_id);              // also: may this person open the shipment?
   if (!d.can?.edit) throw forbidden('Only the people handling this enquiry can ask the AI to read its emails');
   if (e.direction !== 'in') throw bad('Only received emails are read');
+  if (e.vendor_request_id) throw bad('This is a vendor\'s reply to a rate request — its rate is read under "Rates and quotation"');
   const gaps: any[] = d.enquiry_gaps ?? [];
   const checks: any[] = d.enquiry_checks ?? [];
   const kindOf = (key: string) => BUILT_IN[key] ?? checks.find((c) => c.id === key)?.field_type ?? 'text';
@@ -139,8 +140,9 @@ ${text || '(the email has no text)'}`;
 /** The AI box on an enquiry: open suggestions, and received emails the AI has not read yet. */
 export async function suggestionsFor(actor: Actor, fileId: string) {
   const f = await loadFile(actor, fileId);
+  await (await import('./quotereader')).linkOldReplies(fileId);         // part B: vendors' replies are not the customer's
   const rows = await q(`select s.*, e.from_name, e.from_addr, e.subject, e.sent_at from ai_suggestions s join email_messages e on e.id = s.email_id
-     where s.job_file_id = $1 and s.status = 'open' order by e.sent_at desc nulls last`, [fileId]);
+     where s.job_file_id = $1 and s.kind = 'enquiry' and s.status = 'open' order by e.sent_at desc nulls last`, [fileId]);
   // answers already filled in (e.g. by another email's suggestion) are not offered again; a suggestion with nothing left closes
   const gapKeys = rows.length ? new Set(((await getJobFile(actor, fileId)) as any).enquiry_gaps?.map((g: any) => g.key) ?? []) : new Set();
   const open: any[] = [];
@@ -150,7 +152,7 @@ export async function suggestionsFor(actor: Actor, fileId: string) {
     open.push({ ...s, answers, unclear: (s.unclear as any[]).filter((u) => gapKeys.has(u.key)) });
   }
   const unread = f.status === 'enquiry' ? await q(`select e.id, e.from_name, e.from_addr, e.subject, e.sent_at from email_messages e
-     where e.job_file_id = $1 and e.direction = 'in' and not exists (select 1 from ai_suggestions s where s.email_id = e.id)
+     where e.job_file_id = $1 and e.direction = 'in' and e.vendor_request_id is null and not exists (select 1 from ai_suggestions s where s.email_id = e.id)
      order by e.sent_at desc nulls last limit 3`, [fileId]) : [];
   return { configured: aiConfig().ready, open, unread };
 }

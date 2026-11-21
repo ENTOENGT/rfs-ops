@@ -816,3 +816,17 @@ giving customers to other salesmen is for the Commercials Manager. Up to 1,000 r
   enquiries). The customer is added in the same save as the enquiry (`createWithCustomer` / `addCustomer` in `newenquiry.ts`,
   also used by "Create enquiry" from an email). Same company name → that customer is used; a walk-in needs a mobile, is marked
   "Walk-in customer" in remarks, and the same name with another mobile is refused (never a duplicate).
+
+### 15z+++. AI agent part B — vendors' rates from their emails (no migration; 20 Nov 2026)
+
+- `src/server/quotereader.ts`. A received email filed on an enquiry is matched to the rate request it answers (`matchVendorRequest`):
+  our VR no. in the subject / text, else the sender is the vendor's email, an address the request was sent to (To / CC), or the
+  same company domain (never a public mail domain, our own domain or the customer's). Marked on `email_messages.vendor_request_id`
+  plus "Vendor replied by email" in the request's history. Such a reply is not learnt as the customer's CC and part A ignores it.
+  Replies filed earlier are matched once when the enquiry is opened (`linkOldReplies`).
+- The box "Rates from vendors' emails" (component `AiQuotes`, under Rates and quotation; people who handle rate requests and
+  see cost only) reads each new reply once by itself (`/api/ai/quotes`): text + attachments → rate total, currency, charge lines,
+  transit, free days, ETD, routing, carrier, valid until, their reference, not-included. Stored as `ai_suggestions` kind 'quote'.
+- Save rate (`/api/ai/quotes/[id]`, action apply): the person's checked / corrected values go through the normal
+  `vendorRequestAction` (Quoted, or a revised rate version if one was in), in their name, with history. Charge lines are kept only
+  when in one currency and adding up to the rate. A reply with no price is shown as "replied without a rate — still waiting".

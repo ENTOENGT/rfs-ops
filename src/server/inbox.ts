@@ -68,9 +68,11 @@ export async function fileOnShipment(c: Db, actor: Actor, fileId: string, m: any
     [fileId, m.from_addr, m.from_name, m.to_addrs, m.cc_addrs, m.subject, m.received_at, m.internet_message_id, m.conversation_id,
       String(m.body_excerpt ?? '').slice(0, 2000), m.has_attachments ? 1 : 0, actor.id, actor.full_name, m.web_link]);
   if (!ins.rowCount) return;                                   // the same email is already on this shipment: no second history line
+  // AI part B: an agent's / carrier's reply to our rate request is marked on that request (and is not the customer's)
+  const vr = await (await import('./quotereader')).linkReply(c, actor, ins.rows[0].id, fileId, m);
   // migration 033: the customer's sender and the people they copied stay on this shipment's later emails
   const box = await one('select ms_email from outlook_connections where user_id = $1', [actor.id], c);
-  await (await import('./emailpeople')).learnFromReceived(c, fileId, m, box?.ms_email ?? null);
+  if (!vr) await (await import('./emailpeople')).learnFromReceived(c, fileId, m, box?.ms_email ?? null);
   const who = m.from_name || m.from_addr || 'someone';
   await event(c, actor, fileId, { kind: 'note', title: `Email received from ${who}`, new_value: `"${String(m.subject ?? '').slice(0, 200)}"${how === 'hand' ? ' — filed by hand' : ''}` });
   await notifyGroup(c, actor, fileId, 'email_saved', `from ${who}`);

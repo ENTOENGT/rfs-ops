@@ -868,3 +868,7 @@ tr.row-new-enq td { background: #F7F3FF; }
 /* New customer / walk-in typed on New enquiry */
 .new-cust { grid-column: 1 / -1; border: 1px dashed #b9c6d8; background: #F6F9FD; border-radius: 8px; padding: 10px 12px; }
 .new-cust .grid { margin-top: 6px; }
+
+/* AI part B: rates from vendors' emails */
+.ai-box .grid.g4 { gap: 8px 10px; }
+.ai-box table.t.compact td, .ai-box table.t.compact th { padding: 3px 8px; font-size: 12.5px; }

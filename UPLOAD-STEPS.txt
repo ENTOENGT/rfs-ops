@@ -1,13 +1,14 @@
-RFS CRM — fix 4 (includes everything from fix 3: use this zip instead of fix 3)
+RFS CRM — fix 5 (includes everything from fix 3 and fix 4: use this zip instead of them)
 
 1. Supabase → SQL editor: open db/migrations/036_hs_codes.sql from this zip, paste it all, Run.
-   (Safe to run twice. It only adds two new tables. If you already ran it for fix 3, nothing more to do here.)
+   (If you already ran it for fix 3 or fix 4, skip this step. Part B needs no new SQL.)
 
 2. GitHub: upload all the files in this zip, in their folders, in ONE commit. Netlify builds by itself.
 
-3. Test as the Coordinator: Enquiries → New enquiry → Customer box → "+ New customer (company)" or
-   "+ Walk-in customer (person)". Fill the name (and mobile for walk-in), the rest of the enquiry, save.
-   The customer appears in Customers, with the chosen Salesman as owner.
+3. Test the vendor rate: open the enquiry where the vendor replied → Rates & quotation tab.
+   A purple box "Rates from vendors' emails" reads the reply by itself (a few seconds) and shows the rate.
+   Check it, correct anything, press Save rate. The status changes from "Waiting for rate" to "Quoted".
 
-4. Commercials → Templates → HS codes: choose Tariff_Report.xlsx → Load.
-   You should see 9,464 codes (7,855 active), 3,232 prohibited / restricted lines, as on 03rd February 2022.
+4. Test new customer: Enquiries → New enquiry → Customer box → "+ New customer" or "+ Walk-in customer".
+
+5. Commercials → Templates → HS codes: choose Tariff_Report.xlsx → Load.
