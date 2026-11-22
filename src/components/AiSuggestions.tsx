@@ -59,7 +59,9 @@ export function AiSuggestions({ fileId, canEdit, hasGaps, onApplied }: { fileId:
             <span><b>{a.label}:</b> {a.value === 'yes' ? 'Yes' : a.value === 'no' ? 'No' : /^\d{4}-\d{2}-\d{2}$/.test(a.value) ? fmtDate(a.value) : a.value}
               {a.by_hand && <span className="muted small"> (fill in by hand — needs sizes per package)</span>}
               {a.quote && <span className="ai-quote">“{a.quote}”</span>}</span></li>)}</ul>
-          {s.unclear.length > 0 && <p className="muted small" style={{ margin: '4px 0' }}>Not answered clearly: {s.unclear.map((u: any) => `${u.label}${u.note ? ` (${u.note})` : ''}`).join(', ')}</p>}
+          {s.unclear.some((u: any) => u.key !== 'flag') && <p className="muted small" style={{ margin: '4px 0' }}>Not answered clearly: {s.unclear.filter((u: any) => u.key !== 'flag').map((u: any) => `${u.label}${u.note ? ` (${u.note})` : ''}`).join(', ')}</p>}
+          {/* batch 1: contradictions and remarks that change price / services — to check, not to fill */}
+          {s.unclear.some((u: any) => u.key === 'flag') && <div className="ai-flags">{s.unclear.filter((u: any) => u.key === 'flag').map((u: any, i: number) => <p key={i} className="small">⚠ {u.note}</p>)}</div>}
           {canEdit && <div style={{ display: 'flex', gap: 6, marginTop: 6 }}>
             <button className="btn small primary" disabled={!can} onClick={() => apply(s)}>Fill in ticked ({can})</button>
             <button className="btn small" onClick={() => dismiss(s)}>Dismiss</button></div>}

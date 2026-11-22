@@ -1,6 +1,7 @@
 'use client';
 import CustomerContacts from './CustomerContacts';
 import AgentCoverage from './AgentCoverage';
+import VendorTeams from './VendorTeams';
 import SendAppLink from './SendAppLink';
 import { useEffect, useState } from 'react';
 import { api, fmtDate } from './api';
@@ -95,6 +96,7 @@ export default function MasterPage({ entity, embedded }: { entity: string; embed
   const hasContacts = entity === 'customers';
   const hasCoverage = entity === 'vendors';
   const [coverageFor, setCoverageFor] = useState<string | null>(null);
+  const [teamsFor, setTeamsFor] = useState<string | null>(null);   // migration 038
   const load = () => api(`/api/masters/${entity}?q=${encodeURIComponent(q)}&page_size=500`).then(setData).catch((e) => setMsg({ t: 'err', m: e.message }));
   useEffect(() => { const t = setTimeout(load, 200); return () => clearTimeout(t); }, [q, entity]);
   const remove = async (r: any) => {
@@ -134,6 +136,7 @@ export default function MasterPage({ entity, embedded }: { entity: string; embed
                 {canSendApp && <><button className="btn small" onClick={() => setAppFor(r)}>Send app link</button>{' '}</>}
                 {hasContacts && <><button className="btn small" onClick={() => setContactsFor(r.id)}>Contacts &amp; Salesmen</button>{' '}</>}
                 {hasCoverage && <><button className="btn small" onClick={() => setCoverageFor(r.id)}>Coverage</button>{' '}</>}
+                {hasCoverage && <><button className="btn small" onClick={() => setTeamsFor(r.id)}>Teams</button>{' '}</>}
                 {canEdit && <><button className="btn small" onClick={() => setEdit(r)}>Edit</button>{' '}
                 <button className="btn small danger" onClick={() => remove(r)}>Remove</button></>}</td>}
             </tr>))}
@@ -146,6 +149,7 @@ export default function MasterPage({ entity, embedded }: { entity: string; embed
       </div>
       {contactsFor && <CustomerContacts customerId={contactsFor} onClose={() => setContactsFor(null)} />}
       {coverageFor && <AgentCoverage vendorId={coverageFor} onClose={() => setCoverageFor(null)} />}
+      {teamsFor && <VendorTeams vendorId={teamsFor} onClose={() => setTeamsFor(null)} />}
       {appFor && <SendAppLink driverId={appFor.id} name={appFor.full_name} onClose={(ch) => { setAppFor(null); if (ch) load(); }} />}
       {edit && <Form entity={entity} row={edit} onClose={() => setEdit(null)}
         onDone={(m) => { setEdit(null); setMsg({ t: 'ok', m }); load(); reloadLookups(); }} />}

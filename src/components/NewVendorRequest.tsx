@@ -23,6 +23,16 @@ export function NewVendorRequest({ jobNo, jobFileId, service = 'rate', sameAs, d
   const [err, setErr] = useState('');
   const [busy, setBusy] = useState(false);
   const multi = nw.service === 'rate';
+  // migration 038: one vendor chosen → its teams, with the one for this enquiry's mode / direction picked
+  const oneVendor: string | null = multi ? (nw.vendor_ids.length === 1 ? nw.vendor_ids[0] : null) : nw.vendor_id || null;
+  const [teams, setTeams] = useState<any>(null);
+  useEffect(() => {
+    setTeams(null);
+    if (!oneVendor) return;
+    api(`/api/vendors/${oneVendor}/teams?for=1${jobFileId ? `&file=${jobFileId}` : ''}`).then((r) => {
+      setTeams(r); setNw((x: any) => ({ ...x, team_id: r.suggested ?? '' }));
+    }).catch(() => {});
+  }, [oneVendor]);
   const vendors = (lk.vendors ?? []).filter((v: any) => !sameAs?.asked.includes(v.id));
   // migration 034: the agents covering this enquiry's origin / destination are ticked by themselves
   const [sugg, setSugg] = useState<any>(null);
@@ -40,7 +50,8 @@ export function NewVendorRequest({ jobNo, jobFileId, service = 'rate', sameAs, d
     setErr(''); setBusy(true);
     try {
       const body = sameAs ? { same_as: sameAs.id, vendor_ids: nw.vendor_ids, needed_by: nw.needed_by || undefined }
-        : { ...nw, route_id: nw.route_id || undefined, job_file_id: jobFileId, job_no: jobFileId ? undefined : nw.job_no, vendor_ids: multi ? nw.vendor_ids : undefined, vendor_id: multi ? undefined : nw.vendor_id, quoted_cost: !multi || nw.vendor_ids.length === 1 ? nw.quoted_cost : undefined };
+        : { ...nw, route_id: nw.route_id || undefined, job_file_id: jobFileId, job_no: jobFileId ? undefined : nw.job_no, vendor_ids: multi ? nw.vendor_ids : undefined, vendor_id: multi ? undefined : nw.vendor_id, quoted_cost: !multi || nw.vendor_ids.length === 1 ? nw.quoted_cost : undefined,
+          team_id: oneVendor && teams?.rows.length ? nw.team_id ?? '' : undefined };
       onDone(await api('/api/vendor-requests', { body }));
     } catch (e: any) { setErr(e.message); } finally { setBusy(false); }
   };
@@ -74,6 +85,11 @@ export function NewVendorRequest({ jobNo, jobFileId, service = 'rate', sameAs, d
           {nw.vendor_ids.length > 0 && <div className="muted small">{nw.vendor_ids.length} vendor(s) chosen</div>}</div>
           : <label className="f"><span>Vendor <em>*</em></span><select value={nw.vendor_id ?? ''} onChange={(e) => setNw({ ...nw, vendor_id: e.target.value })}><option value="">Choose vendor</option>
             {vendors.map((v: any) => <option key={v.id} value={v.id}>{v.name}</option>)}</select></label>}
+        {oneVendor && teams?.rows.length > 0 && <label className="f"><span>Vendor team</span>
+          <select value={nw.team_id ?? ''} onChange={(e) => setNw({ ...nw, team_id: e.target.value })}>
+            <option value="">The vendor's own email</option>
+            {teams.rows.map((t: any) => <option key={t.id} value={t.id}>{t.name} — {t.email}{t.id === teams.suggested ? ' (fits this enquiry)' : ''}</option>)}</select></label>}
+        {multi && nw.vendor_ids.length > 1 && <p className="muted small span2" style={{ margin: 0 }}>Vendors with teams: the team for this mode and direction gets the request.</p>}
         <label className="f"><span>{multi ? 'Reply needed by' : 'Needed by'}</span><input type="date" value={nw.needed_by ?? ''} onChange={(e) => setNw({ ...nw, needed_by: e.target.value })} /></label>
         {!sameAs && cost && (!multi || nw.vendor_ids.length <= 1) && <label className="f"><span>Vendor price (if known)</span><input value={nw.quoted_cost ?? ''} onChange={(e) => setNw({ ...nw, quoted_cost: e.target.value })} inputMode="decimal" /></label>}
         {!sameAs && <label className="f span2"><span>{multi ? 'What to quote (route, cargo, containers, dates)' : 'What the vendor must do'} <em>*</em></span>

@@ -831,3 +831,33 @@ giving customers to other salesmen is for the Commercials Manager. Up to 1,000 r
   `vendorRequestAction` (Quoted, or a revised rate version if one was in), in their name, with history. Charge lines are kept only
   when in one currency and adding up to the rate (an all-in line listed with its own breakup is dropped; the all-in price wins;
   our own ENQ / VR numbers are never "their reference"; "not stated" answers are left empty). A reply with no price is shown as "replied without a rate — still waiting".
+
+### 16. AI batch 1 — operations rules (migration 037, 21 Nov 2026)
+
+- `src/lib/opsRules.ts` — one set of rules used by the new-enquiry reader (`newenquiry.ts`, draft v4), the reply reader
+  (`agent.ts`, part A), "what is still missing" (`enquiryGaps`) and so the "ask the customer" email:
+  - `decideServices`: the Incoterm says which side (buyer / seller) does pickup, export clearance, freight, import clearance,
+    delivery; our customer is the buyer on imports, the seller on exports. The customer's own words (asked_services, addresses)
+    win; anything asked that is the other party's side, DAP/DDP delivery asked, CIF/CIP insurance asked, FOB export freight → a flag.
+    Sets needs_clearance / needs_transport and the insurance answer, with the reasons shown ("Why these services were ticked").
+  - `dgFromText`: general cargo / non-DG → DG = no (not asked). DG words (UN no., class, MSDS, lithium…) → never a silent no: flagged.
+  - `saysReady`: "ready for collection" etc. → cargo ready date today (a date given wins), `job_files.cargo_ready_confirmed`
+    (+ `_at` by trigger) and the remark "Customer confirmed that the cargo is ready for collection."
+  - `notNeeded`: questions not asked — stackable on FCL, DG on general cargo, insurance on CIF/CIP imports, ready date once confirmed.
+- The readers also capture the customer's remarks (into Remarks, added never replaced), which remarks change price / services
+  (highlighted), and contradictions (amber "⚠" lines). Reply suggestions carry them as answers `remarks` / `cargo_ready_confirmed`
+  and flags (`unclear` with key `flag`).
+
+### 17. AI batch 2 — vendor teams and past-job suggestions (migration 038, 21 Nov 2026)
+
+- `vendor_teams` (`src/server/vendorteams.ts`, Vendors → Teams): a vendor's departments, each with modes, directions, email + CC,
+  contact. Switched off, never deleted. `pickTeam`: a team naming the mode (and direction) wins; a team naming another mode /
+  direction never fits; none → the vendor's own email. `vendor_requests.team_id` is set when the request is made (chosen on the
+  form for one vendor, automatic per vendor when sending to several) and can be changed on the request (history "Team changed").
+  The vendor email draft goes to the team (To) and its CC addresses; part B recognises replies from the team's addresses.
+- Past jobs (`src/server/history.ts`): for the details still missing, the same customer's other enquiries / jobs (same direction;
+  pickup / POL from the same origin, delivery / POD to the same destination, Incoterm / commodity / habits from the same mode) —
+  the value used on most of them. Never shipment-specific details (weight, size, pieces, packages, dates, value). Past jobs that
+  disagree → nothing suggested, "Ask the customer by email". Shown on the New enquiry form (`FormHints`, before saving: the
+  Incoterm's addresses are needed to save) and on a saved enquiry (`PastJobHints`). Accept / Edit / Ignore are kept in
+  `history_choices` and the enquiry's history; an ignored value is not suggested again.

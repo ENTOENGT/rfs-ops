@@ -163,6 +163,7 @@ const FIELDS: Record<string, { label: string; parse: (v: unknown) => unknown }> 
   chargeable_weight_kg: { label: 'Chargeable weight (kg)', parse: (v) => num(v, 'Chargeable weight') },
   cargo_description: { label: 'Cargo', parse: (v) => txt(v, 2000) },
   remarks: { label: 'Remarks', parse: (v) => txt(v, 2000) },
+  cargo_ready_confirmed: { label: 'Cargo ready for collection', parse: flag },   // migration 037
 };
 
 // ------------------------------------------------------------ documents checklist (migration 016)

@@ -1,8 +1,14 @@
-RFS CRM — fix 6 (AI vendor rate: all-in price)
+RFS CRM — batch 1 + batch 2 together (one commit, one Netlify build)
 
-No SQL this time.
+1. Supabase → SQL editor: open db/migrations/037_ops_rules.sql from this zip, paste it all, Run.
+2. Same again with db/migrations/038_teams_history.sql. (Both are safe to run twice.)
 
-1. GitHub: upload the files in this zip, in their folders, in ONE commit.
+3. GitHub: upload all the files in this zip, in their folders, in ONE commit.
 
-2. When published, open the enquiry ENQ-IMP-26-00008 -> Rates & quotation.
-   The AI reads the vendor reply again by itself and should show USD 4,500 with 3 lines (500, 75, 3,925).
+4. Test batch 2:
+   a) Vendors → a vendor → Teams → Add team, e.g. "Sea FCL team", its email, tick Sea FCL. Save.
+      Then on a sea FCL enquiry ask that vendor for a rate: the form shows "Vendor team: Sea FCL team (fits this enquiry)",
+      and the email goes to the team's address.
+   b) New enquiry → choose a customer that has earlier enquiries, the division and Incoterm:
+      a green box "From this customer's past jobs" suggests e.g. the pickup address. Accept / Edit / Ignore.
+5. Test batch 1 as in the earlier steps (EXW general cargo "ready for collection" email).

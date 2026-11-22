@@ -163,6 +163,8 @@ export default function VendorRequest({ params }: { params: { id: string } }) {
         </div>
         <div><div className="panel"><h2>Details</h2><dl className="kv">
           <dt>Vendor</dt><dd>{d.vendor_name}{(d.vendor_contact || d.vendor_phone || d.vendor_email) && <div className="muted small">{[d.vendor_contact, d.vendor_phone, d.vendor_email].filter(Boolean).join(' · ')}</div>}</dd>
+          {/* migration 038: which of the vendor's teams gets the emails */}
+          <dt>Team</dt><dd><TeamPick d={d} onChanged={setD} /></dd>
           <dt>Service</dt><dd>{d.service_name}</dd>
           {d.rate_source && <><dt>Rate source</dt><dd>{d.rate_source_name}</dd></>}
           <dt>Shipment</dt><dd>{d.job_file_id ? <Link href={`/job-files/${d.job_file_id}`}>{ref}</Link> : '—'}</dd>
@@ -180,4 +182,20 @@ export default function VendorRequest({ params }: { params: { id: string } }) {
       </div>
     </div>
   );
+}
+
+/** Migration 038: the vendor's team this request goes to — changeable while it can be edited. */
+function TeamPick({ d, onChanged }: { d: any; onChanged: (x: any) => void }) {
+  const [teams, setTeams] = useState<any[] | null>(null);
+  const [err, setErr] = useState('');
+  useEffect(() => { api(`/api/vendors/${d.vendor_id}/teams?for=1`).then((r) => setTeams(r.rows)).catch(() => setTeams([])); }, [d.vendor_id]);
+  const label = d.team_name ? <>{d.team_name}<div className="muted small">{[d.team_contact, d.team_phone, d.team_email].filter(Boolean).join(' · ')}</div></> : <span className="muted">The vendor's own email</span>;
+  if (!d.can?.update || !teams?.length) return label;
+  return <>
+    <select value={d.team_id ?? ''} style={{ maxWidth: 360 }} onChange={async (e) => {
+      setErr(''); try { onChanged(await api(`/api/vendor-requests/${d.id}/team`, { body: { team_id: e.target.value } })); } catch (x: any) { setErr(x.message); }
+    }}><option value="">The vendor's own email</option>{teams.map((t: any) => <option key={t.id} value={t.id}>{t.name} — {t.email}</option>)}</select>
+    {d.team_email && <div className="muted small">{[d.team_contact, d.team_phone].filter(Boolean).join(' · ')}</div>}
+    {err && <div className="msg err small">{err}</div>}
+  </>;
 }

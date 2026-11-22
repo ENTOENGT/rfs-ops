@@ -16,6 +16,7 @@ import { INCOTERM_INFO } from '@/lib/incotermRules';
 import { TeamChat } from '@/components/TeamChat';
 import { AiSuggestions } from '@/components/AiSuggestions';
 import { HsCheck } from '@/components/HsCheck';
+import { PastJobHints } from '@/components/PastJobHints';
 import { StageHeader, HandlersPanel, RatesAndQuotes, BookingPanel, PrealertPanel, HandoverPanel, LclPanel } from '@/components/CommercialPanels';
 
 const RUN_STATUS: Record<string, string> = { pending: 'Waiting', assigned: 'Assigned', collected: 'Collected', delivered: 'Delivered', failed: 'Could not complete', cancelled: 'Cancelled' };
@@ -170,6 +171,7 @@ export default function JobFile({ params }: { params: { id: string } }) {
             {d.can.edit && <EmailButton kind="enquiry_missing" id={d.id} label="Ask the customer by email" className="btn small primary" onLogged={() => { load(); setEmailsKey((k) => k + 1); }} />}
             {d.can.edit && <button className="btn small" style={{ marginLeft: 6 }} onClick={() => { setEdit({ ...d, cargo_lines: (d.cargo_lines ?? []).map((l: any) => ({ ...l, length: Number(l.length), width: Number(l.width), height: Number(l.height), weight_kg: Number(l.weight_kg) })) }); window.scrollTo(0, 0); }}>Fill in</button>}
           </div>}
+      {!edit && d.status === 'enquiry' && (d.enquiry_gaps ?? []).length > 0 && <PastJobHints key={`h-${d.id}-${emailsKey}-${(d.enquiry_gaps ?? []).length}`} fileId={d.id} canEdit={!!d.can.edit} onChanged={load} />}
       {!edit && d.status === 'enquiry' && <AiSuggestions key={`${d.id}-${emailsKey}`} fileId={d.id} canEdit={!!d.can.edit} hasGaps={(d.enquiry_gaps ?? []).length > 0} onApplied={load} />}
       {edit ? <>
         <JobFileFields f={edit} setF={setEdit} />
@@ -213,6 +215,7 @@ export default function JobFile({ params }: { params: { id: string } }) {
               {(d.status !== 'enquiry' || d.etd || d.eta) && <>{kv('ETD / actual', `${fmtDate(d.etd)} / ${fmtDate(d.atd)}`)}{kv('ETA / actual', `${fmtDate(d.eta)} / ${fmtDate(d.ata)}`)}</>}
               {kv('Cargo', [d.packages && `${d.packages} ${(d.package_type ?? 'pkgs').toLowerCase()}`, d.gross_weight_kg && `${Number(d.gross_weight_kg).toLocaleString()} kg`,
                 d.volume_cbm && `${d.volume_cbm} CBM`, d.chargeable_weight_kg && `chargeable ${Number(d.chargeable_weight_kg).toLocaleString()} kg`].filter(Boolean).join(' · '))}
+              {d.cargo_ready_confirmed && kv('Cargo', <span className="ready-mark" title={d.cargo_ready_confirmed_at ? `Marked ${fmtDateTime(d.cargo_ready_confirmed_at)}` : ''}>✓ Ready for collection</span>)}
               {kv('Description', d.cargo_description)}{kv('Remarks', d.remarks)}
               {kv('Department', d.department_name)}{kv('Created', `${fmtDateTime(d.created_at)} by ${d.created_by_name}`)}
               {d.quotation && kv('Quotation', <Link href={`/quotations/${d.quotation.id}`}>{d.quotation.quote_no}</Link>)}

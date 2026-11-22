@@ -30,7 +30,8 @@ const today = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Dub
 // ------------------------------------------------------------------ 1. which rate request does a received email answer?
 /** The rate request on this enquiry that a received email answers, or null (then it is the customer's or someone else's). */
 export async function matchVendorRequest(db: Db, fileId: string, m: { from_addr?: string | null; subject?: string | null; body_excerpt?: string | null }) {
-  const reqs = await q(`select r.id, r.request_no, r.status, r.created_at, lower(v.email) vendor_email from vendor_requests r join vendors v on v.id = r.vendor_id
+  const reqs = await q(`select r.id, r.request_no, r.status, r.created_at, lower(v.email) vendor_email, lower(vt.email) team_email, lower(vt.cc_emails) team_cc
+    from vendor_requests r join vendors v on v.id = r.vendor_id left join vendor_teams vt on vt.id = r.team_id
     where r.job_file_id = $1 and r.service = 'rate' and r.status <> 'cancelled' order by r.created_at desc`, [fileId], db);
   if (!reqs.length) return null;
   const best = (rs: any[]) => rs.find((r) => r.status === 'requested') ?? rs.find((r) => r.status === 'quoted') ?? rs[0] ?? null;
@@ -40,7 +41,7 @@ export async function matchVendorRequest(db: Db, fileId: string, m: { from_addr?
   const from = String(m.from_addr ?? '').trim().toLowerCase();
   // the addresses each request went to (the vendor's email, and the To / CC of what we sent)
   const sent = await q(`select vendor_request_id id, to_addrs, cc_addrs from email_messages where job_file_id = $1 and direction = 'out' and vendor_request_id is not null`, [fileId], db);
-  const addrs = (r: any) => new Set([r.vendor_email, ...sent.filter((s) => s.id === r.id).flatMap((s) => [...list(s.to_addrs), ...list(s.cc_addrs)])].filter(Boolean));
+  const addrs = (r: any) => new Set([r.vendor_email, r.team_email, ...list(r.team_cc), ...sent.filter((s) => s.id === r.id).flatMap((s) => [...list(s.to_addrs), ...list(s.cc_addrs)])].filter(Boolean));
   if (byNo.length) {
     const fromVendor = byNo.filter((r) => from && (addrs(r).has(from) || [...addrs(r)].some((a) => !PUBLIC.has(domainOf(a)) && domainOf(a) === domainOf(from))));
     return best(fromVendor.length ? fromVendor : byNo)?.id ?? null;

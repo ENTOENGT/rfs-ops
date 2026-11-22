@@ -22,13 +22,14 @@ import { ensurePortsLoaded } from './ports';
 import { HOME_COUNTRY } from './agents';
 import { parseField } from './masters';
 import { MASTERS } from '../lib/masters';
+import { decideServices, dgFromText, ownWords, READY_REMARK, saysReady } from '../lib/opsRules';
 import { INCOTERMS } from '../lib/jobfileRules';
 import { PACKAGE_TYPES, cargoTotals, lineProblem } from '../lib/cargoRules';
 
 const isUuid = (v: unknown): v is string => typeof v === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v);
 const PUBLIC = new Set(['gmail.com', 'googlemail.com', 'yahoo.com', 'hotmail.com', 'outlook.com', 'live.com', 'icloud.com', 'aol.com', 'msn.com', 'yandex.com', 'proton.me', 'protonmail.com']);
 /** Raised when the reading gets better (attachments, cargo lines, HS codes…): drafts kept from before are read again once. */
-const DRAFT_VERSION = 3;
+const DRAFT_VERSION = 4;                    // 4 = batch 1 operations rules (services, ready, general cargo, remarks, flags)
 const today = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Dubai' });
 
 // ---------------------------------------------------------------- 1. the quick look
@@ -102,6 +103,13 @@ const EXTRACT = {
     stackable: { type: 'string', enum: ['yes', 'no', 'unknown'] }, insurance: { type: 'string', enum: ['yes', 'no', 'unknown'], description: 'Does the customer want cargo / marine insurance?' },
     cargo_value: { type: 'number', description: 'Invoice / cargo value as a number (e.g. 195635.14), if given.' },
     cargo_value_currency: { type: 'string', description: 'Currency of that value: AED, USD, EUR, INR or CNY.' },
+    asked_services: { type: 'object', description: 'What the CUSTOMER asks us to do, from their own words (not what the Incoterm implies). "door to door" = pickup and delivery yes; "port to port" = pickup and delivery no; "we will clear ourselves" = clearance no. unknown when not said.',
+      properties: { origin_pickup: { type: 'string', enum: ['yes', 'no', 'unknown'] }, export_clearance: { type: 'string', enum: ['yes', 'no', 'unknown'] }, freight: { type: 'string', enum: ['yes', 'no', 'unknown'] }, import_clearance: { type: 'string', enum: ['yes', 'no', 'unknown'] }, delivery: { type: 'string', enum: ['yes', 'no', 'unknown'] } } },
+    cargo_ready_now: { type: 'boolean', description: 'true when they say the cargo is ready now (ready for collection / cargo ready / available for pickup) without a later date.' },
+    general_cargo: { type: 'boolean', description: 'true when they call it general cargo / non-DG / non-hazardous.' },
+    customer_remarks: { type: 'string', description: 'Remarks, special instructions or conditions the customer writes (e.g. fumigation needed, tail-lift truck, deliver before 10 Dec, insurance at 110%, payment terms), short, in their words. Empty if none.' },
+    remark_impacts: { type: 'array', items: { type: 'string' }, description: 'For each remark that changes the price, the services or who is responsible: one short line saying how. Empty when none.' },
+    conflicts: { type: 'array', items: { type: 'string' }, description: 'Things in the email that contradict each other or the Incoterm (e.g. FOB but asks pickup at the factory; two different weights). One short line each. Empty when none.' },
     summary: { type: 'string', description: 'One line: what the customer asks for.' },
   }, required: ['mode', 'hazardous', 'summary'] },
 };
@@ -177,6 +185,7 @@ export async function draftEnquiry(actor: Actor, id: string) {
   const { input: x } = await askWithTool(
     `You read a customer's email to Reliance Freight Systems, a freight forwarder in Dubai, UAE, and fill a new enquiry.
 Use only what the email says; leave a field empty when it is not there. Never guess prices. Dates as YYYY-MM-DD (today is ${today()}; with no year use the next such date).
+Read it like an experienced forwarding executive: "general cargo" means non-DG; "ready for collection" means ready now; read every remark and instruction, even outside the usual details.
 "Dubai", "Jebel Ali", "Sharjah", "Abu Dhabi" and "UAE" are in the United Arab Emirates.`,
     att.blocks.length ? [...att.blocks, { type: 'text', text: emailText }] : emailText,
     EXTRACT, 1200, 9000);
@@ -209,11 +218,23 @@ Use only what the email says; leave a field empty when it is not there. Never gu
   // checklist answers the email gives (cargo ready date, DG)
   const checks = await q(`select id, label from enquiry_checks where is_active`).catch(() => []);
   const details: Record<string, string> = {};
-  const ready = /^\d{4}-\d{2}-\d{2}$/.test(String(x.cargo_ready_date ?? '')) ? x.cargo_ready_date : null;
+  // 21 Nov, batch 1 — the operations rules (src/lib/opsRules.ts) settle what the email leaves to judgement
+  const said = `${ownWords(text)}\n${att.text}`;                     // a forwarded / replied email: not the quoted part
+  const flags: string[] = (Array.isArray(x.conflicts) ? x.conflicts : []).map((v: any) => String(v).slice(0, 300)).filter(Boolean).slice(0, 6);
+  // cargo ready: the date they give, else today when they say it is ready now
+  const dateGiven = /^\d{4}-\d{2}-\d{2}$/.test(String(x.cargo_ready_date ?? '')) ? x.cargo_ready_date : null;
+  const readyNow = !!x.cargo_ready_now || saysReady(said);
+  const ready = dateGiven ?? (readyNow ? today() : null);
+  const readyConfirmed = readyNow && (!dateGiven || dateGiven <= today());
   const rc = checks.find((c: any) => /ready/i.test(c.label)); if (rc && ready) details[rc.id] = ready;
-  const dg = checks.find((c: any) => /hazard|\bdg\b/i.test(c.label)); if (dg && ['yes', 'no'].includes(x.hazardous)) details[dg.id] = x.hazardous;
-  const st = checks.find((c: any) => /stack/i.test(c.label)); if (st && ['yes', 'no'].includes(x.stackable)) details[st.id] = x.stackable;
-  const ins = checks.find((c: any) => /insur/i.test(c.label)); if (ins && ['yes', 'no'].includes(x.insurance)) details[ins.id] = x.insurance;
+  // DG: "general cargo" = Non-DG; DG words = ask for the MSDS / UN number, never a silent "no"
+  const dgRule = dgFromText(`${x.cargo_description ?? ''}\n${said}`);
+  let haz: string | null = ['yes', 'no'].includes(x.hazardous) ? x.hazardous : null;
+  if (dgRule.dg === 'check' && haz !== 'yes') { haz = null; flags.push(`DG words in the email (${dgRule.words.slice(0, 4).join(', ')}) — confirm DG or not, with the MSDS / UN number, before quoting.`); }
+  else if ((x.general_cargo || dgRule.dg === 'no') && haz !== 'yes') haz = 'no';
+  const dg = checks.find((c: any) => /hazard|\bdg\b/i.test(c.label)); if (dg && haz) details[dg.id] = haz;
+  // FCL: stackable is never asked (kept only when they say it)
+  const st = checks.find((c: any) => /stack/i.test(c.label)); if (st && x.mode !== 'sea_fcl' && ['yes', 'no'].includes(x.stackable)) details[st.id] = x.stackable;
   const cargo = [x.cargo_description, x.containers, x.packages].map((s) => String(s ?? '').trim()).filter(Boolean).join(' · ').slice(0, 500) || null;
   // the packing list → cargo lines (only lines that pass the same checks as the form)
   const lines = (Array.isArray(x.cargo_lines) ? x.cargo_lines : []).map((l: any) => {
@@ -227,10 +248,23 @@ Use only what the email says; leave a field empty when it is not there. Never gu
   // every HS code, once
   const hsCodes = [...new Set((Array.isArray(x.hs_codes) ? x.hs_codes : []).map((h: any) => String(h).replace(/[^0-9]/g, '')).filter((h: string) => h.length >= 4 && h.length <= 12))];
   const hs = checks.find((c: any) => /hs\s*code/i.test(c.label)); if (hs && hsCodes.length) details[hs.id] = hsCodes.join(', ');
+  // services: the Incoterm's default, the customer's own words win, clashes flagged
+  const incoterm = inc && INCOTERMS.includes(inc) ? inc : null;
+  const yn = (v: any) => (['yes', 'no'].includes(v) ? v : 'unknown');
+  const a = x.asked_services ?? {};
+  const svc = decideServices({ incoterm, direction, pickup_address: x.pickup_address, delivery_address: x.delivery_address,
+    asked: { origin_pickup: yn(a.origin_pickup), export_clearance: yn(a.export_clearance), freight: yn(a.freight), import_clearance: yn(a.import_clearance), delivery: yn(a.delivery), insurance: yn(x.insurance) } });
+  const ins = checks.find((c: any) => /insur/i.test(c.label)); if (ins && svc.insurance) details[ins.id] = svc.insurance;
+  // remarks: what the customer wrote, kept and highlighted when it changes price / services / responsibility
+  const remarks = [String(x.customer_remarks ?? '').trim().slice(0, 1500), readyConfirmed ? READY_REMARK : ''].filter(Boolean).join('\n') || null;
+  const impacts = (Array.isArray(x.remark_impacts) ? x.remark_impacts : []).map((v: any) => String(v).slice(0, 300)).filter(Boolean).slice(0, 6);
   const draft = {
     status: 'enquiry', customer_id: known?.id ?? null, customer_name: known?.name ?? null, new_customer: newCustomer, salesman_id: salesman,
     division: direction === 'export' ? 'exports' : direction === 'import' ? 'imports' : direction === 'cross_trade' ? 'cross_trade' : null,
-    direction, mode: mode ?? 'sea_fcl', incoterm: inc && INCOTERMS.includes(inc) ? inc : null,
+    direction, mode: mode ?? 'sea_fcl', incoterm,
+    ...(svc.needs_clearance !== null ? { needs_clearance: svc.needs_clearance } : {}), ...(svc.needs_transport !== null ? { needs_transport: svc.needs_transport } : {}),
+    cargo_ready_confirmed: readyConfirmed, remarks,
+    ai_notes: { services: svc.reasons, flags: [...svc.flags, ...flags], remarks: impacts },
     origin_country: oc, destination_country: dc,
     port_of_loading: pol?.name ?? (String(x.origin_port ?? '').trim() || null), pol_code: pol?.code ?? null,
     port_of_discharge: pod?.name ?? (String(x.destination_port ?? '').trim() || null), pod_code: pod?.code ?? null,
@@ -283,9 +317,10 @@ export async function addCustomer(c: any, actor: Actor, nc: any, salesmanId: unk
 
 /** New enquiry / Job File from the form: when "New customer" or "Walk-in customer" was chosen, the customer is added first (same save). */
 export async function createWithCustomer(actor: Actor, b: any) {
-  const { new_customer: nc, ...e } = b ?? {};
-  if (isUuid(e.customer_id) || !nc) return createJobFile(actor, e);
+  const { new_customer: nc, history_used: used, ...e } = b ?? {};
+  const { logUsedHints } = await import('./history');                     // migration 038: past-job suggestions used on the form
   return tx(async (c) => {
+    if (isUuid(e.customer_id) || !nc) { const jf = await createJobFile(actor, e, c); await logUsedHints(c, actor, jf.id, used); return jf; }
     const r = await addCustomer(c, actor, nc, e.salesman_id, 'Customer created on New enquiry');
     const jf = await createJobFile(actor, { ...e, customer_id: r.id }, c);
     return { ...jf, customer_created: r.created };

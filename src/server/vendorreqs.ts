@@ -85,8 +85,9 @@ export async function getVendorRequest(actor: Actor, id: string) {
   if (!isUuid(id)) throw notFound('Request');
   const sp: unknown[] = [id];
   const r = await one(`select r.*, v.name vendor_name, v.vendor_type, v.contact_person vendor_contact, v.contact_number vendor_phone, v.email vendor_email,
+      vt.name team_name, vt.email team_email, vt.cc_emails team_cc, vt.contact_person team_contact, vt.phone team_phone,
       f.job_no, f.enquiry_ref, f.shipping_ref, f.mode file_mode, u.full_name created_by_name, au.full_name assigned_to_name, rr.request_no rate_request_no
-      from vendor_requests r join vendors v on v.id = r.vendor_id left join job_files f on f.id = r.job_file_id
+      from vendor_requests r join vendors v on v.id = r.vendor_id left join job_files f on f.id = r.job_file_id left join vendor_teams vt on vt.id = r.team_id
       join users u on u.id = r.created_by left join users au on au.id = r.assigned_to left join vendor_requests rr on rr.id = r.rate_request_id
       where r.id = $1${vrScope(actor, sp)}`, sp);
   if (!r) throw notFound('Request');
@@ -171,18 +172,23 @@ export async function createVendorRequest(actor: Actor, b: any, client?: PoolCli
     if (!group && vendorIds.length > 1) group = (await one('select gen_random_uuid() id', [], c)).id;
     const made: { id: string; request_no: string }[] = [];
     const vtypes = await q('select id, vendor_type from vendors where id = any($1)', [vendorIds], c);
+    // migration 038: the vendor's team for this mode and direction (or the one chosen by hand; '' = the vendor's own email)
+    const fm = fileId ? await one('select mode, direction from job_files where id = $1', [fileId], c) : null;
+    const { pickTeam, checkTeam } = await import('./vendorteams');
     for (const vid of vendorIds) {
       // where the rate comes from: chosen, or from the vendor's type (shipping line / airline / agent)
       const vt = vtypes.find((v) => v.id === vid)?.vendor_type;
       const source = assigned ? 'agent_coordinator' : b.rate_source || (vt === 'shipping_line' ? 'shipping_line' : vt === 'airline' ? 'airline'
         : ['freight_agent', 'overseas_agent'].includes(vt) ? 'overseas_agent' : 'other');
+      const team = vendorIds.length === 1 && b.team_id !== undefined ? { id: await checkTeam(c, vid, b.team_id) } : await pickTeam(c, vid, fm?.mode ?? b.mode, fm?.direction ?? b.direction);
+      const teamName = team?.id ? (await one('select name from vendor_teams where id = $1', [team.id], c))?.name : null;
       const r = await one(`insert into vendor_requests (request_no, vendor_id, job_file_id, department_id, service, description, needed_by, quoted_cost, currency, created_by,
-          rate_valid_until, rate_group, rate_source, assigned_to, route_id)
-        values ('VR-' || nextval('vendor_request_no_seq'), $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) returning id, request_no`,
+          rate_valid_until, rate_group, rate_source, assigned_to, route_id, team_id)
+        values ('VR-' || nextval('vendor_request_no_seq'), $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15) returning id, request_no`,
         [vid, fileId, actor.department_side === 'operations' ? actor.department_id : null, b.service, description, b.needed_by || null, cost,
-         currency, actor.id, b.rate_valid_until || null, group, b.service === 'rate' || b.service === 'booking' ? source : null, assigned, routeId], c);
+         currency, actor.id, b.rate_valid_until || null, group, b.service === 'rate' || b.service === 'booking' ? source : null, assigned, routeId, team?.id ?? null], c);
       await evt(c, actor, r.id, 'Request created', VR_SERVICES[b.service] + (group ? ' — sent to several vendors for comparison' : '')
-        + (assigned ? ' — assigned to the Agent Coordinator' : ''));
+        + (assigned ? ' — assigned to the Agent Coordinator' : '') + (teamName ? ` — to the ${teamName}` : ''));
       if (assigned && !fileId) await c.query('insert into notifications (user_id, type, title) values ($1,$2,$3)', [assigned, 'vr.assigned', `Rate request ${r.request_no} assigned to you`]);
       if (fileId && b.service === 'rate') await (await import('./notify')).notifyGroup(c, actor, fileId, 'rate_requested', `${r.request_no}${assigned ? ' (Agent Coordinator)' : ''}`, { vendorRequestId: r.id, also: [assigned] });
       made.push(r);

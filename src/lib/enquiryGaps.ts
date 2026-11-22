@@ -5,6 +5,7 @@
  */
 import { incotermMissing, incotermRequired } from './incotermRules';
 import { dimsRequired } from './cargoRules';
+import { notNeeded } from './opsRules';
 
 export type EnquiryCheck = { id: string; label: string; ask_text: string; field_type: string; divisions: string[]; modes: string[]; is_active?: boolean };
 export type Gap = { key: string; label: string; ask: string; built_in: boolean };
@@ -34,6 +35,7 @@ export function enquiryGaps(f: Record<string, any>, checks: EnquiryCheck[]): Gap
   if (f.mode === 'sea_fcl' && !lines && blank(f.gross_weight_kg)) out.push({ key: 'gross_weight_kg', label: 'Cargo weight', ask: 'the total cargo weight', built_in: true });
   if (blank(f.cargo_description)) out.push({ key: 'cargo_description', label: 'Commodity', ask: 'a short description of the goods', built_in: true });
   const d = f.enquiry_details ?? {};
-  for (const c of checksFor(checks, f.division, f.mode)) if (blank(d[c.id])) out.push({ key: c.id, label: c.label, ask: c.ask_text, built_in: false });
+  // 21 Nov: questions the operations rules answer are not asked (FCL stackable, general cargo DG, CIF/CIP import insurance…)
+  for (const c of checksFor(checks, f.division, f.mode)) if (blank(d[c.id]) && !notNeeded(c.label, f)) out.push({ key: c.id, label: c.label, ask: c.ask_text, built_in: false });
   return out;
 }

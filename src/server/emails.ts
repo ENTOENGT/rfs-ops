@@ -114,7 +114,12 @@ async function vendorDraft(actor: Actor, id: string, key?: string): Promise<Draf
   const r = await getVendorRequest(actor, id);
   if (!r.can.update) throw new ApiError(403, 'FORBIDDEN', 'You can\'t send vendor requests');
   const f = r.job_file_id ? await shipment(r.job_file_id) : null;
-  const recipients: Recipient[] = r.vendor_email && EMAIL.test(r.vendor_email) ? [{ name: r.vendor_contact || r.vendor_name, email: r.vendor_email, role: r.vendor_name, picked: true }] : [];
+  // migration 038: the vendor's team for this request (Sea FCL team…) gets the email, its other addresses in CC
+  const recipients: Recipient[] = r.team_email && EMAIL.test(r.team_email)
+    ? [{ name: r.team_contact || `${r.vendor_name} – ${r.team_name}`, email: r.team_email, role: `${r.vendor_name} – ${r.team_name}`, picked: true, place: 'to' },
+      ...String(r.team_cc ?? '').split(/[,;\s]+/).filter((e: string) => EMAIL.test(e)).map((e: string) => ({ name: e, email: e, role: `${r.vendor_name} – ${r.team_name}`, picked: true, place: 'cc' as const }))]
+    : r.vendor_email && EMAIL.test(r.vendor_email) ? [{ name: r.vendor_contact || r.vendor_name, email: r.vendor_email, role: r.vendor_name, picked: true }] : [];
+  if (r.team_email) r.vendor_contact = r.team_contact || null;           // "Dear <team contact>" or "Dear <vendor> team"
   const note = recipients.length ? undefined : `${r.vendor_name} has no email saved. Add it under Vendors, or type the address in your email program.`;
   const templated = ['rate', 'booking'].includes(r.service) && f;
   if (templated) {

@@ -872,3 +872,13 @@ tr.row-new-enq td { background: #F7F3FF; }
 /* AI part B: rates from vendors' emails */
 .ai-box .grid.g4 { gap: 8px 10px; }
 .ai-box table.t.compact td, .ai-box table.t.compact th { padding: 3px 8px; font-size: 12.5px; }
+
+/* AI batch 1: flags and remarks that matter */
+.ai-flags { background: #FFF8E6; border-left: 3px solid #B7791F; border-radius: 4px; padding: 4px 10px; margin: 4px 0 6px; }
+.ai-flags p, .ai-remarks p { margin: 3px 0; }
+.ai-remarks { background: #F0F5FC; border-left: 3px solid #2B6CB0; border-radius: 4px; padding: 4px 10px; margin: 4px 0 6px; }
+.ready-mark { display: inline-block; background: #E8F5EE; color: #22663F; border: 1px solid #B6DEC6; border-radius: 12px; padding: 1px 10px; font-size: 12px; font-weight: 600; }
+
+/* migration 038: suggestions from past jobs */
+.hist-box { background: #F3F8F4; border-color: #BFDCC8; }
+.hist-box .ai-tag { background: #2F855A; }

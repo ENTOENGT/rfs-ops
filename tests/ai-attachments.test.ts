@@ -79,7 +79,7 @@ test('the attached sheet is read as text, the PDF goes to the AI as it is; old .
   assert.deepEqual([d.cargo_value, d.cargo_value_currency], [195635.14, 'AED']);
   const labels = await q(`select id, label from enquiry_checks`);
   const ans = (re: RegExp) => d.enquiry_details?.[labels.find((l: any) => re.test(l.label))?.id];
-  assert.deepEqual([ans(/hazard/i), ans(/stack/i), ans(/insur/i)], ['no', 'yes', 'yes']);
+  assert.deepEqual([ans(/hazard/i), ans(/stack/i), ans(/insur/i)], ['no', undefined, 'yes'], 'FCL: stackable is not taken (batch 1)');
 });
 
 test('read once: the next time it comes from what was kept', async () => {

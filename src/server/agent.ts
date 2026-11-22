@@ -13,6 +13,7 @@ import { ApiError, bad, forbidden, notFound, one, q } from './db';
 import { askWithTool, aiConfig } from './ai';
 import { graph } from './outlook';
 import { event, getJobFile, loadFile, updateJobFile } from './jobfiles';
+import { dgFromText, ownWords, READY_REMARK, saysReady } from '../lib/opsRules';
 import { INCOTERM_INFO } from '../lib/incotermRules';
 
 const isUuid = (v: unknown): v is string => typeof v === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v);
@@ -22,6 +23,9 @@ const BUILT_IN: Record<string, 'text' | 'number' | 'incoterm' | 'by_hand'> = {
   pickup_address: 'text', delivery_address: 'text', named_place: 'text', port_of_loading: 'text', port_of_discharge: 'text',
   cargo_value: 'text', cargo_description: 'text', gross_weight_kg: 'number', incoterm: 'incoterm', cargo_lines: 'by_hand',
 };
+
+/** Not missing details, but taken from the customer's reply too (batch 1): the "ready" mark and their remarks. */
+const EXTRA = ['cargo_ready_confirmed', 'remarks'];
 
 /** The email's full text: kept copy, else fetched from the Outlook it arrived in, else the short preview. */
 export async function emailText(e: any): Promise<string> {
@@ -56,6 +60,10 @@ const TOOL = {
       unclear: { type: 'array', description: 'Details the sender mentioned but did not really answer (NA, not known yet, will advise, unclear).', items: { type: 'object', properties: {
         key: { type: 'string' }, note: { type: 'string', description: 'What they said, in a few words.' },
       }, required: ['key', 'note'] } },
+      ready_now: { type: 'boolean', description: 'true when the sender says the cargo is ready now (ready for collection / cargo ready / available for pickup).' },
+      remarks: { type: 'string', description: 'New remarks, instructions or conditions the sender gives in this email (fumigation, tail-lift, deliver before…, payment terms), short, in their words. Empty if none.' },
+      remark_impacts: { type: 'array', items: { type: 'string' }, description: 'For each remark that changes the price, the services or who is responsible: one short line saying how.' },
+      conflicts: { type: 'array', items: { type: 'string' }, description: 'Anything in this email that contradicts the enquiry or itself (another weight, another Incoterm, a service outside the term). One short line each.' },
       summary: { type: 'string', description: 'One short sentence: what this email says about the enquiry.' },
     },
     required: ['answers', 'unclear', 'summary'],
@@ -89,7 +97,6 @@ export async function readEmail(actor: Actor, emailId: string) {
   const kindOf = (key: string) => BUILT_IN[key] ?? checks.find((c) => c.id === key)?.field_type ?? 'text';
   const old = await one(`select * from ai_suggestions where email_id = $1 and kind = 'enquiry'`, [emailId]);
   if (old && old.status !== 'open') return { suggestion: old };        // already read and decided
-  if (!gaps.length) return { suggestion: null, nothing_missing: true };
 
   const text = (await emailText(e)).slice(0, MAX_TEXT);
   const asked = gaps.map((g) => `- key: ${g.key} | ${g.label} | answer format: ${({ yes_no: 'yes or no', date: 'date YYYY-MM-DD', number: 'number only (kg)', incoterm: '3-letter Incoterm code', by_hand: 'text' } as any)[kindOf(g.key)] ?? 'short text'} | we asked for: ${g.ask}`).join('\n');
@@ -99,11 +106,13 @@ Find which of the missing details the SENDER answered in this email. Rules:
 - Customers often type their answers next to our questions inside the quoted text (for example "- The total cargo weight: 40 Kg"). Our question text on its own is not an answer; only what the sender wrote after it is.
 - If the sender wrote NA, not available, will advise, or left it empty, put that detail under "unclear", not "answers".
 - Format: yes/no details as "yes" or "no"; dates as YYYY-MM-DD (today is ${today()}; with no year, use the next such date); numbers as digits only; text short and as written.
-- Use only the keys in the list. Ignore anything about prices.`;
+- Use only the keys in the list. Ignore anything about prices.
+- Read it like an experienced forwarding executive: "general cargo" / non-DG means DG = no; "ready for collection" / "cargo ready" with no date means the cargo ready date is today (${today()}).
+- Read every remark and instruction, even when it is not one of the missing details.`;
   const user = `Enquiry ${d.enquiry_ref ?? ''}: ${d.direction ?? ''} ${d.mode ?? ''}, ${[d.origin || d.port_of_loading, d.destination || d.port_of_discharge].filter(Boolean).join(' to ') || 'route not known'}.
 
 Missing details:
-${asked}
+${asked || '(none — only look for remarks, instructions and contradictions)'}
 
 Email from ${e.from_name ? `${e.from_name} <${e.from_addr}>` : e.from_addr}, received ${e.sent_at ? new Date(e.sent_at).toISOString().slice(0, 16).replace('T', ' ') : ''}
 Subject: ${e.subject ?? ''}
@@ -127,6 +136,24 @@ ${text || '(the email has no text)'}`;
     const key = String(u?.key ?? '');
     if (gaps.some((g) => g.key === key) && !seen.has(key)) { unclear.push({ key, label: label(key), note: String(u.note ?? '').slice(0, 160) }); seen.add(key); }
   }
+  // batch 1 — the operations rules settle what the AI may have missed
+  const has = (k: string) => answers.some((a) => a.key === k);
+  const gapLike = (re: RegExp) => gaps.find((g) => !g.built_in && re.test(g.label));
+  const readyGap = gapLike(/ready/i), dgGap = gapLike(/hazard|\bdg\b/i);
+  const mine = ownWords(text);                                         // not our questions quoted below their reply
+  const laterDate = answers.find((a) => readyGap && a.key === readyGap.key && a.value > today());
+  const readyNow = (!!input?.ready_now || saysReady(mine)) && !laterDate;
+  if (readyNow && readyGap && !has(readyGap.key) && !unclear.some((u) => u.key === readyGap.key))
+    answers.push({ key: readyGap.key, label: readyGap.label, value: today(), quote: 'Cargo ready for collection — no date given, so today', by_hand: false });
+  const dgRule = dgFromText(mine);
+  if (dgGap && !has(dgGap.key) && dgRule.dg === 'no') answers.push({ key: dgGap.key, label: dgGap.label, value: 'no', quote: 'General cargo = Non-DG', by_hand: false });
+  if (dgGap && dgRule.dg === 'check') { const i = answers.findIndex((a) => a.key === dgGap.key && a.value === 'no'); if (i >= 0) answers.splice(i, 1);
+    unclear.push({ key: 'flag', label: 'Check', note: `DG words in the email (${dgRule.words.slice(0, 4).join(', ')}) — confirm DG with the MSDS / UN number` }); }
+  if (readyNow && !d.cargo_ready_confirmed) answers.push({ key: 'cargo_ready_confirmed', label: 'Cargo ready for collection', value: 'yes', quote: READY_REMARK, by_hand: false, extra: true });
+  const remark = String(input?.remarks ?? '').trim().slice(0, 1000);
+  if (remark && !String(d.remarks ?? '').includes(remark)) answers.push({ key: 'remarks', label: 'Customer remarks (added to Remarks)', value: remark, quote: remark.slice(0, 160), by_hand: false, extra: true });
+  for (const t of [...(Array.isArray(input?.remark_impacts) ? input.remark_impacts : []), ...(Array.isArray(input?.conflicts) ? input.conflicts : [])].slice(0, 6))
+    if (String(t ?? '').trim()) unclear.push({ key: 'flag', label: 'Check', note: String(t).slice(0, 200) });
   const summary = String(input?.summary ?? '').slice(0, 300);
   const status = answers.length ? 'open' : 'nothing';
   const s = await one(`insert into ai_suggestions (job_file_id, email_id, kind, status, summary, answers, unclear, model, read_by)
@@ -167,11 +194,17 @@ export async function applySuggestion(actor: Actor, id: string, b: any) {
   if (!d.can?.edit) throw forbidden('You cannot change this enquiry');
   const keys: string[] = Array.isArray(b?.keys) ? b.keys.map(String) : [];
   const gapKeys = new Set((d.enquiry_gaps ?? []).map((g: any) => g.key));
-  const picked = (s.answers as any[]).filter((a) => keys.includes(a.key) && !a.by_hand && gapKeys.has(a.key));
+  const picked = (s.answers as any[]).filter((a) => keys.includes(a.key) && !a.by_hand && (gapKeys.has(a.key) || EXTRA.includes(a.key)));
   if (!picked.length) throw bad(keys.length ? 'These details are already filled in' : 'Tick at least one answer to fill in');
   const patch: Record<string, unknown> = {};
   const details: Record<string, string> = { ...(d.enquiry_details ?? {}) };
-  for (const a of picked) { if (a.key in BUILT_IN) patch[a.key] = a.value; else details[a.key] = a.value; }
+  for (const a of picked) {
+    if (a.key === 'remarks') patch.remarks = [patch.remarks ?? d.remarks, a.value].filter(Boolean).join('\n').slice(0, 2000);   // added, never replaced
+    else if (a.key === 'cargo_ready_confirmed') {
+      patch.cargo_ready_confirmed = true;
+      if (!String(patch.remarks ?? d.remarks ?? '').includes(READY_REMARK)) patch.remarks = [patch.remarks ?? d.remarks, READY_REMARK].filter(Boolean).join('\n').slice(0, 2000);
+    } else if (a.key in BUILT_IN) patch[a.key] = a.value; else details[a.key] = a.value;
+  }
   if (picked.some((a) => !(a.key in BUILT_IN))) patch.enquiry_details = details;
   await updateJobFile(actor, s.job_file_id, patch);
   const { tx } = await import('./db');

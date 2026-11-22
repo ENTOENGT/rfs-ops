@@ -5,6 +5,7 @@ import { useEffect, useState } from 'react';
 import { api, fmtDateTime } from '@/components/api';
 import { useMe } from '@/components/Shell';
 import { JobFileFields } from '@/components/JobFileForm';
+import { FormHints } from '@/components/FormHints';
 import { CONTAINER_TYPES } from '@/lib/jobfileRules';
 import { blankLine, typedLines } from '@/lib/cargoRules';
 
@@ -28,10 +29,10 @@ export default function NewJobFile() {
     setFromEmail(id); setAiState('reading');
     api(`/api/outlook/inbox/${id}/draft`, { body: {} }).then((r) => {
       if (r.already) { setAlready(r.already); setAiState('done'); return; }
-      const { new_customer, customer_name, summary, mode_unknown, attachments_read, attachments_notes, hs_codes, v, ...fields } = r.draft;
+      const { new_customer, customer_name, summary, mode_unknown, attachments_read, attachments_notes, hs_codes, v, ai_notes, ...fields } = r.draft;
       const clean = Object.fromEntries(Object.entries(fields).filter(([, v]) => v !== null && v !== undefined));
       setF((x: any) => ({ ...x, ...clean }));
-      setNc(new_customer); setSrc({ ...r.email, summary, customer_name, mode_unknown, attachments_read, attachments_notes }); setAiState('done');
+      setNc(new_customer); setSrc({ ...r.email, summary, customer_name, mode_unknown, attachments_read, attachments_notes, notes: ai_notes }); setAiState('done');
     }).catch((e) => { setErr({ m: `The AI could not read the email: ${e.message} — you can still fill in the enquiry by hand.` }); setAiState('error'); });
   }, []);
   if (!can('jobfiles.create')) return <div className="page"><div className="msg err">You can't create Job Files.</div></div>;
@@ -65,6 +66,12 @@ export default function NewJobFile() {
         {src.attachments_read?.length > 0 && <p className="small" style={{ margin: '0 0 6px' }}>📎 Also read from the attachments: <b>{src.attachments_read.join(', ')}</b></p>}
         {src.attachments_notes?.length > 0 && <p className="small flag" style={{ margin: '0 0 6px' }}>📎 {src.attachments_notes.join(' · ')}</p>}
         {src.mode_unknown && <p className="small flag" style={{ margin: '0 0 6px' }}>The email doesn't say the mode — choose it below.</p>}
+        {/* batch 1: what needs a look before quoting, why the services were ticked, remarks that change price / services */}
+        {src.notes?.flags?.length > 0 && <div className="ai-flags">{src.notes.flags.map((t: string, i: number) => <p key={i} className="small">⚠ {t}</p>)}</div>}
+        {src.notes?.remarks?.length > 0 && <div className="ai-remarks"><b className="small">Customer remarks that matter:</b>
+          {src.notes.remarks.map((t: string, i: number) => <p key={i} className="small">• {t}</p>)}</div>}
+        {src.notes?.services?.length > 0 && <details className="small" style={{ margin: '4px 0' }}><summary>Why these services were ticked</summary>
+          {src.notes.services.map((t: string, i: number) => <p key={i} style={{ margin: '2px 0 0 12px' }}>{t}</p>)}</details>}
         {!f.customer_id && !f.new_customer && nc && <div className="grid g2" style={{ marginTop: 8 }}>
           <div className="span2 small"><b>New customer</b> — made when you save (the sender becomes the main contact, in To). Or choose an existing customer below instead.</div>
           <label className="f"><span>Company name <em>*</em></span><input value={nc.name ?? ''} onChange={(e) => setNc({ ...nc, name: e.target.value })} /></label>
@@ -79,6 +86,7 @@ export default function NewJobFile() {
           <label key={v} className="check"><input type="radio" name="jf_kind" checked={f.status === v} onChange={() => setF({ ...f, status: v, direction: v === 'enquiry' ? f.direction : f.direction || 'import' })} /> {t}</label>)}</div>
         {f.status === 'enquiry' && <p className="muted small" style={{ marginBottom: 0 }}>The system gives it an Enquiry Ref now. The Shipping Ref comes when the customer confirms,
           and the Job No. from the ERP when the pre-alert is verified and the job is handed over to Operations — all on this one record.</p>}</div>
+      {f.status === 'enquiry' && <FormHints f={f} setF={setF} />}
       <JobFileFields f={f} setF={(v) => { setF(v); setFe({}); }} fe={fe} isNew />
       {containersNeeded && <div className="panel"><h2>Containers</h2>
         <p className="muted small" style={{ marginTop: 0 }}>Optional now — they can be added later on the Job File.</p>

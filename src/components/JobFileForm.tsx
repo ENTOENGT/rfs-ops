@@ -235,6 +235,10 @@ function CargoPanel({ f, setF, fe }: { f: any; setF: (v: any) => void; fe: Recor
       <label className="f"><span>Cargo description</span><textarea rows={2} value={f.cargo_description ?? ''} onChange={set('cargo_description')} /></label>
       <label className="f"><span>Remarks</span><textarea rows={2} value={f.remarks ?? ''} onChange={set('remarks')} /></label>
     </div>
+    {/* migration 037: the customer said the cargo is ready */}
+    <label className="small" style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 8 }}>
+      <input type="checkbox" style={{ width: 'auto' }} checked={!!f.cargo_ready_confirmed} onChange={(e) => setF({ ...f, cargo_ready_confirmed: e.target.checked })} />
+      Cargo ready for collection (the customer confirmed)</label>
   </div>;
 }
 
