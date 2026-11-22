@@ -8,7 +8,7 @@ import { api } from '@/components/api';
  *  - "Open in my email": your own email program opens with it ready to send; noted as prepared.
  */
 export function EmailButton({ kind, id, label = 'Email', className = 'btn', update, onLogged }: {
-  kind: 'vendor_request' | 'quotation' | 'job_file' | 'case' | 'enquiry_missing' | 'vendor_missing'; id: string; label?: string; className?: string; update?: string; onLogged?: () => void;
+  kind: 'vendor_request' | 'quotation' | 'job_file' | 'case' | 'enquiry_missing' | 'vendor_missing' | 'clarify_customer' | 'clarify_vendor'; id: string; label?: string; className?: string; update?: string; onLogged?: () => void;
 }) {
   const [d, setD] = useState<any>(null);
   const [err, setErr] = useState('');

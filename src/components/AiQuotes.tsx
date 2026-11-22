@@ -21,7 +21,7 @@ export function AiQuotes({ fileId, onSaved }: { fileId: string; onSaved: () => v
     tried.current.add(m.id); setReading(m); setErr('');
     try {
       const r = await api('/api/ai/quotes', { body: { email_id: m.id } });
-      if (r.suggestion?.status === 'nothing') setOk(`The AI read ${m.vendor_name}'s reply: there is no rate in it yet.`);
+      if (r.suggestion?.status === 'nothing') setOk(`${m.vendor_name}'s email "${String(m.subject ?? '').slice(0, 60)}" (${m.request_no}) has no rate in it.`);
     } catch (e: any) { setErr(e.message); }
     setReading(null); load();
   };
@@ -52,7 +52,7 @@ export function AiQuotes({ fileId, onSaved }: { fileId: string; onSaved: () => v
         <span className="muted small">— read by AI. Check them, then Save rate.</span></div>
       {reading && <p className="small" style={{ margin: '6px 0' }}>Reading {reading.vendor_name}'s reply ({reading.request_no})…</p>}
       {err && <div className="msg err small">{err}</div>}
-      {ok && <div className="msg ok small">{ok}</div>}
+      {ok && !d.open.some((s: any) => ok.includes(`(${s.request_no})`)) && <div className="msg ok small">{ok}</div>}
       {d.open.map((s: any) => {
         const sameCur = (s.rate?.charges ?? []).length > 0;
         return <div key={s.id} className="ai-item">

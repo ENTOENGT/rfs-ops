@@ -118,6 +118,10 @@ const TOOL = {
   },
 };
 
+/** A terminal or port operator is not the shipping line (22 Nov: "DP World" came back as the line). */
+const TERMINAL = /\b(dp\s*world|ad\s*ports?|abu\s*dhabi\s*ports?|khalifa\s*port|jebel\s*ali|port\s*rashid|terminal|cfs|gulftainer|psa|apm\s*terminals?|hutchison|icd)\b/i;
+export const lineOnly = (v: string | null) => (v && TERMINAL.test(v) ? null : v);
+
 /** Raised when the reading changes: suggestions read the old way (not yet saved) are read again. */
 const QUOTE_V = 2;
 const NOT_SAID = /^\s*(not\s+(stated|mentioned|given|specified|provided|included)|n\/?a|none|nil|-+)\b/i;
@@ -197,7 +201,7 @@ Leave a field out when the email does not say it — never write "not stated", "
   if (ref && (ours.includes(ref.toUpperCase()) || /^(ENQ|VR|SI|SE|AI|AE)-/i.test(ref))) ref = null;
   const rate = hasRate ? {
     v: QUOTE_V, quoted_cost: total, currency, currency_ok: isCurrency(currency), charges: isCurrency(currency) ? t.lines : [], charges_seen: charges,
-    transit_days: int(x?.transit_days, 365), free_days: int(x?.free_days, 365), etd: date(x?.etd), routing: blank(txt(x?.routing, 300)), carrier: blank(txt(x?.carrier, 120)),
+    transit_days: int(x?.transit_days, 365), free_days: int(x?.free_days, 365), etd: date(x?.etd), routing: blank(txt(x?.routing, 300)), carrier: lineOnly(blank(txt(x?.carrier, 120))),
     rate_valid_until: date(x?.valid_until), vendor_reference: ref, inclusions: blank(txt(x?.inclusions, 2000)), exclusions: blank(txt(x?.exclusions, 2000)),
     quote: txt(x?.quote, 200),
   } : { v: QUOTE_V };

@@ -1,5 +1,6 @@
 'use client';
 import { useMe } from './Shell';
+import { useState } from 'react';
 import { CURRENCIES, fxRate } from '@/lib/currency';
 import { routeLabel } from '@/lib/routingRules';
 import { fmtMoney } from './api';
@@ -15,6 +16,20 @@ export function sellFromMargin(cost: string, type: string, value: string): strin
   if (type === 'amount') return ((c + Math.round(v * 100)) / 100).toFixed(2);
   if (type === 'percent' && v < 100) return (Math.round(c / (1 - v / 100)) / 100).toFixed(2);
   return '';
+}
+
+const r2 = (n: number) => (Math.round(n * 100) / 100).toFixed(2);
+/** The quotation unit for a vendor's basis ("per 40HC" → per container…). */
+export function unitOf(basis: unknown): string {
+  const b = String(basis ?? '').toLowerCase();
+  if (/cont|cntr|\b(20|40|45)\s*('|ft|hc|gp|dv|rf)?\b|teu|feu/.test(b)) return 'container';
+  if (/cbm|m3|w\/m/.test(b)) return 'cbm';
+  if (/\bkg|kilo/.test(b)) return 'kg';
+  if (/pallet|plt/.test(b)) return 'pallet';
+  if (/carton|ctn/.test(b)) return 'carton';
+  if (/truck|trip/.test(b)) return 'trip';
+  if (/day/.test(b)) return 'day';
+  return 'shipment';
 }
 
 /** Same sums as the server (to the fils), so what you see while typing is what gets saved. */
@@ -50,27 +65,57 @@ export function QuoteFields({ f, setF, fe = {}, minMargin, vendorRates = [], job
   const setLine = (i: number, k: string, v: string) => setF({ ...f, lines: lines.map((l, j) => {
     if (j !== i) return l;
     const n = { ...l, [k]: v };
+    if (k === 'cost_rate') { n.cost_original = null; n.cost_currency = null; n.cost_fx = null; }      // typed by hand: the person's own figure
     if (n.margin_type && ['cost_rate', 'margin_type', 'margin_value'].includes(k)) n.sell_rate = sellFromMargin(n.cost_rate, n.margin_type, n.margin_value);
     return n;
   }) });
   const t = totals(lines);
   const cur = f.currency || lk.currency || 'AED';
   const rates = vendorRates.filter((r) => r.quoted_cost !== null && r.quoted_cost !== undefined && r.status !== 'cancelled');
+  // migration 039: "Use" a vendor rate → choose split-ups or all-in, and check the exchange rate, before the lines are added
+  const [pick, setPick] = useState<any>(null);
+  const [pickErr, setPickErr] = useState('');
   const useRate = (r: any) => {
     const w = cheaperThan(rates, r);
     if (w && !confirm(`${w}\n\nUse ${r.vendor_name}'s rate anyway?`)) return;
-    // an agent rate in another currency is brought into the quotation currency with the rate from Settings (or one typed now)
-    let cost = String(r.quoted_cost), note = '';
-    if (r.currency && r.currency !== cur) {
-      let x = fxRate(r.currency, cur, lk.fx ?? {});
-      if (!x) { const typed = prompt(`${r.vendor_name}'s rate is in ${r.currency}. How many ${cur} for 1 ${r.currency}?`); x = Number(typed); if (!(x > 0)) return; }
-      cost = (Math.round(Number(r.quoted_cost) * x * 100) / 100).toFixed(2);
-      note = ` (${r.currency} ${Number(r.quoted_cost).toLocaleString()} @ ${x})`;
-    }
-    const line = { ...emptyLine(), description: `${r.service === 'rate' ? 'Freight' : r.service} — ${r.vendor_name}${note}`, cost_rate: cost, margin_type: sellingView ? 'percent' : '', margin_value: '',
-      sell_rate: '', vendor_request_id: r.id, route_id: r.route_id ?? '' };
+    const fx = !r.currency || r.currency === cur ? '1' : String(fxRate(r.currency, cur, lk.fx ?? {}) ?? '');
+    setPickErr(''); setPick({ r, mode: (r.charges ?? []).length > 1 ? 'split' : 'all_in', fx });
+  };
+  const addPicked = () => {
+    const { r, mode } = pick;
+    const fx = Number(pick.fx);
+    if (!(fx > 0)) return setPickErr(`Enter how many ${cur} for 1 ${r.currency}`);
+    const fxs = String(Math.round(fx * 1e6) / 1e6);
+    const base = { ...emptyLine(), margin_type: sellingView ? 'percent' : '', margin_value: '', sell_rate: '', vendor_request_id: r.id, route_id: r.route_id ?? '',
+      cost_currency: r.currency || cur, cost_fx: fxs, rate_mode: mode };
+    const out = mode === 'split' && (r.charges ?? []).length
+      ? r.charges.map((c: any) => { const orig = r2(Number(c.amount) * (c.currency === r.currency ? 1 : Number(c.exchange_rate || 1)));
+        return { ...base, description: c.description, charge_unit: unitOf(c.basis), quantity: String(c.quantity || 1), cost_original: orig, cost_rate: r2(Number(orig) * fx) }; })
+      : [{ ...base, description: r.service === 'rate' ? 'Freight and charges (all-in)' : `${r.service} (all-in)`, cost_original: r2(Number(r.quoted_cost)), cost_rate: r2(Number(r.quoted_cost) * fx) }];
     const blank = lines.length === 1 && !lines[0].description && !lines[0].cost_rate && !lines[0].sell_rate;
-    setF({ ...f, lines: blank ? [line] : [...lines, line] });
+    setF({ ...f, lines: blank ? out : [...lines, ...out] }); setPick(null);
+  };
+  // changing the quotation currency: offer to convert the amounts (vendor costs from their own amount and currency)
+  const [conv, setConv] = useState<any>(null);
+  const changeCurrency = (to: string) => {
+    const from = cur;
+    if (to === from || !lines.some((l) => l.cost_rate || l.sell_rate)) return setF({ ...f, currency: to });
+    const vend = [...new Set(lines.filter((l) => l.cost_currency && l.cost_original).map((l) => String(l.cost_currency)))];
+    setConv({ from, to, manual: String(fxRate(from, to, lk.fx ?? {}) ?? ''), vendor: Object.fromEntries(vend.map((c) => [c, c === to ? '1' : String(fxRate(c, to, lk.fx ?? {}) ?? '')])) });
+  };
+  const applyConv = (convert: boolean) => {
+    if (!convert) { setF({ ...f, currency: conv.to }); return setConv(null); }
+    const m = Number(conv.manual);
+    if (!(m > 0) || Object.values(conv.vendor).some((v: any) => !(Number(v) > 0))) return;
+    setF({ ...f, currency: conv.to, lines: lines.map((l) => {
+      const n = { ...l };
+      if (l.cost_currency && l.cost_original && Number(conv.vendor[l.cost_currency]) > 0) { n.cost_fx = String(Number(conv.vendor[l.cost_currency])); n.cost_rate = r2(Number(l.cost_original) * Number(n.cost_fx)); }
+      else if (l.cost_rate) n.cost_rate = r2(Number(l.cost_rate) * m);
+      if (l.margin_type === 'amount' && l.margin_value) n.margin_value = r2(Number(l.margin_value) * m);
+      n.sell_rate = l.margin_type ? sellFromMargin(n.cost_rate, n.margin_type, n.margin_value) : l.sell_rate ? r2(Number(l.sell_rate) * m) : l.sell_rate;
+      return n;
+    }) });
+    setConv(null);
   };
   return <>
     <div className="panel"><h2>Enquiry</h2><div className="grid g3">
@@ -84,9 +129,19 @@ export function QuoteFields({ f, setF, fe = {}, minMargin, vendorRates = [], job
           {SERVICE_TYPES.map(([c, n]) => <option key={c} value={c}>{n}</option>)}</select><Err m={fe.service_type} /></label>
       <label className="f"><span>Direction</span><select value={f.direction ?? 'import'} onChange={set('direction')}>
         {DIRECTIONS.map(([c, n]) => <option key={c} value={c}>{n}</option>)}</select></label>
-      <label className="f"><span>Currency</span><select value={cur} onChange={set('currency')}>
-        {CURRENCIES.map(([c, n]) => <option key={c} value={c}>{c} — {n}</option>)}</select>
-        {lines.some((l) => l.cost_rate || l.sell_rate) && <span className="muted small" style={{ fontWeight: 400 }}>Changing it does not convert amounts already typed.</span>}</label>
+      <label className="f"><span>Currency</span><select value={cur} onChange={(e) => changeCurrency(e.target.value)}>
+        {CURRENCIES.map(([c, n]) => <option key={c} value={c}>{c} — {n}</option>)}</select></label>
+      {conv && <div className="span3 conv-box">
+        <b className="small">Change the quotation from {conv.from} to {conv.to}: convert the amounts?</b>
+        <div className="grid g4" style={{ marginTop: 6 }}>
+          {Object.keys(conv.vendor).filter((c) => c !== conv.to).map((c) => <label key={c} className="f"><span>Vendor costs in {c}: {conv.to} for 1 {c}</span>
+            <input value={conv.vendor[c]} onChange={(e) => setConv({ ...conv, vendor: { ...conv.vendor, [c]: e.target.value } })} inputMode="decimal" /></label>)}
+          <label className="f"><span>Other amounts: {conv.to} for 1 {conv.from}</span><input value={conv.manual} onChange={(e) => setConv({ ...conv, manual: e.target.value })} inputMode="decimal" /></label>
+        </div>
+        <p className="muted small" style={{ margin: '4px 0' }}>Vendor costs are worked out again from the vendor's own amount; margins % stay, so the profit stays right. Rates come from Settings — change them here if needed.</p>
+        <div style={{ display: 'flex', gap: 6 }}><button type="button" className="btn small primary" onClick={() => applyConv(true)}>Convert</button>
+          <button type="button" className="btn small" onClick={() => applyConv(false)}>Keep the amounts</button>
+          <button type="button" className="btn small" onClick={() => setConv(null)}>Cancel</button></div></div>}
       <label className="f"><span>Rates valid until</span><input type="date" value={f.valid_until ?? ''} onChange={set('valid_until')} /></label>
       <label className="f"><span>From</span><input value={f.origin ?? ''} onChange={set('origin')} /></label>
       <label className="f"><span>To</span><input value={f.destination ?? ''} onChange={set('destination')} /></label>
@@ -101,8 +156,24 @@ export function QuoteFields({ f, setF, fe = {}, minMargin, vendorRates = [], job
       <div className="table-wrap"><table className="t"><thead><tr><th>Request</th><th>Vendor</th><th className="num">Rate</th><th>Valid until</th><th /></tr></thead>
         <tbody>{rates.map((r) => { const used = lines.some((l) => l.vendor_request_id === r.id); return <tr key={r.id} className={r.lowest ? 'is-lowest' : ''}>
           <td>{r.request_no}<div className="muted small">{String(r.description ?? '').slice(0, 50)}</div></td>
-          <td>{r.vendor_name}{r.lowest && <span className="lowest">Lowest</span>}{multi && r.route_id && <div className="muted small">{routeLabel(routes.find((x: any) => x.id === r.route_id))}</div>}</td><td className="num">{fmtMoney(r.quoted_cost, r.currency)}</td><td>{r.rate_valid_until ?? '—'}</td>
+          <td>{r.vendor_name}{r.lowest && <span className="lowest">Lowest</span>}{r.ai_recommended && <span className="rec-tag rec-best" style={{ marginLeft: 6 }}>AI recommends</span>}{multi && r.route_id && <div className="muted small">{routeLabel(routes.find((x: any) => x.id === r.route_id))}</div>}</td><td className="num">{fmtMoney(r.quoted_cost, r.currency)}</td><td>{r.rate_valid_until ?? '—'}</td>
           <td style={{ textAlign: 'right' }}>{used ? <span className="muted small">Used</span> : <button className="btn small" type="button" onClick={() => useRate(r)}>Use</button>}</td></tr>; })}</tbody></table></div>
+      {pick && <div className="conv-box" style={{ marginTop: 10 }}>
+        <b className="small">Use {pick.r.vendor_name}'s rate ({fmtMoney(pick.r.quoted_cost, pick.r.currency)}, {pick.r.request_no})</b>
+        <div style={{ display: 'flex', gap: 18, flexWrap: 'wrap', margin: '6px 0' }}>
+          <label className="small" style={{ display: 'flex', gap: 6, alignItems: 'center' }}><input type="radio" style={{ width: 'auto' }} disabled={!(pick.r.charges ?? []).length}
+            checked={pick.mode === 'split'} onChange={() => setPick({ ...pick, mode: 'split' })} /> Split-ups — each of the vendor's {(pick.r.charges ?? []).length || ''} charges as its own line (margin on each)</label>
+          <label className="small" style={{ display: 'flex', gap: 6, alignItems: 'center' }}><input type="radio" style={{ width: 'auto' }}
+            checked={pick.mode === 'all_in'} onChange={() => setPick({ ...pick, mode: 'all_in' })} /> All-in — one line for the customer</label>
+        </div>
+        {!(pick.r.charges ?? []).length && <p className="muted small" style={{ margin: '0 0 6px' }}>This rate has no charge lines — only all-in.</p>}
+        {pick.r.currency && pick.r.currency !== cur && <label className="f" style={{ maxWidth: 320 }}><span>Exchange rate: {cur} for 1 {pick.r.currency}</span>
+          <input value={pick.fx} onChange={(e) => setPick({ ...pick, fx: e.target.value })} inputMode="decimal" /></label>}
+        <p className="muted small" style={{ margin: '4px 0' }}>The vendor's breakdown stays on {pick.r.request_no} either way (for cost and profit checks).</p>
+        {pickErr && <div className="msg err small">{pickErr}</div>}
+        <div style={{ display: 'flex', gap: 6 }}><button type="button" className="btn small primary" onClick={addPicked}>Add to the quotation</button>
+          <button type="button" className="btn small" onClick={() => setPick(null)}>Cancel</button></div>
+      </div>}
     </div>}
     <div className="panel"><h2>Charges ({cur}, excluding VAT)</h2>
       <div className="table-wrap"><table className="t">
@@ -112,7 +183,9 @@ export function QuoteFields({ f, setF, fe = {}, minMargin, vendorRates = [], job
         <tbody>{lines.map((l, i) => <tr key={i}>
           <td><input value={l.description} onChange={(e) => setLine(i, 'description', e.target.value)} placeholder="e.g. Ocean freight, THC, DO fee" />
             {l.vendor_request_id && (() => { const r = rates.find((x) => x.id === l.vendor_request_id); const w = r && cheaperThan(rates, r);
-              return r ? <div className="small" style={{ marginTop: 3 }}><span className="muted">Vendor rate {r.request_no} · {r.vendor_name}</span>
+              return r ? <div className="small" style={{ marginTop: 3 }}><span className="muted">Vendor rate {r.request_no} · {r.vendor_name}
+                {l.rate_mode && ` · ${l.rate_mode === 'split' ? 'split-up' : 'all-in'}`}
+                {l.cost_currency && l.cost_original && l.cost_currency !== cur && ` · ${l.cost_currency} ${Number(l.cost_original).toLocaleString()} × ${Number(l.cost_fx)}`}</span>
                 {w && <div className="flag" style={{ display: 'block', marginTop: 3, whiteSpace: 'normal' }}>{w}</div>}</div> : null; })()}</td>
           {multi && <td><select value={l.route_id ?? ''} disabled={!!l.vendor_request_id && !!rates.find((x) => x.id === l.vendor_request_id)?.route_id} onChange={(e) => setLine(i, 'route_id', e.target.value)} aria-label="Option">
             <option value="">Option?</option>{routes.map((r: any) => <option key={r.id} value={r.id}>{routeLabel(r)}</option>)}</select></td>}

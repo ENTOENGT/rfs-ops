@@ -240,13 +240,48 @@ async function missingDraft(actor: Actor, id: string): Promise<Draft> {
     note: recipients.length ? (gaps.length ? undefined : 'Nothing is missing on this enquiry.') : 'This customer has no email saved — add one under Customers → contacts.' };
 }
 
+/** The vendor's people for a request: its team (migration 038) — To + the team's CC — or the vendor's own email. */
+function vendorPeople(r: any): Recipient[] {
+  if (r.team_email && EMAIL.test(r.team_email)) return [
+    { name: r.team_contact || `${r.vendor_name} – ${r.team_name}`, email: r.team_email, role: `${r.vendor_name} – ${r.team_name}`, picked: true, place: 'to' },
+    ...String(r.team_cc ?? '').split(/[,;\s]+/).filter((e: string) => EMAIL.test(e)).map((e: string) => ({ name: e, email: e, role: `${r.vendor_name} – ${r.team_name}`, picked: true, place: 'cc' as const }))];
+  return r.vendor_email && EMAIL.test(r.vendor_email) ? [{ name: r.vendor_contact || r.vendor_name, email: r.vendor_email, role: r.vendor_name, picked: true }] : [];
+}
+
+// ------------------------------------------------------------ batch 3: ask the customer / the vendor about a mismatch (migration 039)
+async function clarifyDraft(actor: Actor, issueId: string, side: 'customer' | 'vendor'): Promise<Draft> {
+  if (!actor.fin.buyingView) throw new ApiError(403, 'FORBIDDEN', 'Only people who see cost handle these mismatches');
+  const i = await one('select * from scope_issues where id = $1', [issueId]);
+  if (!i) throw new ApiError(404, 'NOT_FOUND', 'Mismatch not found');
+  const ask = String(i.question || i.issue);
+  if (side === 'customer') {
+    const g: any = await getJobFile(actor, i.job_file_id);
+    if (!g.can.edit) throw new ApiError(403, 'FORBIDDEN', 'You can\'t send emails on this shipment');
+    const f = await shipment(i.job_file_id);
+    const recipients = await customerRecipients(actor, f.customer_id, i.job_file_id);
+    const body = [dear(recipients, `${f.customer_name} team`), '', 'Thank you for your enquiry. Before we finalise our quotation, could you please confirm the following:', '',
+      ask, '', 'Thank you.', '', await signature(actor)].join('\n');
+    return { kind: 'clarify_customer', id: issueId, recipients, subject: threadSubject({ ...f, ...g }), body,
+      note: recipients.length ? undefined : 'This customer has no email saved — add one under Customers → contacts.' };
+  }
+  if (!i.vendor_request_id) throw new ApiError(400, 'NO_VENDOR', 'This mismatch is not about one vendor');
+  const r: any = await getVendorRequest(actor, i.vendor_request_id);
+  if (!r.can.update) throw new ApiError(403, 'FORBIDDEN', 'You can\'t send vendor requests');
+  const recipients = vendorPeople(r);
+  if (r.team_email) r.vendor_contact = r.team_contact || null;
+  const body = [`Dear ${r.vendor_contact ? String(r.vendor_contact).split(' ')[0] : `${r.vendor_name} team`},`, '', `Thank you for your rate (${r.request_no}). Before we can use it, could you please clarify:`, '',
+    ask, '', 'Thank you.', '', await signature(actor)].join('\n');
+  return { kind: 'clarify_vendor', id: issueId, recipients, subject: `[${r.request_no}] Clarification on your rate${r.job_no || r.enquiry_ref ? ` – ${r.job_no ?? r.enquiry_ref}` : ''}`, body,
+    note: recipients.length ? undefined : `${r.vendor_name} has no email saved.` };
+}
+
 // ------------------------------------------------------------ ask the agent for what their rate lacks (migration 028)
 // Never the customer's name or our prices — only what the agent needs to complete the quote.
 async function vendorMissingDraft(actor: Actor, id: string): Promise<Draft> {
   const r: any = await getVendorRequest(actor, id);
   if (!r.can.update) throw new ApiError(403, 'FORBIDDEN', 'You can\'t send vendor requests');
   const f = r.job_file_id ? await shipment(r.job_file_id) : null;
-  const recipients: Recipient[] = r.vendor_email && EMAIL.test(r.vendor_email) ? [{ name: r.vendor_contact || r.vendor_name, email: r.vendor_email, role: r.vendor_name, picked: true }] : [];
+  const recipients = vendorPeople(r);                                      // the team when there is one (migration 038)
   const gaps: { ask: string }[] = r.quote_gaps ?? [];
   let ship = '';
   if (f) {
@@ -292,6 +327,7 @@ export async function emailDraft(actor: Actor, p: Record<string, string>): Promi
   const d = await draftOf(actor, p);
   // the shipment whose To / CC people this email uses (for × on a person)
   const fileId = ['job_file', 'enquiry_missing'].includes(p.kind) ? p.id
+    : p.kind === 'clarify_customer' ? (await one('select job_file_id from scope_issues where id = $1', [p.id]))?.job_file_id ?? null
     : p.kind === 'quotation' ? (await one('select job_file_id from quotations where id = $1', [p.id]))?.job_file_id ?? null : null;
   return { ...d, file_id: fileId };
 }
@@ -303,6 +339,8 @@ async function draftOf(actor: Actor, p: Record<string, string>): Promise<Draft> 
     case 'enquiry_missing': return missingDraft(actor, p.id);
     case 'vendor_missing': return vendorMissingDraft(actor, p.id);
     case 'case': return caseDraft(actor, p.id);
+    case 'clarify_customer': return clarifyDraft(actor, p.id, 'customer');
+    case 'clarify_vendor': return clarifyDraft(actor, p.id, 'vendor');
     default: throw bad('Unknown email type');
   }
 }
@@ -343,6 +381,16 @@ async function recordEmail(actor: Actor, b: any, draft: Draft, to: string[], cc:
     } else if (b.kind === 'job_file' || b.kind === 'enquiry_missing') {
       await loadFile(actor, b.id, c);
       await event(c, actor, b.id, { kind: 'note', title: b.kind === 'enquiry_missing' ? 'Missing details asked from the customer' : t('Email prepared for the customer', 'Email sent to the customer'), new_value: detail }); fileId = b.id;
+    } else if (b.kind === 'clarify_customer' || b.kind === 'clarify_vendor') {
+      // migration 039: the mismatch is marked as asked; the email is on the shipment (and on the vendor's request)
+      const i = await one('select job_file_id, vendor_request_id, issue from scope_issues where id = $1', [b.id], c);
+      await c.query(`update scope_issues set status = $2, decided_by = $3, decided_at = now() where id = $1`, [b.id, b.kind === 'clarify_customer' ? 'asked_customer' : 'asked_vendor', actor.id]);
+      fileId = i.job_file_id;
+      if (b.kind === 'clarify_vendor') {
+        vr = i.vendor_request_id;
+        await c.query('insert into vendor_request_events (request_id, title, details, user_id, user_name) values ($1,$2,$3,$4,$5)', [vr, 'Clarification asked', detail, actor.id, actor.full_name]);
+      }
+      await event(c, actor, fileId!, { kind: 'note', title: b.kind === 'clarify_customer' ? 'Mismatch: asked the customer' : 'Mismatch: asked the vendor', new_value: `${i.issue} — ${detail}`.slice(0, 500) });
     } else if (b.kind === 'case') {
       await c.query('insert into cs_case_events (case_id, title, details, user_id, user_name) values ($1,$2,$3,$4,$5)', [b.id, t('Email reply prepared', 'Email reply sent'), detail, actor.id, actor.full_name]);
       await c.query('update cs_cases set first_response_at = coalesce(first_response_at, now()) where id = $1', [b.id]);

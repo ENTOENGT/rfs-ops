@@ -861,3 +861,20 @@ giving customers to other salesmen is for the Commercials Manager. Up to 1,000 r
   disagree → nothing suggested, "Ask the customer by email". Shown on the New enquiry form (`FormHints`, before saving: the
   Incoterm's addresses are needed to save) and on a saved enquiry (`PastJobHints`). Accept / Edit / Ignore are kept in
   `history_choices` and the enquiry's history; an ignored value is not suggested again.
+
+### 18. AI batch 3 — quotation split-ups / all-in, currency, best vendor, mismatches (migration 039, 22 Nov 2026)
+
+- Quotation "Use" on a vendor rate (`QuoteForm`): Split-ups (each `vendor_rate_charges` line → a quotation line, unit from the
+  vendor's basis) or All-in (one line); the exchange rate from Settings, editable. Lines keep `cost_currency`, `cost_original`,
+  `cost_fx`, `rate_mode` (dropped when the cost no longer equals amount × rate, i.e. typed by hand). The vendor's breakdown stays on
+  the request. Changing the quotation currency offers to convert: vendor costs from their own amount (editable rate per vendor
+  currency), other amounts by one rate; margin % kept so profit stays right; a margin amount is converted too.
+- `src/server/recommend.ts`: rates received (quoted, not requested / cancelled) with charges, AED totals from Settings (worked out
+  here, never by the AI), expired validity. The AI (tool `recommend_vendor`) gets the enquiry (Incoterm scope from `opsRules`,
+  services ticked, addresses, cargo, details, remarks) and every quote; returns the recommended request (or none + why), a verdict,
+  missing services, hidden costs, risks per vendor, and mismatches. Kept in `vendor_recommendations` (compared again only when the
+  rates change — `input_key`) with an enquiry history line; mismatches in `scope_issues` → Email customer / Email vendor
+  (`clarify_customer` / `clarify_vendor` drafts; sending marks them asked, with history) or Solved internally (note required).
+  Box `AiRecommend` under Rates and quotation; "AI recommends" mark on the quotation's rates. Cost viewers only.
+- Part B fixes: a terminal / port operator (DP World, AD Ports…) is never taken as the shipping line (`lineOnly`); the "no rate"
+  note names the email and hides once that vendor's rate is shown.

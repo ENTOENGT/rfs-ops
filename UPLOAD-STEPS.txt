@@ -1,14 +1,12 @@
-RFS CRM — batch 1 + batch 2 together (one commit, one Netlify build)
+RFS CRM — batch 3 (quotation split-ups / all-in, currency, AI best vendor, mismatches)
 
-1. Supabase → SQL editor: open db/migrations/037_ops_rules.sql from this zip, paste it all, Run.
-2. Same again with db/migrations/038_teams_history.sql. (Both are safe to run twice.)
+1. Supabase → SQL editor: open db/migrations/039_quote_fx_recommend.sql from this zip, paste it all, Run. (Safe to run twice.)
 
-3. GitHub: upload all the files in this zip, in their folders, in ONE commit.
+2. GitHub: upload the files in this zip, in their folders, in ONE commit.
 
-4. Test batch 2:
-   a) Vendors → a vendor → Teams → Add team, e.g. "Sea FCL team", its email, tick Sea FCL. Save.
-      Then on a sea FCL enquiry ask that vendor for a rate: the form shows "Vendor team: Sea FCL team (fits this enquiry)",
-      and the email goes to the team's address.
-   b) New enquiry → choose a customer that has earlier enquiries, the division and Incoterm:
-      a green box "From this customer's past jobs" suggests e.g. the pickup address. Accept / Edit / Ignore.
-5. Test batch 1 as in the earlier steps (EXW general cargo "ready for collection" email).
+3. Test:
+   a) An enquiry with 2 vendor rates received → Rates & quotation: the box "Best vendor for this enquiry" compares them by
+      itself (a few seconds): who is recommended and why, totals in AED, what each leaves out. Mismatches have
+      Email customer / Email vendor / Solved internally.
+   b) Make quotation → "Use" on a rate → choose Split-ups or All-in, check the exchange rate → Add to the quotation.
+   c) Change the quotation currency → it offers to convert the amounts.

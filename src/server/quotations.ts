@@ -70,6 +70,7 @@ const num = (v: unknown, lbl: string, int = false) => {
   if (!Number.isFinite(n) || n < 0 || (int && !Number.isInteger(n))) throw bad(`${lbl} must be ${int ? 'a whole number' : 'a number'} of 0 or more`);
   return String(v);
 };
+const blankish = (v: unknown) => v === null || v === undefined || String(v).trim() === '';
 const money = (v: unknown, lbl: string) => {
   const s = String(v ?? '0').trim() || '0';
   if (!/^\d+(\.\d{1,2})?$/.test(s)) throw bad(`${lbl}: enter an amount like 1250 or 1250.50`);
@@ -107,7 +108,8 @@ function present(actor: Actor, x: any, lines: any[]) {
       ...(buyingView ? { cost_rate: l.cost_rate, cost_amount: t.each[i].cost } : {}),
       ...(sellingView ? { sell_rate: l.sell_rate, sell_amount: t.each[i].sell } : {}),
       ...(profitView ? { margin_type: l.margin_type, margin_value: l.margin_value } : {}),
-      ...(buyingView ? { vendor_request_id: l.vendor_request_id } : {}), route_id: l.route_id ?? null,
+      ...(buyingView ? { vendor_request_id: l.vendor_request_id, cost_currency: l.cost_currency ?? null, cost_original: l.cost_original ?? null, cost_fx: l.cost_fx ?? null, rate_mode: l.rate_mode ?? null } : {}),
+      route_id: l.route_id ?? null,
     })),
     totals: {
       ...(buyingView ? { cost_total: t.cost_total } : {}),
@@ -124,6 +126,11 @@ export async function vendorRatesFor(jobFileId: string) {
       r.rate_group, r.route_id, v.name vendor_name
     from vendor_requests r join vendors v on v.id = r.vendor_id
     where r.job_file_id = $1 and r.quoted_cost is not null and r.status not in ('cancelled') order by r.created_at`, [jobFileId]);
+  // migration 039: the vendor's charge lines (latest rate version) — for "split-ups"; and the AI's recommendation, if any
+  const ch = rows.length ? await q(`select c.request_id, c.section, c.description, c.basis, c.quantity::float quantity, c.amount::float amount, c.currency, c.exchange_rate::float exchange_rate
+    from vendor_rate_charges c join vendor_requests r on r.id = c.request_id and c.rate_version = r.rate_version where c.request_id = any($1) order by c.sort_order`, [rows.map((r) => r.id)]) : [];
+  const rec = await one(`select result->>'recommended_request_id' id from vendor_recommendations where job_file_id = $1 order by created_at desc limit 1`, [jobFileId]);
+  for (const r of rows) { r.charges = ch.filter((c) => c.request_id === r.id); r.ai_recommended = rec?.id === r.id; }
   return markLowest(rows, (r) => r.service === 'rate' ? `route:${r.route_id ?? ''}` : r.rate_group);
 }
 
@@ -275,7 +282,20 @@ function parseLines(actor: Actor, raw: unknown, old: any[]) {
     const vendor_request_id = typeof l.vendor_request_id === 'string' && UUID.test(l.vendor_request_id) ? l.vendor_request_id : prev?.vendor_request_id ?? null;
     // Part G2: which route option the charge belongs to (checked against the shipment's options in validateVendorLines)
     const route_id = typeof l.route_id === 'string' && UUID.test(l.route_id) ? l.route_id : l.route_id === null || l.route_id === '' ? null : prev?.route_id ?? null;
-    return { description, charge_unit: l.charge_unit, quantity: String(l.quantity).trim(), cost_rate: cost, sell_rate: sell, margin_type, margin_value, vendor_request_id, route_id };
+    // migration 039: where a vendor cost came from — the vendor's amount, its currency, the exchange rate used, split-ups or
+    // all-in. Kept only while the cost is still that amount × that rate (a cost typed by hand is the person's own figure).
+    let src = { cost_currency: prev?.cost_currency ?? null, cost_original: prev?.cost_original ?? null, cost_fx: prev?.cost_fx ?? null, rate_mode: prev?.rate_mode ?? null };
+    if (actor.fin.buyingView) {
+      const mode = ['split', 'all_in'].includes(l.rate_mode) && vendor_request_id ? l.rate_mode : null;
+      src = { cost_currency: null, cost_original: null, cost_fx: null, rate_mode: mode };
+      if (isCurrency(l.cost_currency) && !blankish(l.cost_original) && !blankish(l.cost_fx)) {
+        const orig = money(l.cost_original, `${n} vendor amount`);
+        const fx = String(l.cost_fx).trim();
+        if (!/^\d+(\.\d{1,6})?$/.test(fx) || !(Number(fx) > 0)) throw bad(`${n}: the exchange rate must be a number above 0 (up to 6 decimals)`);
+        if (Math.abs(Number(orig) * Number(fx) - Number(cost)) < 0.006) src = { cost_currency: String(l.cost_currency).toUpperCase(), cost_original: orig, cost_fx: fx, rate_mode: mode };
+      }
+    }
+    return { description, charge_unit: l.charge_unit, quantity: String(l.quantity).trim(), cost_rate: cost, sell_rate: sell, margin_type, margin_value, vendor_request_id, route_id, ...src };
   });
 }
 
@@ -353,8 +373,10 @@ export async function createQuotation(actor: Actor, b: any) {
       values ('Q-' || nextval('quote_no_seq'), $1, $2${cols.map((_, i) => `, $${i + 3}`).join('')}) returning id, quote_no`,
       [dept, actor.id, ...cols.map((k) => vals[k])], c);
     for (const [i, l] of lines.entries())
-      await c.query(`insert into quotation_lines (quotation_id, sort_order, description, charge_unit, quantity, cost_rate, sell_rate, margin_type, margin_value, vendor_request_id, route_id)
-        values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`, [x.id, i, l.description, l.charge_unit, l.quantity, l.cost_rate, l.sell_rate, l.margin_type, l.margin_value, l.vendor_request_id, l.route_id]);
+      await c.query(`insert into quotation_lines (quotation_id, sort_order, description, charge_unit, quantity, cost_rate, sell_rate, margin_type, margin_value, vendor_request_id, route_id,
+          cost_currency, cost_original, cost_fx, rate_mode)
+        values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`, [x.id, i, l.description, l.charge_unit, l.quantity, l.cost_rate, l.sell_rate, l.margin_type, l.margin_value, l.vendor_request_id, l.route_id,
+        l.cost_currency, l.cost_original, l.cost_fx, l.rate_mode]);
     await evt(c, actor, x.id, 'Quotation created', `${lines.length} line(s)`);
     if (vals.job_file_id) {
       const { event } = await import('./jobfiles');
@@ -390,8 +412,10 @@ export async function updateQuotation(actor: Actor, id: string, b: any) {
     if (lines) {
       await c.query('delete from quotation_lines where quotation_id = $1', [id]);
       for (const [i, l] of lines.entries())
-        await c.query(`insert into quotation_lines (quotation_id, sort_order, description, charge_unit, quantity, cost_rate, sell_rate, margin_type, margin_value, vendor_request_id, route_id)
-          values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`, [id, i, l.description, l.charge_unit, l.quantity, l.cost_rate, l.sell_rate, l.margin_type, l.margin_value, l.vendor_request_id, l.route_id]);
+        await c.query(`insert into quotation_lines (quotation_id, sort_order, description, charge_unit, quantity, cost_rate, sell_rate, margin_type, margin_value, vendor_request_id, route_id,
+          cost_currency, cost_original, cost_fx, rate_mode)
+          values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`, [id, i, l.description, l.charge_unit, l.quantity, l.cost_rate, l.sell_rate, l.margin_type, l.margin_value, l.vendor_request_id, l.route_id,
+          l.cost_currency, l.cost_original, l.cost_fx, l.rate_mode]);
     }
     // a changed quotation must be checked again before it goes out
     if (x.status !== 'draft') {
@@ -417,7 +441,7 @@ async function notifyApprovers(db: Db, actor: Actor, x: any) {
 
 /** Keep the quotation as it stands (header, lines, totals) — at approval, revision and customer confirmation. */
 async function snapshot(db: Db, actor: Actor, x: any, reason: string) {
-  const lines = await q('select description, charge_unit, quantity, cost_rate, sell_rate, margin_type, margin_value, vendor_request_id, route_id from quotation_lines where quotation_id = $1 order by sort_order', [x.id], db);
+  const lines = await q('select description, charge_unit, quantity, cost_rate, sell_rate, margin_type, margin_value, vendor_request_id, route_id, cost_currency, cost_original, cost_fx, rate_mode from quotation_lines where quotation_id = $1 order by sort_order', [x.id], db);
   const head = Object.fromEntries(Object.keys(HEAD).map((k) => [k, x[k]]));
   await db.query(`insert into quotation_versions (quotation_id, version_no, reason, snapshot, made_by, made_by_name) values ($1,$2,$3,$4,$5,$6)`,
     [x.id, x.version_no ?? 1, reason, JSON.stringify({ ...head, quote_no: x.quote_no, currency: x.currency, lines, totals: quoteTotals(lines) }), actor.id, actor.full_name]);
