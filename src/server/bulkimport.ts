@@ -15,11 +15,13 @@ import { ensurePortsLoaded } from './ports';
 import { canManageCoverage } from './agents';
 
 export const MAX_ROWS = 1000;
-const SHEETS = { customers: 'Customers', contacts: 'Customer contacts', vendors: 'Vendors', coverage: 'Vendor coverage' } as const;
+const SHEETS = { customers: 'Customers', contacts: 'Customer contacts', vendors: 'Vendors', coverage: 'Vendor coverage', teams: 'Vendor teams' } as const;
 const COLS = {
   customers: ['Customer name*', 'Code', 'TRN', 'Main salesman (email)', 'Other salesmen (emails, commas)', 'Email', 'Contact person', 'Contact number', 'Address', 'Standing instructions', 'Remarks'],
   contacts: ['Customer name*', 'Contact name*', 'Role', 'Mobile', 'Email', 'Main contact (Yes/No)', 'On emails (To / CC / Not by default)', 'Remarks'],
   vendors: ['Vendor name*', 'Type*', 'TRN', 'Contact person', 'Contact number', 'Email', 'Address', 'Remarks'],
+  // 23 Nov (migration 038): a vendor's departments — the rate request for that mode / direction goes to the team's email
+  teams: ['Vendor name*', 'Team name*', 'Email*', 'CC emails (commas)', 'Contact person', 'Phone', 'Modes (FCL, LCL, Air, Road, Courier — empty = all)', 'Direction (Import, Export, Cross trade — empty = all)', 'Note'],
   coverage: ['Vendor name*', 'Covers* (Port / Country / Region)', 'Where* (port code, country or region name)', 'Modes (FCL, LCL, Air, Road, Courier — empty = all)', 'Side (Origin / Destination / Both)', 'Priority (Preferred / Normal / Backup)', 'Note'],
 };
 const MODE_WORDS: Record<string, string> = { fcl: 'sea_fcl', 'sea fcl': 'sea_fcl', lcl: 'sea_lcl', 'sea lcl': 'sea_lcl', air: 'air', road: 'road', courier: 'courier' };
@@ -49,6 +51,8 @@ export async function template(actor: Actor) {
     'Customer contacts: one row per person. "Customer name" must be in the Customers sheet or already in RFS CRM.',
     '   On emails: To = always in To, CC = always in CC, Not by default = offered but not ticked. A contact whose email is already there is skipped.',
     'Vendors: one row per vendor. Type: choose from the list (Shipping line, Airline, Freight agent, Overseas agent, …).',
+    'Vendor teams: a vendor\'s departments, one row per team (e.g. Sea FCL team, Air import team, Cross trade team). Rate requests for that',
+    '   mode / direction go to the team\'s email (its CC emails copied). A team already there for that vendor (same name) is updated, not added twice.',
     'Vendor coverage: where each agent works — one row per port, country or region.',
     '   Covers = Port → Where = the port code (e.g. DEHAM for Hamburg, INMAA for Chennai). Covers = Country → Where = the country name (e.g. Germany).',
     '   Covers = Region → Where = the region name from Commercials → Ports & regions (e.g. North Europe).',
@@ -82,6 +86,7 @@ export async function template(actor: Actor) {
   add('contacts', { 6: ref(3, 2), 7: ref(4, 3) });
   add('vendors', { 2: ref(2, VENDOR_TYPES.length) });
   add('coverage', { 2: ref(5, 3), 5: ref(6, 3), 6: ref(7, 3) });
+  add('teams', {});
   return Buffer.from(await wb.xlsx.writeBuffer());
 }
 
@@ -101,7 +106,7 @@ async function readBook(buf: Buffer) {
   const ExcelJS = (await import('exceljs')).default;
   const wb = new ExcelJS.Workbook();
   try { await wb.xlsx.load(buf as any); } catch { throw bad('This is not an Excel file (.xlsx). Download the template and fill that in.'); }
-  const out: Record<keyof typeof SHEETS, { row: number; v: Record<string, string> }[]> = { customers: [], contacts: [], vendors: [], coverage: [] };
+  const out: Record<keyof typeof SHEETS, { row: number; v: Record<string, string> }[]> = { customers: [], contacts: [], vendors: [], coverage: [], teams: [] };
   for (const key of Object.keys(SHEETS) as (keyof typeof SHEETS)[]) {
     const ws = wb.getWorksheet(SHEETS[key]);
     if (!ws) continue;
@@ -154,7 +159,7 @@ export async function bulkUpload(actor: Actor, b: any, apply: boolean) {
   const field = (d: typeof custDef, k: string) => d.fields.find((f) => f.key === k)!;
 
   const sheets: Sheet[] = [];
-  const plan = { newCust: [] as any[], fillCust: [] as any[], owners: [] as any[], contacts: [] as any[], newVend: [] as any[], fillVend: [] as any[], coverage: [] as any[] };
+  const plan = { newCust: [] as any[], fillCust: [] as any[], owners: [] as any[], contacts: [] as any[], newVend: [] as any[], fillVend: [] as any[], coverage: [] as any[], teams: [] as any[] };
   const fileCust = new Map<string, { key: string }>();       // customers in this file (by lower name) → key used to link
   const fileVend = new Map<string, true>();
 
@@ -314,6 +319,41 @@ export async function bulkUpload(actor: Actor, b: any, apply: boolean) {
     sheets.push({ name: SHEETS.coverage, rows });
   }
 
+  // ---- vendor teams (migration 038)
+  if (data.teams.length) {
+    const rows: RowResult[] = [];
+    const seen = new Set<string>();
+    const existing = await q('select id, vendor_id, lower(name) n from vendor_teams');
+    const EMAIL = /^[^\s@,;]+@[^\s@,;]+\.[^\s@,;]+$/;
+    const DIRS: Record<string, string> = { import: 'import', imports: 'import', export: 'export', exports: 'export', 'cross trade': 'cross_trade', 'cross-trade': 'cross_trade', crosstrade: 'cross_trade' };
+    for (const { row, v } of data.teams) {
+      const vname = v[col('teams', 0)], tname = String(v[col('teams', 1)] ?? '').trim();
+      try {
+        if (!canManageCoverage(actor)) throw bad('Only the Super Admin, the Commercials Manager or whoever manages vendors sets vendor teams');
+        const vk = String(vname).trim().toUpperCase();
+        if (!vk) throw bad('Vendor name is required');
+        const vendor = vByName.get(vk)?.id ?? (fileVend.has(vk) && plan.newVend.some((x) => String(x.name).trim().toUpperCase() === vk) ? `newv:${vk}` : null);
+        if (!vendor) throw bad(`"${vname}" is not in the Vendors sheet or in RFS CRM`);
+        if (!tname) throw bad('Team name is required');
+        const email = lc(v[col('teams', 2)]);
+        if (!EMAIL.test(email)) throw bad('Email: the team\'s email address');
+        const cc = String(v[col('teams', 3)] ?? '').split(/[,;\s]+/).map(lc).filter(Boolean);
+        const badCc = cc.find((x) => !EMAIL.test(x)); if (badCc) throw bad(`Not an email address: ${badCc}`);
+        const modes = String(v[col('teams', 6)] ?? '').split(/[,;/]+/).map((x) => lc(x)).filter(Boolean).map((m) => { const c = MODE_WORDS[m]; if (!c) throw bad(`Mode "${m}" — use FCL, LCL, Air, Road or Courier`); return c; });
+        const dirs = String(v[col('teams', 7)] ?? '').split(/[,;/]+/).map((x) => lc(x)).filter(Boolean).map((d) => { const c = DIRS[d]; if (!c) throw bad(`Direction "${d}" — use Import, Export or Cross trade`); return c; });
+        const dk = `${vendor}|${tname.toLowerCase()}`;
+        if (seen.has(dk)) throw bad('This team is listed twice in the file');
+        seen.add(dk);
+        const ex = existing.find((t) => t.vendor_id === vendor && t.n === tname.toLowerCase());
+        plan.teams.push({ id: ex?.id ?? null, vendor, name: tname.slice(0, 80), email, cc: cc.join(', ') || null, contact: String(v[col('teams', 4)] ?? '').trim().slice(0, 120) || null,
+          phone: String(v[col('teams', 5)] ?? '').trim().slice(0, 40) || null, modes: [...new Set(modes)], dirs: [...new Set(dirs)], note: String(v[col('teams', 8)] ?? '').trim().slice(0, 300) || null });
+        const what = `${email}${modes.length ? ` · ${modes.join(', ')}` : ''}${dirs.length ? ` · ${dirs.join(', ')}` : ''}`;
+        rows.push({ row, name: `${vname}: ${tname}`, status: ex ? 'exists' : 'new', note: ex ? `Already there — updated: ${what}` : what });
+      } catch (e: any) { rows.push({ row, name: `${vname || '?'}: ${tname || '?'}`, status: 'problem', note: e.message }); }
+    }
+    sheets.push({ name: SHEETS.teams, rows });
+  }
+
   const count = (s: RowResult['status']) => sheets.reduce((n, sh) => n + sh.rows.filter((r) => r.status === s).length, 0);
   const summary = { new: count('new'), exists: count('exists'), problems: count('problem') };
   if (!apply) return { checked: true, sheets, summary };
@@ -353,8 +393,13 @@ export async function bulkUpload(actor: Actor, b: any, apply: boolean) {
     for (const x of plan.coverage)
       await c.query(`insert into agent_coverage (vendor_id, scope, port_code, country_code, region_id, modes, side, priority, note, created_by) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
         [idOf(x.vendor), x.scope, x.port, x.country, x.region, x.modes, x.side, x.priority, x.note, actor.id]);
+    for (const t of plan.teams) {
+      const vals = [t.name, t.modes, t.dirs, t.contact, t.email, t.cc, t.phone, t.note];
+      if (t.id) await c.query(`update vendor_teams set name = $2, modes = $3, directions = $4, contact_person = $5, email = $6, cc_emails = $7, phone = $8, note = $9, is_active = true, updated_at = now() where id = $1`, [t.id, ...vals]);
+      else await c.query(`insert into vendor_teams (vendor_id, name, modes, directions, contact_person, email, cc_emails, phone, note, created_by) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`, [idOf(t.vendor), ...vals, actor.id]);
+    }
     await audit(c, actor, { entity_type: 'setting', entity_id: null, action: 'Bulk upload', sensitivity: 'admin',
-      new_value: `customers +${plan.newCust.length} (filled ${plan.fillCust.length}), contacts +${plan.contacts.length}, salesmen +${plan.owners.length}, vendors +${plan.newVend.length} (filled ${plan.fillVend.length}), coverage +${plan.coverage.length}; ${summary.problems} row(s) with problems skipped` });
+      new_value: `customers +${plan.newCust.length} (filled ${plan.fillCust.length}), contacts +${plan.contacts.length}, salesmen +${plan.owners.length}, vendors +${plan.newVend.length} (filled ${plan.fillVend.length}), coverage +${plan.coverage.length}, teams ${plan.teams.length}; ${summary.problems} row(s) with problems skipped` });
   });
   return { imported: true, sheets, summary };
 }

@@ -1,10 +1,15 @@
-RFS CRM — batch 3 fix + loading screen + quotation currency (one commit)
+RFS CRM — everything not yet uploaded, in one commit:
+batch 3 fix · loading screen · quotation currency · quotation PDF + clean email · AI reads the customer's answer · light / dark
 
-1. Supabase → SQL editor: open db/migrations/040_quote_company_rate.sql from this zip, paste it, Run. (Safe to run twice.)
+1. Supabase → SQL editor, run these two (each is safe to run again):
+   db/migrations/040_quote_company_rate.sql
+   db/migrations/041_quote_reply.sql
 
 2. GitHub: upload all the files in this zip, in their folders, in ONE commit.
+   (package.json and package-lock.json are included: Netlify installs the new PDF part by itself.)
 
-3. When published:
-   - Refresh RFS CRM: the start screen shows the bigger turning logo.
-   - ENQ-IMP-26-00008 → Make quotation → Use on VR-1012 → Split-ups (3 lines).
-   - In Charges, "Quote in" → USD → Convert: the costs become the vendor's USD amounts.
+3. When published, check:
+   - The moon button at the top right → dark mode; the sun → back to light.
+   - A sent-ready quotation → "Download PDF".
+   - Email customer → the PDF is ticked to attach → Send from my Outlook.
+   - The customer replies → the quotation shows "Customer's answer" read by AI → confirm.

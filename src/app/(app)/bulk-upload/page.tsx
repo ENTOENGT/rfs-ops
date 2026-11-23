@@ -1,5 +1,5 @@
 'use client';
-/** Bulk upload of customers (with their main salesman and contacts) and vendors (with their coverage) from the Excel template. */
+/** Bulk upload of customers (with their main salesman and contacts) and vendors (with their coverage and teams) from the Excel template. */
 import { useState } from 'react';
 import { api } from '@/components/api';
 
@@ -34,7 +34,7 @@ export default function BulkUpload() {
         Nothing is ever added twice: a customer or vendor already in RFS CRM only gets its empty fields filled in.</p>
       <div className="panel">
         <h2 style={{ marginTop: 0 }}>1. Download the template</h2>
-        <p className="small" style={{ marginTop: 0 }}>Four sheets: Customers, Customer contacts, Vendors, Vendor coverage. The "Read me" sheet explains each column; the Lists sheet has the salesmen and choices.</p>
+        <p className="small" style={{ marginTop: 0 }}>Five sheets: Customers, Customer contacts, Vendors, Vendor coverage, Vendor teams. The "Read me" sheet explains each column; the Lists sheet has the salesmen and choices.</p>
         <a className="btn" href="/api/bulk-upload/template">Download template (.xlsx)</a>
       </div>
       <div className="panel">

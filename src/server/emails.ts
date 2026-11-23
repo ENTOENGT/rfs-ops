@@ -25,7 +25,9 @@ import { pickEmailTemplate } from './templates';
 
 export type Recipient = { name: string; email: string; role?: string | null; picked: boolean; place?: 'to' | 'cc'; side?: 'customer' | 'ours'; removable?: boolean };
 export type Draft = { kind: string; id: string; file_id?: string | null; recipients: Recipient[]; subject: string; body: string; note?: string; options?: [string, string][]; update?: string;
-  template?: { key: string; name: string; source: string }; missing?: string[] };
+  template?: { key: string; name: string; source: string }; missing?: string[];
+  /** 23 Nov: a file attached by itself when sent from Outlook (the quotation PDF) */ attach?: { name: string };
+  /** 23 Nov: parts of the text sent as an HTML table instead (the quotation's charges) */ blocks?: { text: string; html: string }[] };
 
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const UUID = /^[0-9a-f-]{36}$/i;
@@ -38,6 +40,22 @@ const D = (v: any) => {
 /** The shipment's number for outside people: the Job No. once given, otherwise the Shipping Ref, otherwise the Enquiry Ref. */
 const refOf = (x: any): { label: string; no: string } | null => x?.job_no ? { label: 'Job', no: x.job_no } : x?.shipping_ref ? { label: 'Ref.', no: x.shipping_ref }
   : x?.enquiry_ref ? { label: 'Ref.', no: x.enquiry_ref } : null;
+const esc = (s: unknown) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+/** 23 Nov: the email text as simple HTML (paragraphs, line breaks); a block still there unchanged becomes its table. */
+export function toHtml(body: string, blocks: { text: string; html: string }[] = []) {
+  let rest = body.replace(/\r/g, ''), out = '';
+  const b = blocks.find((x) => x.text && rest.includes(x.text));
+  const para = (t: string) => t.split(/\n{2,}/).map((p) => p.trim() ? `<p style="margin:0 0 12px">${esc(p.trim()).replace(/\n/g, '<br>')}</p>` : '').join('');
+  if (b) {
+    const i = rest.indexOf(b.text);
+    // the table has its own heading row and total: a "Charges:" line just above and a "Total …" line just below go
+    const before = rest.slice(0, i).replace(/\n?[ \t]*Charges:?[ \t]*\n?$/i, '\n');
+    const after = rest.slice(i + b.text.length).replace(/^[ \t]*\n?[ \t]*Total\b[^\n]*(\n|$)/i, '\n');
+    out = para(before) + b.html + para(after);
+  }
+  else out = para(rest);
+  return `<div style="font-family:Arial,sans-serif;font-size:14px;line-height:1.45;color:#1a202c">${out}</div>`;
+}
 const money = (v: any, cur: string) => `${cur} ${Number(v).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 /** "Label: value" lines, skipping empty values. */
 const facts = (rows: [string, unknown][]) => rows.filter(([, v]) => v !== null && v !== undefined && String(v).trim() !== '').map(([k, v]) => `${k}: ${v}`).join('\n');
@@ -171,7 +189,8 @@ async function quotationDraft(actor: Actor, id: string, key?: string): Promise<D
     ThreadSubject: `Quotation ${d.quote_no}${[d.origin, d.destination].filter(Boolean).length ? ` – ${[d.origin, d.destination].filter(Boolean).join(' to ')}` : ''}`,
     CustomerName: d.customer_name, CustomerReference: d.enquiry_reference, Origin: d.origin, Destination: d.destination,
     CargoDetails: d.cargo_description, ShipmentDetails: facts([['Route', [d.origin, d.destination].filter(Boolean).join(' to ')], ['Cargo', d.cargo_description]]) };
-  const line = (l: any) => `- ${l.description}: ${money(l.sell_rate, cur)} ${l.unit_name}${Number(l.quantity) !== 1 ? ` x ${Number(l.quantity)} = ${money(l.sell_amount, cur)}` : ''}`;
+  // 23 Nov: one clean line per charge in the text; sent from Outlook, the charges become a table (see blocks)
+  const line = (l: any) => `• ${l.description} – ${money(l.sell_rate, cur)} ${l.unit_name}${Number(l.quantity) !== 1 ? ` × ${Number(l.quantity)} = ${money(l.sell_amount, cur)}` : ''}`;
   // Part G2: several route options → the charges are listed per option, each with its own total
   const opts: any[] = d.options ?? [];
   const { routeLabel } = await import('../lib/routingRules');
@@ -184,8 +203,17 @@ async function quotationDraft(actor: Actor, id: string, key?: string): Promise<D
     RouteOptions: multi ? opts.map((o) => `${routeLabel(o)}: ${money(o.sell_total, cur)}`).join('\n') : '', ValidUntil: D(d.valid_until), Exclusions: d.exclusions ? `Not included: ${d.exclusions}` : '',
     Greeting: dear(recipients, `${d.customer_name} team`), Signature: await signature(actor) };
   const t = await fromTemplate(key!, f, vals);
-  return { kind: 'quotation', id, recipients, ...t, options, update: key,
-    note: `Attach the PDF: press "Print / PDF" on the quotation and save it as PDF.${recipients.length ? '' : ' This customer has no email saved — add one under Customers → contacts.'}` };
+  // the charges block (with its "Charges:" heading and the "Total:" line) → one neat table per option in the sent email
+  const table = (ls: any[], totalLabel: string, total: unknown) => `<table cellpadding="0" cellspacing="0" style="border-collapse:collapse;margin:6px 0 12px;font-family:Arial,sans-serif;font-size:13px;min-width:520px">`
+    + `<tr style="background:#1e3a5f;color:#fff">${['Description', 'Charged', 'Qty', `Rate (${cur})`, `Amount (${cur})`].map((h, i) => `<th style="padding:7px 10px;text-align:${i > 1 ? 'right' : 'left'};font-weight:600">${h}</th>`).join('')}</tr>`
+    + ls.map((l: any, i: number) => `<tr style="background:${i % 2 ? '#f6f8fb' : '#ffffff'}">${[esc(l.description), esc(l.unit_name), String(Number(l.quantity)), money(l.sell_rate, '').trim(), money(l.sell_amount, '').trim()]
+      .map((v, j) => `<td style="padding:6px 10px;border-bottom:1px solid #e2e8f0;text-align:${j > 1 ? 'right' : 'left'}">${v}</td>`).join('')}</tr>`).join('')
+    + `<tr><td colspan="4" style="padding:8px 10px;text-align:right;font-weight:700;color:#1e3a5f">${totalLabel}</td><td style="padding:8px 10px;text-align:right;font-weight:700;color:#1e3a5f;white-space:nowrap">${money(total, cur)}</td></tr></table>`;
+  const html = multi ? opts.map((o) => `<p style="margin:10px 0 2px;font-weight:600">${esc(routeLabel(o))}</p>${table(d.lines.filter((l: any) => l.route_id === o.id), `Option ${o.option_no} total (excluding VAT)`, o.sell_total)}`).join('')
+    : table(d.lines, 'Total (excluding VAT)', d.totals.sell_total);
+  const blocks = [{ text: `Charges:\n${vals.Charges}\nTotal: ${vals.Total} (excluding VAT)`, html }, { text: String(vals.Charges), html }];
+  return { kind: 'quotation', id, recipients, ...t, options, update: key, blocks, attach: { name: `Quotation ${d.quote_no}.pdf` },
+    note: recipients.length ? undefined : 'This customer has no email saved — add one under Customers → contacts.' };
 }
 
 // ------------------------------------------------------------ shipment emails to the customer
@@ -358,16 +386,26 @@ export async function emailPrepared(actor: Actor, b: any) {
 export async function emailSend(actor: Actor, b: any) {
   const draft = await emailDraft(actor, { kind: b.kind, id: b.id, update: b.update }); // also re-checks permission
   const { sendMail } = await import('./outlook');
+  const text = String(b.body ?? draft.body);
+  // 23 Nov: the quotation PDF goes with it (unless unticked), and the charges as a table
+  const attachments = draft.attach && b.attach_pdf !== false && b.kind === 'quotation'
+    ? await (async () => { const { quotationPdf } = await import('./quotepdf'); const p = await quotationPdf(actor, b.id);
+      return [{ name: p.filename, contentType: 'application/pdf', contentBytes: Buffer.from(p.bytes).toString('base64') }]; })() : [];
   const sent = await sendMail(actor.id, { to: Array.isArray(b.to) ? b.to : [], cc: Array.isArray(b.cc) ? b.cc : [],
-    subject: String(b.subject ?? draft.subject), body: String(b.body ?? draft.body) });
-  await recordEmail(actor, { ...b, body: b.body ?? draft.body }, draft, sent.to, sent.cc, sent.subject, sent.from);
+    subject: String(b.subject ?? draft.subject), body: text, html: draft.blocks ? toHtml(text, draft.blocks) : undefined, attachments });
+  await recordEmail(actor, { ...b, body: text, attached: attachments.map((a) => a.name) }, draft, sent.to, sent.cc, sent.subject, sent.from);
+  // 23 Nov: an approved quotation emailed from Outlook is sent — marked so (no extra click); the AI then watches for the answer
+  if (b.kind === 'quotation' && (await one('select status from quotations where id = $1', [b.id]))?.status === 'approved') {
+    const { quotationAction } = await import('./quotations');
+    await quotationAction(actor, b.id, { action: 'send', note: `Emailed from Outlook to ${sent.to.join(', ')}` }).catch(() => {});
+  }
   return { ok: true, sent: true, to: sent.to };
 }
 
 /** One email in the record's own history and on the shipment's Emails tab. `sentFrom` = sent from Outlook; null = only prepared. */
 async function recordEmail(actor: Actor, b: any, draft: Draft, to: string[], cc: string[], subject: string, sentFrom: string | null) {
   const sent = sentFrom !== null;
-  const detail = `To ${to.join(', ') || '(typed in email program)'}${cc.length ? ` · CC ${cc.join(', ')}` : ''} — "${subject}"${sent ? ' — sent from Outlook' : ''}`;
+  const detail = `To ${to.join(', ') || '(typed in email program)'}${cc.length ? ` · CC ${cc.join(', ')}` : ''} — "${subject}"${sent ? ' — sent from Outlook' : ''}${b.attached?.length ? ` — attached: ${b.attached.join(', ')}` : ''}`;
   const t = (prepared: string, done: string) => sent ? done : prepared;
   await tx(async (c) => {
     let fileId: string | null = null, vr: string | null = null, qid: string | null = null;

@@ -705,7 +705,7 @@ const CUSTOMER_READY = ['approved', 'sent', 'accepted'];
  * What the customer receives: selling rates and totals only — never cost, margin or internal notes, whoever asks.
  * Only an approved (or sent / accepted) quotation that has not expired can go out, so a low-margin draft can't be sent by mistake.
  */
-export async function customerCopy(actor: Actor, id: string, how: 'print' | 'excel' = 'print') {
+export async function customerCopy(actor: Actor, id: string, how: 'print' | 'excel' | 'pdf' = 'print') {
   if (!actor.fin.sellingView) throw forbidden('You need to see selling prices to print a quotation');
   const x = await load(actor, id);
   if (!CUSTOMER_READY.includes(x.status))
@@ -724,7 +724,7 @@ export async function customerCopy(actor: Actor, id: string, how: 'print' | 'exc
   for (const k of ['company_name', 'company_address', 'company_phone', 'company_email', 'company_trn', 'quote_vat_note'])
     company[k] = String(await getSetting(k, ''));
   const t = quoteTotals(lines.map((l) => ({ ...l, cost_rate: '0' })));
-  await tx(async (c) => evt(c, actor, id, how === 'excel' ? 'Customer copy downloaded (Excel)' : 'Customer copy opened for print / PDF'));
+  await tx(async (c) => evt(c, actor, id, how === 'excel' ? 'Customer copy downloaded (Excel)' : how === 'pdf' ? 'Quotation PDF made' : 'Customer copy opened for print / PDF'));
   return {
     company, quote_no: x.quote_no, date: new Date(x.approved_at ?? x.created_at).toLocaleDateString('en-CA', { timeZone: 'Asia/Dubai' }),
     valid_until: x.valid_until, currency: x.currency, status: x.status,

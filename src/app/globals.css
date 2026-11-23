@@ -915,3 +915,48 @@ tr.row-new-enq td { background: #F7F3FF; }
 .charges-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
 .charges-head h2 { margin-bottom: 8px; }
 .charges-head select { width: auto; min-width: 96px; margin-left: 6px; padding: 4px 8px; }
+
+/* 23 Nov: the quotation PDF goes with the email */
+.attach-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; background: #F0F5FC; border: 1px solid #D5E2F2; border-radius: 6px; padding: 8px 12px; margin: 4px 0 8px; }
+
+/* =====================================================================================================================
+   23 Nov — dark mode, only when the person presses the moon button (html[data-theme="dark"]); never from the computer's
+   own setting. The palette is swapped in one place; the few places with their own light colours get a dark one below.
+   The customer copy / print sheet stays white (it is what the customer sees).
+   ===================================================================================================================== */
+html[data-theme="dark"] {
+  color-scheme: dark;
+  --navy-100: #24354f; --navy-50: #1a2738; --teal-50: #12302f; --gold-50: #33290f;
+  --bg: #0f141b; --surface: #171e28; --surface-2: #1c2430; --surface-3: #212a37;
+  --ink: #e6ebf2; --ink-2: #c3ccd8; --muted: #9aa6b5; --faint: #6f7b8b;
+  --line: #2a3442; --line-soft: #232c38; --line-strong: #3a4656;
+  --ok: #5fc48f; --ok-bg: #15301f; --warn: #f0b25a; --warn-bg: #33270f; --danger: #f08a80; --danger-bg: #3a1a18; --info: #7fb2f0; --info-bg: #15263c;
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, .4); --shadow: 0 2px 8px rgba(0, 0, 0, .45); --shadow-lg: 0 12px 32px rgba(0, 0, 0, .6);
+  --navy-700: #8db4ec; --navy-600: #a9c6f2; --primary: #3b6fb6;
+}
+html[data-theme="dark"] a { color: #8db4ec; }
+html[data-theme="dark"] .boot, html[data-theme="dark"] body { background: var(--bg); }
+html[data-theme="dark"] .boot-name { color: #c9d6ea; }
+html[data-theme="dark"] :is(.top, .rail-item:hover, .rail-item.on, .rail-sub a:hover, .rail-sub a.on, .modal, .dropdown, .login form, .btn, .app-top .btn, .rec-pick) { background: var(--surface); color: var(--ink); }
+html[data-theme="dark"] :is(input, select, textarea, .gsearch input:focus, .gsearch kbd) { background: var(--surface-2); color: var(--ink); border-color: var(--line-strong); }
+html[data-theme="dark"] input:disabled, html[data-theme="dark"] select:disabled { background: var(--surface-3); color: var(--muted); }
+html[data-theme="dark"] .btn.primary { background: #3b6fb6; border-color: #3b6fb6; color: #fff; }
+html[data-theme="dark"] table.t tbody tr:hover td { background: #1f2834; }
+html[data-theme="dark"] :is(.msg.err, .hs-line.hs-bad, .rec-no, tr.loss td) { background: var(--danger-bg); color: #f6c1bb; }
+html[data-theme="dark"] :is(.msg.ok, .lane div.done, .pro-ok, .pro-act.done, .lowest, tr.is-lowest td, .stage-track span.done, .hs-line.hs-ok, .ready-mark) { background: var(--ok-bg); color: #b9e6cb; }
+html[data-theme="dark"] :is(.gap-box, .panel.warnbox, .hs-line.hs-warn, .ai-flags, .dropdown a.unread, .pro-tiles .kpi.on) { background: var(--warn-bg); color: #f3d9ab; }
+html[data-theme="dark"] :is(.ai-box, .rec-box, tr.row-new-enq td) { background: #1d1a2e; border-color: #3a3363; }
+html[data-theme="dark"] .rec-best { background: #2e2752; color: #d3c8ff; }
+html[data-theme="dark"] :is(.hist-box) { background: #15261c; border-color: #2b4a36; }
+html[data-theme="dark"] :is(.ai-remarks, .attach-row, .agent-sugg, .print-badge, .chip, .port-code, .port-list button.on) { background: var(--info-bg); color: #c6dbf6; border-color: #2a3f5c; }
+html[data-theme="dark"] :is(.hs-line, .new-cust, .conv-box, .rec-ok, .stage-track span, .see-all, .viewer-body, .app-card:active, .pro-tiles .kpi:hover) { background: var(--surface-2); color: var(--ink-2); border-color: var(--line); }
+html[data-theme="dark"] .rec-watch td { color: #f3c79a; }
+html[data-theme="dark"] .ai-quote { color: var(--ink-2); }
+html[data-theme="dark"] img[src*="/brand/logo"] { filter: brightness(1.15); }
+/* what the customer sees stays as printed: white paper */
+html[data-theme="dark"] .qp-sheet { background: #fff; color: #18212d; }
+@media print { html[data-theme="dark"] { color-scheme: light; } }
+/* dark: highlighted text that used deep navy (selected menu item, tab, current step…) becomes light blue */
+html[data-theme="dark"] :is(.subnav nav a.on, .tabs button.on, .tabs a.on, .tabs .on .count, .link-tabs a.on, .steps .now .step-name, .tab-more > button.on,
+  .tab-more .menu-pop button:hover, .tab-more .menu-pop button.on, .terms-info b) { color: #a9c6f2; }
+html[data-theme="dark"] .btn.primary, html[data-theme="dark"] .app-tabs button.on { background: #3b6fb6; border-color: #3b6fb6; color: #fff; }

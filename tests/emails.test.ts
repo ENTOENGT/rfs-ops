@@ -53,10 +53,10 @@ test('2. Quotation email: only when approved; selling prices only — the cost n
   assert.deepEqual(d.recipients.map((r) => [r.email, r.picked]), [['omar@desert.ae', true], ['accounts@desert.ae', false], ['info@desert.ae', false]]);
   assert.match(d.subject, /^\[ENQ-IMP-\d{2}-\d{5}\] \[SI-EM-1\] Shipment Update – Ningbo to Jebel Ali$/);
   assert.match(d.body, /^Dear Omar,/);
-  assert.ok(d.body.includes('Ocean freight: AED 1,250.00 per container x 2 = AED 2,500.00'));
+  assert.ok(d.body.includes('• Ocean freight – AED 1,250.00 per container × 2 = AED 2,500.00'));  // 23 Nov: neater lines
   assert.ok(d.body.includes('Total: AED 2,500.00 (excluding VAT)'));
   assert.ok(!/1,000|1000|margin|cost/i.test(d.body), 'no cost or margin in a customer email');
-  assert.match(d.note!, /Attach the PDF/);
+  assert.match((d as any).attach.name, /^Quotation Q-\d+\.pdf$/);           // 23 Nov: the PDF is attached by itself
   await assert.rejects(emailDraft(transport, { kind: 'quotation', id: quoteId }), (e: any) => e.status === 403);
 });
 

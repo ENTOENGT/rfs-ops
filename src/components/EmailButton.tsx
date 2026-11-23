@@ -18,6 +18,7 @@ export function EmailButton({ kind, id, label = 'Email', className = 'btn', upda
   const [outlook, setOutlook] = useState<any>(null);
   const [sending, setSending] = useState(false);
   const [sentTo, setSentTo] = useState<string[] | null>(null);
+  const [attachPdf, setAttachPdf] = useState(true);              // 23 Nov: the quotation PDF goes with it
   const load = async (u?: string) => {
     setErr(''); setCopied(false); setSentTo(null);
     if (!outlook) api('/api/outlook').then(setOutlook).catch(() => setOutlook({}));
@@ -44,7 +45,7 @@ export function EmailButton({ kind, id, label = 'Email', className = 'btn', upda
   const canSend = !!(outlook?.configured && outlook?.pilot && outlook?.connected);
   const send = async () => {
     setSending(true); setErr('');
-    try { const r = await api('/api/email-send', { body: { kind, id, update: d.update, to, cc, subject: d.subject, body: d.body } }); setSentTo(r.to); onLogged?.(); }
+    try { const r = await api('/api/email-send', { body: { kind, id, update: d.update, to, cc, subject: d.subject, body: d.body, attach_pdf: attachPdf } }); setSentTo(r.to); onLogged?.(); }
     catch (e: any) { setErr(e.message); }
     setSending(false);
   };
@@ -56,7 +57,7 @@ export function EmailButton({ kind, id, label = 'Email', className = 'btn', upda
     {d && <div className="modal-bg" onClick={(e) => e.target === e.currentTarget && setD(null)}><div className="modal wide" role="dialog" aria-label="Email">
       <h2>Email</h2>
       {err && <div className="msg err">{err}</div>}
-      {sentTo && <div className="msg ok">Sent from your Outlook ({outlook?.ms_email}) to {sentTo.join(', ')}. It is in your Sent Items too.</div>}
+      {sentTo && <div className="msg ok">Sent from your Outlook ({outlook?.ms_email}) to {sentTo.join(', ')}{d.attach && attachPdf ? `, with ${d.attach.name}` : ''}. It is in your Sent Items too.</div>}
       {!d.error && !sentTo && <>
         {canSend && <p className="muted small" style={{ margin: '0 0 8px' }}>Sends from your Outlook: <b>{outlook.ms_email}</b></p>}
         {outlook?.pilot && outlook?.configured && !outlook?.connected && <div className="msg warn small">Connect your Outlook (menu → My Outlook) to send from here.</div>}
@@ -75,6 +76,13 @@ export function EmailButton({ kind, id, label = 'Email', className = 'btn', upda
         <label className="f"><span>Subject</span><input value={d.subject} onChange={(e) => setD({ ...d, subject: e.target.value })} /></label>
         <label className="f"><span>Message (you can change it here or in your email program)</span>
           <textarea rows={14} value={d.body} onChange={(e) => setD({ ...d, body: e.target.value })} style={{ fontFamily: 'inherit' }} /></label>
+        {d.attach && <div className="attach-row">
+          {canSend ? <label className="small" style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            <input type="checkbox" style={{ width: 'auto' }} checked={attachPdf} onChange={(e) => setAttachPdf(e.target.checked)} />
+            📎 Attach <b>{d.attach.name}</b> (made by RFS CRM){d.blocks && ' · the charges go as a table'}</label>
+            : <span className="small">📎 For "Open in my email": <a href={`/api/quotations/${id}?format=pdf`}>download {d.attach.name}</a> and attach it.</span>}
+          {canSend && <a className="small" href={`/api/quotations/${id}?format=pdf`} target="_blank" rel="noreferrer">See the PDF</a>}
+        </div>}
         {mailto.length > 1900 && <p className="muted small">This email is long. If your email program shows it cut short, use "Copy text" and paste it instead.</p>}
         {copied && <div className="msg ok small">Copied. Paste it into a new email.</div>}
       </>}

@@ -882,3 +882,20 @@ giving customers to other salesmen is for the Commercials Manager. Up to 1,000 r
   `quotations.company_rate` = the rate to the company currency (AED) on the day the quotation was saved; commercial reports
   use it (Settings' rate only when missing) and Enquiry tracking shows "Quoted (its currency)" next to the AED amount.
   Start-up screen: bigger Reliance mark, turning with a soft pulse (pulse only with reduced motion).
+
+### 19. Quotation PDF, clean email, AI reads the customer's answer, light / dark (migration 041, 23 Nov 2026)
+
+- `src/server/quotepdf.ts` (pdf-lib, logo built in from `brandLogo.ts`): the customer copy (`customerCopy(..., 'pdf')`, selling
+  only) as an A4 PDF — `/api/quotations/[id]?format=pdf` ("Download PDF"). Emailed from Outlook it is attached by itself
+  (`sendMail` attachments; untick in the email window); the charges go as an HTML table (`toHtml` with the draft's `blocks`;
+  the "Charges:" heading and "Total" line around them are dropped). An approved quotation emailed from Outlook is marked sent.
+- `src/server/quotereply.ts`: emails on the enquiry after the quotation was sent (not a vendor's, not our team's, not a bounce)
+  are read once by the AI (tool `record_customer_answer`) → `ai_suggestions` kind 'quote_reply' (migration 041). Box
+  `AiQuoteReply` on the quotation: Accepted → the normal accept (email as proof, chosen route option); Wants changes →
+  response "revision_requested"; Declined → decline with the reason (+ enquiry marked lost if ticked); Question → response
+  note. History line "Customer's email read by AI — … (checked)". Sellers who handle quotations only.
+- Light / dark: a sun / moon button in the top bar sets `html[data-theme]` (kept in this browser, set before the page shows);
+  always light unless chosen — never from the computer's own setting. Dark = the palette swapped in one block plus the few
+  fixed light colours; the printed customer copy stays white.
+- Bulk upload (Administration → Bulk upload): fifth sheet "Vendor teams" — vendor, team, email, CC, contact, phone, modes,
+  direction, note; a team with the same name on that vendor is updated (never a duplicate).

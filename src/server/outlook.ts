@@ -177,7 +177,8 @@ export async function canSend(userId: string) {
  * Send one email from this person's own mailbox. It lands in their Sent Items like any email they write.
  * Plain text only; the addresses are checked here again.
  */
-export async function sendMail(userId: string, m: { to: string[]; cc?: string[]; subject: string; body: string }) {
+export async function sendMail(userId: string, m: { to: string[]; cc?: string[]; subject: string; body: string; html?: string;
+  attachments?: { name: string; contentType: string; contentBytes: string }[] }) {
   if (!(await isPilot(userId))) throw forbidden('Outlook is only for the pilot users for now');
   const clean = (l?: string[]) => [...new Set((l ?? []).map((x) => String(x).trim().toLowerCase()).filter((x) => EMAIL_RE.test(x)))].slice(0, 20);
   const to = clean(m.to), cc = clean(m.cc).filter((x) => !to.includes(x));
@@ -186,7 +187,10 @@ export async function sendMail(userId: string, m: { to: string[]; cc?: string[];
   if (!subject) throw new ApiError(400, 'VALIDATION', 'The email needs a subject');
   const addr = (a: string) => ({ emailAddress: { address: a } });
   await graph(userId, '/me/sendMail', { method: 'POST', body: JSON.stringify({
-    message: { subject, body: { contentType: 'Text', content: String(m.body ?? '').slice(0, 100_000) }, toRecipients: to.map(addr), ccRecipients: cc.map(addr) },
+    message: { subject, body: m.html ? { contentType: 'HTML', content: m.html.slice(0, 300_000) } : { contentType: 'Text', content: String(m.body ?? '').slice(0, 100_000) },
+      toRecipients: to.map(addr), ccRecipients: cc.map(addr),
+      // 23 Nov: files sent with it (the quotation PDF) — Outlook takes up to 3 MB this way
+      ...(m.attachments?.length ? { attachments: m.attachments.map((a) => ({ '@odata.type': '#microsoft.graph.fileAttachment', name: a.name, contentType: a.contentType, contentBytes: a.contentBytes })) } : {}) },
     saveToSentItems: true,
   }) });
   const from = await one('select ms_email from outlook_connections where user_id = $1', [userId]);

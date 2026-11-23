@@ -100,7 +100,7 @@ export default function Roles() {
           <div className="muted small">{r.department_name ?? (r.is_manager ? 'Department admin' : 'Shared')} · {r.user_count} user(s)</div></th>)}</tr></thead>
         <tbody>
           {modules.map((m) => <Fragment key={m}>
-            <tr><td colSpan={shown.length + 1} style={{ background: '#f7f6f3', fontWeight: 600 }}>{m}</td></tr>
+            <tr><td colSpan={shown.length + 1} style={{ background: 'var(--surface-3)', fontWeight: 600 }}>{m}</td></tr>
             {data.permissions.filter((p: any) => p.module === m).map((p: any) => (
               <tr key={p.code}><td>{p.name}{p.sensitivity === 'commercial' && <span className="sens">confidential</span>}</td>
                 {shown.map((r: any) => <td key={r.id}><input type="checkbox" aria-label={`${r.name}: ${p.name}`}

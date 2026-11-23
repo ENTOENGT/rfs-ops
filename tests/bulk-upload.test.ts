@@ -33,7 +33,7 @@ let file = '';
 test('the template has the four sheets, the Read me and the salesmen list', async () => {
   const wb = new ExcelJS.Workbook();
   await wb.xlsx.load(await template(cm) as any);
-  assert.deepEqual(wb.worksheets.map((w) => w.name), ['Read me', 'Lists', 'Customers', 'Customer contacts', 'Vendors', 'Vendor coverage']);
+  assert.deepEqual(wb.worksheets.map((w) => w.name), ['Read me', 'Lists', 'Customers', 'Customer contacts', 'Vendors', 'Vendor coverage', 'Vendor teams']);
   const lists = wb.getWorksheet('Lists')!;
   assert.ok([2, 3, 4].map((r) => lists.getCell(r, 1).value).includes('samsales@x.ae'));
   await assert.rejects(template(await mkUser(admin, 'Mo Messenger', 'messenger', 'messengers', { mobile: '0501112233' })), (e: any) => e.code === 'FORBIDDEN');
@@ -67,6 +67,11 @@ test('check: row by row, nothing saved', async () => {
       ['Hamburg Logistics', 'Port', 'ZZZZZ', null, null, null, null],
       ['Unknown Agent', 'Country', 'France', null, null, null, null],
     ],
+    'Vendor teams': [
+      ['Hamburg Logistics', 'Sea FCL team', 'FCL@hamlog.example', 'fcl2@hamlog.example, boss@hamlog.example', 'Jan', '+49 40 1', 'FCL', 'Import, Cross trade', null],
+      ['Hamburg Logistics', 'Air team', 'not-an-email', null, null, null, 'Air', null, null],
+      ['Hamburg Logistics', 'Odd team', 'odd@hamlog.example', null, null, null, null, 'Sideways', null],
+    ],
   });
   const r: any = await bulkUpload(cm, { file }, false);
   assert.equal(r.checked, true);
@@ -84,7 +89,9 @@ test('check: row by row, nothing saved', async () => {
   assert.match(row(r, 'Vendors', 'Weird Co').note, /not in the list/);
   assert.match(row(r, 'Vendor coverage', 'Hamburg Logistics: ZZZZZ').note, /not found/);
   assert.match(row(r, 'Vendor coverage', 'Unknown Agent').note, /not in the Vendors sheet/);
-  assert.deepEqual(r.summary, { new: 8, exists: 2, problems: 8 });
+  assert.match(row(r, 'Vendor teams', 'Hamburg Logistics: Air team').note, /Email/);
+  assert.match(row(r, 'Vendor teams', 'Hamburg Logistics: Odd team').note, /Direction "sideways"/);
+  assert.deepEqual(r.summary, { new: 9, exists: 2, problems: 10 });
   assert.equal(await one(`select 1 from customers where name = 'Eta Trading'`), null, 'nothing saved by Check');
 });
 
@@ -103,15 +110,18 @@ test('import: the good rows are saved, with salesmen, contacts To/CC and coverag
   const cov = await q(`select a.scope, a.port_code, a.country_code, a.modes, a.side, a.priority from agent_coverage a join vendors v on v.id = a.vendor_id where v.name = 'Hamburg Logistics' order by a.scope`);
   assert.deepEqual(cov.map((c) => [c.scope, c.port_code ?? c.country_code ?? 'region', c.modes, c.side, c.priority]),
     [['country', 'DE', [], 'both', 2], ['port', 'DEHAM', ['sea_fcl', 'sea_lcl'], 'origin', 1], ['region', 'region', ['air'], 'both', 3]]);
+  const t = await one(`select t.email, t.cc_emails, t.modes, t.directions, t.contact_person from vendor_teams t join vendors v on v.id = t.vendor_id where v.name = 'Hamburg Logistics'`);
+  assert.deepEqual(t, { email: 'fcl@hamlog.example', cc_emails: 'fcl2@hamlog.example, boss@hamlog.example', modes: ['sea_fcl'], directions: ['import', 'cross_trade'], contact_person: 'Jan' });
   assert.ok(await one(`select 1 from audit_log where action = 'Bulk upload'`));
 });
 
 test('the same file again: no duplicates at all', async () => {
   const n = async () => (await one(`select (select count(*) from customers) c, (select count(*) from customer_contacts) k, (select count(*) from vendors) v,
-    (select count(*) from agent_coverage) a, (select count(*) from customer_salesmen where removed_at is null) s`));
+    (select count(*) from agent_coverage) a, (select count(*) from customer_salesmen where removed_at is null) s, (select count(*) from vendor_teams) t`));
   const before = await n();
   const r: any = await bulkUpload(cm, { file }, true);
   assert.equal(r.summary.new, 0);
+  assert.match(row(r, 'Vendor teams', 'Hamburg Logistics: Sea FCL team').note, /Already there — updated/);
   assert.deepEqual(await n(), before);
 });
 

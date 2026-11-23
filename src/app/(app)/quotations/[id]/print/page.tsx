@@ -23,6 +23,7 @@ export default function QuotePrint({ params }: { params: { id: string } }) {
       <div className="page-head no-print"><h1>Customer copy — {d.quote_no}</h1><span className="spacer" />
         <Link className="btn" href={`/quotations/${params.id}`}>Back</Link>
         <a className="btn" href={`/api/quotations/${params.id}?format=xlsx`}>Excel</a>
+        <a className="btn" href={`/api/quotations/${params.id}?format=pdf`}>Download PDF</a>
         <button className="btn primary" onClick={() => window.print()}>Print / Save as PDF</button></div>
       <p className="muted small no-print" style={{ marginTop: -6 }}>This is exactly what the customer sees: selling rates only. To get a PDF, click Print and choose "Save as PDF".</p>
       <div className="qp-sheet">

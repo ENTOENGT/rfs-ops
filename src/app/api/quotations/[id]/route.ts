@@ -3,7 +3,7 @@ import { copyQuotation, customerCopy, customerExcel, getQuotation, quotationActi
 import { route, body, params as qs } from '@/server/http';
 export const dynamic = 'force-dynamic';
 export const fetchCache = 'force-no-store';
-// ?view=customer → the customer copy (selling only); ?format=xlsx → the same as an Excel file
+// ?view=customer → the customer copy (selling only); ?format=xlsx → the same as an Excel file; ?format=pdf → as a PDF
 export const GET = route(async (req, { params }) => {
   const a = await requireActor(req);
   const p = qs(req);
@@ -11,6 +11,12 @@ export const GET = route(async (req, { params }) => {
     const f = await customerExcel(a, params.id);
     return new Response(f.body, { headers: { 'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
       'Cache-Control': 'no-store', 'Content-Disposition': `attachment; filename="${f.name}"` } });
+  }
+  if (p.format === 'pdf') {                                                 // 23 Nov: the real PDF, made here
+    const { quotationPdf } = await import('@/server/quotepdf');
+    const f = await quotationPdf(a, params.id);
+    return new Response(Buffer.from(f.bytes), { headers: { 'Content-Type': 'application/pdf', 'Cache-Control': 'no-store',
+      'Content-Disposition': `attachment; filename="${f.filename}"` } });
   }
   return p.view === 'customer' ? customerCopy(a, params.id) : getQuotation(a, params.id);
 });

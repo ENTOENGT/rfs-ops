@@ -69,7 +69,7 @@ export function BarList({ rows, metric, color, format, top = 8, empty = 'No data
         return (
           <div role="listitem" key={r.key} style={{ display: 'grid', gridTemplateColumns: 'minmax(90px, 34%) 1fr auto', gap: 8, alignItems: 'center', padding: '3px 0', fontSize: 13 }}>
             <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={r.label}>{r.label}</span>
-            <span style={{ background: '#efede8', borderRadius: 3, height: 14, position: 'relative' }}>
+            <span style={{ background: 'var(--surface-3)', borderRadius: 3, height: 14, position: 'relative' }}>
               <span style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: `${Math.max(2, (Math.abs(v) / max) * 100)}%`, borderRadius: 3,
                 background: v < 0 ? COLORS.loss : typeof color === 'function' ? color(r) : color }} />
             </span>

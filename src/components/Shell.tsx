@@ -302,6 +302,7 @@ function Frame({ me, lk, can, children }: { me: Me; lk: any; can: (p: string) =>
             <QuickCreate can={can} />
             {['jobfiles.view_all', 'jobfiles.view_department', 'jobfiles.view_assigned', 'jobfiles.view_handed_over', 'jobfiles.create', 'jobfiles.edit'].some((p) => can(p as any)) && <ChatIcon />}
             <Bell />
+            <ThemeButton />
             {can('settings.manage') && <Link className="icon-btn hide-sm" href="/settings" aria-label="Settings" title="Settings"><Icon name="gear" /></Link>}
             <Profile me={me} logout={logout} />
           </div>
@@ -364,4 +365,17 @@ function BootScreen() {
     <span className="boot-name">RFS CRM</span>
     <span className="boot-text">Loading<span className="boot-dots"><i>.</i><i>.</i><i>.</i></span></span>
   </div>;
+}
+
+/** 23 Nov: light / dark — chosen by the person (kept in this browser); always starts light, never follows the computer. */
+function ThemeButton() {
+  const [dark, setDark] = useState(false);
+  useEffect(() => { setDark(document.documentElement.dataset.theme === 'dark'); }, []);
+  const flip = () => {
+    const next = !dark; setDark(next);
+    document.documentElement.dataset.theme = next ? 'dark' : 'light';
+    try { localStorage.setItem('rfs.theme', next ? 'dark' : 'light'); } catch { /* private window: just for now */ }
+  };
+  return <button className="icon-btn" onClick={flip} aria-label={dark ? 'Switch to light mode' : 'Switch to dark mode'} title={dark ? 'Light mode' : 'Dark mode'}>
+    <Icon name={dark ? 'sun' : 'moon'} /></button>;
 }

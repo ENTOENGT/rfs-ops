@@ -1,5 +1,6 @@
 'use client';
 import Link from 'next/link';
+import { AiQuoteReply } from '@/components/AiQuoteReply';
 import { routeLabel } from '@/lib/routingRules';
 import { useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
@@ -99,7 +100,8 @@ export default function Quotation({ params }: { params: { id: string } }) {
           const note = prompt('What did the customer say? (leave empty for "no reply yet")');
           if (note !== null) act({ action: 'response', response: note.trim() ? 'note' : 'no_reply', note: note.trim() || undefined }, 'Recorded.'); }}>Customer response</button>}
         {d.can.decline && <button className="btn" onClick={() => ask('decline', 'Why did the customer not accept?', 'Recorded.')}>Customer declined</button>}
-        {d.can.customer_copy && <><Link className="btn" href={`/quotations/${d.id}/print`}>Print / PDF</Link>
+        {d.can.customer_copy && <><a className="btn" href={`/api/quotations/${d.id}?format=pdf`}>Download PDF</a>
+          <Link className="btn" href={`/quotations/${d.id}/print`}>Print</Link>
           <a className="btn" href={`/api/quotations/${d.id}?format=xlsx`}>Excel</a>
           <EmailButton kind="quotation" id={d.id} label="Email customer" onLogged={load} /></>}
         {d.can.copy && <button className="btn" onClick={() => act({ action: 'copy' }, '')}>Copy</button>}
@@ -115,9 +117,10 @@ export default function Quotation({ params }: { params: { id: string } }) {
       {d.status === 'expired' && <div className="msg warn">The rates expired on {fmtDate(d.valid_until)}. Edit the validity date (it then needs approval again) or make a copy.</div>}
       {d.decline_reason && ['draft', 'rejected', 'cancelled'].includes(d.status) && <div className="msg">Note: {d.decline_reason}</div>}
       {!d.can.customer_copy && ['draft', 'pending_approval'].includes(d.status) && sellingView &&
-        <p className="muted small">Print / PDF and Excel for the customer appear once the quotation is approved.</p>}
+        <p className="muted small">The PDF, Print and Excel for the customer appear once the quotation is approved.</p>}
       {d.job_file_id && <div className="msg ok">Shipment: <Link href={`/job-files/${d.job_file_id}`}><b>{d.job_no ?? d.shipping_ref ?? d.enquiry_ref}</b></Link>
         {d.enquiry_ref && <span className="muted small"> · Enquiry Ref {d.enquiry_ref}{d.shipping_ref && ` · Shipping Ref ${d.shipping_ref}`}{d.job_no && ` · Job No. ${d.job_no}`}</span>}</div>}
+      {sellingView && d.job_file_id && ['sent', 'approved', 'accepted', 'rejected'].includes(d.status) && <AiQuoteReply quotationId={d.id} onChanged={load} />}
       {confirmOpen && <ConfirmModal d={d} onClose={() => setConfirmOpen(false)} act={act} />}
       {d.rate_warnings?.length > 0 && <div className="msg warn"><b>Another vendor gave a lower price for the same request.</b>
         <ul style={{ margin: '4px 0 0', paddingLeft: 18 }}>{d.rate_warnings.map((w: string) => <li key={w}>{w}</li>)}</ul></div>}
