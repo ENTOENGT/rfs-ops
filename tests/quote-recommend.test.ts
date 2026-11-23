@@ -109,3 +109,11 @@ test('cost viewers only; terminal names are not shipping lines', async () => {
   await assert.rejects(runRecommend(fred, fileId), /see cost/);
   assert.equal(lineOnly('DP World'), null); assert.equal(lineOnly('MSC'), 'MSC'); assert.equal(lineOnly('Jebel Ali terminal 3'), null);
 });
+
+test('23 Nov: the enquiry\'s rate list (New quotation reads it) brings the charge lines too', async () => {
+  const { getJobFile } = await import('../src/server/jobfiles');
+  const f: any = await getJobFile(coord, fileId);
+  const a = f.vendor_requests.find((r: any) => r.id === rA);
+  assert.equal(a.charges.length, 2);
+  assert.equal(typeof a.ai_recommended, 'boolean');
+});

@@ -136,3 +136,12 @@ test('a suggestion read the old way (not saved yet) is read again', async () => 
   const box: any = await quoteBox(admin, fileId);
   assert.equal(box.open.length, 0); assert.ok(box.unread.length >= 1);
 });
+
+test('23 Nov: a bounce / out-of-office from the vendor\'s domain is not the vendor\'s reply', async () => {
+  const { isBounce } = await import('../src/server/quotereader');
+  assert.ok(isBounce({ from_addr: 'postmaster@nhavalog.in', subject: 'Undeliverable: [ENQ-1] Shipment Enquiry' }));
+  assert.ok(isBounce({ from_addr: 'ops@nhavalog.in', subject: 'Automatic reply: rate request' }));
+  assert.ok(!isBounce({ from_addr: 'ops@nhavalog.in', subject: 'RE: rate request' }));
+  const b = await file(mail({ from_addr: 'postmaster@nhavalog.in', subject: `Undeliverable: RE: ${reqB.request_no}` }));
+  assert.equal(b.vendor_request_id, null);
+});

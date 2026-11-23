@@ -120,17 +120,26 @@ function present(actor: Actor, x: any, lines: any[]) {
 }
 
 /** Vendor rates on a Job File that can become cost lines (cost viewers only). */
+/**
+ * Migration 039: each rate's charge lines (latest rate version) — for "split-ups" — and whether the AI recommends it.
+ * Cost viewers only (callers check). Used by the quotation and by the enquiry (New quotation takes its rates from there).
+ */
+export async function withCharges(rows: any[], jobFileId: string) {
+  const ids = rows.filter((r) => r.quoted_cost !== undefined && r.quoted_cost !== null).map((r) => r.id);
+  const ch = ids.length ? await q(`select c.request_id, c.section, c.description, c.basis, c.quantity::float quantity, c.amount::float amount, c.currency, c.exchange_rate::float exchange_rate
+    from vendor_rate_charges c join vendor_requests r on r.id = c.request_id and c.rate_version = r.rate_version where c.request_id = any($1) order by c.sort_order`, [ids]) : [];
+  const rec = ids.length ? await one(`select result->>'recommended_request_id' id from vendor_recommendations where job_file_id = $1 order by created_at desc limit 1`, [jobFileId]) : null;
+  for (const r of rows) { r.charges = ch.filter((c) => c.request_id === r.id); r.ai_recommended = !!rec && rec.id === r.id; }
+  return rows;
+}
+
 export async function vendorRatesFor(jobFileId: string) {
   const { markLowest } = await import('./vendorreqs');
   const rows = await q(`select r.id, r.request_no, r.service, r.status, r.quoted_cost, r.currency, r.rate_valid_until, r.vendor_reference, r.description,
       r.rate_group, r.route_id, v.name vendor_name
     from vendor_requests r join vendors v on v.id = r.vendor_id
     where r.job_file_id = $1 and r.quoted_cost is not null and r.status not in ('cancelled') order by r.created_at`, [jobFileId]);
-  // migration 039: the vendor's charge lines (latest rate version) — for "split-ups"; and the AI's recommendation, if any
-  const ch = rows.length ? await q(`select c.request_id, c.section, c.description, c.basis, c.quantity::float quantity, c.amount::float amount, c.currency, c.exchange_rate::float exchange_rate
-    from vendor_rate_charges c join vendor_requests r on r.id = c.request_id and c.rate_version = r.rate_version where c.request_id = any($1) order by c.sort_order`, [rows.map((r) => r.id)]) : [];
-  const rec = await one(`select result->>'recommended_request_id' id from vendor_recommendations where job_file_id = $1 order by created_at desc limit 1`, [jobFileId]);
-  for (const r of rows) { r.charges = ch.filter((c) => c.request_id === r.id); r.ai_recommended = rec?.id === r.id; }
+  await withCharges(rows, jobFileId);
   return markLowest(rows, (r) => r.service === 'rate' ? `route:${r.route_id ?? ''}` : r.rate_group);
 }
 

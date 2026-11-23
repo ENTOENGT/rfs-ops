@@ -28,6 +28,11 @@ const list = (s: unknown) => String(s ?? '').split(/[,;]\s*/).map((x) => x.trim(
 const today = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Dubai' });
 
 // ------------------------------------------------------------------ 1. which rate request does a received email answer?
+/** Mail-server bounces and automatic replies (23 Nov: "postmaster@… Undeliverable" was taken as the vendor's reply). */
+export const isBounce = (m: { from_addr?: string | null; subject?: string | null }) =>
+  /^(postmaster|mailer-daemon|mail-daemon|no-?reply|do-?not-?reply|bounces?)@/i.test(String(m.from_addr ?? '').trim())
+  || /^\s*(undeliverable|undelivered|delivery (status notification|has failed|failure)|mail delivery (failed|subsystem|failure)|returned mail|failure notice|automatic reply|auto(matic)?[- ]?reply|out of (the )?office|ooo\b)/i.test(String(m.subject ?? ''));
+
 /** The rate request on this enquiry that a received email answers, or null (then it is the customer's or someone else's). */
 export async function matchVendorRequest(db: Db, fileId: string, m: { from_addr?: string | null; subject?: string | null; body_excerpt?: string | null }) {
   const reqs = await q(`select r.id, r.request_no, r.status, r.created_at, lower(v.email) vendor_email, lower(vt.email) team_email, lower(vt.cc_emails) team_cc
@@ -63,6 +68,7 @@ export async function matchVendorRequest(db: Db, fileId: string, m: { from_addr?
 
 /** Called when a received email is filed: mark it as the vendor's reply (and in the request's history). Returns the request id. */
 export async function linkReply(db: Db, actor: Actor | null, emailId: string, fileId: string, m: any) {
+  if (isBounce(m)) return null;                                           // a bounce / out-of-office is not the vendor's reply
   const vr = await matchVendorRequest(db, fileId, m);
   if (!vr) return null;
   await db.query('update email_messages set vendor_request_id = $2 where id = $1', [emailId, vr]);
@@ -78,6 +84,7 @@ export async function linkOldReplies(fileId: string) {
       and exists (select 1 from vendor_requests r where r.job_file_id = e.job_file_id and r.service = 'rate' and r.created_at <= coalesce(e.sent_at, e.created_at))
       and not exists (select 1 from ai_suggestions s where s.email_id = e.id and s.kind = 'enquiry')`, [fileId]);
   for (const e of rows) {
+    if (isBounce(e)) continue;
     await tx(async (c) => {
       if (!(await linkReply(c, null, e.id, fileId, e))) return;
       const from = String(e.from_addr ?? '').toLowerCase(), d = domainOf(from);
@@ -99,7 +106,7 @@ const TOOL = {
       total: { type: 'number', description: 'The total price for the whole shipment as asked (all containers / the full weight), digits only. When they give an all-in price, this is the all-in price.' },
       currency: { type: 'string', description: '3-letter currency code of the total, e.g. USD, AED, EUR.' },
       charges: { type: 'array', description: 'The breakup lines when the vendor lists them. Only the parts — never the all-in / total line itself as one more line.', items: { type: 'object', properties: {
-        section: { type: 'string', enum: CHARGE_SECTIONS.map(([k]) => k), description: 'freight (sea / air freight), origin (charges at loading side), destination (charges at the arrival side), other' },
+        section: { type: 'string', enum: CHARGE_SECTIONS.map(([k]) => k), description: 'origin = at the loading side: pickup / transportation / trucking to the port, export customs, origin THC, origin documents. freight = sea / air freight and its surcharges (BAF, CAF, PSS, fuel). destination = at the arrival side: DO, destination THC, import customs, delivery. other = only what fits none of these.' },
         description: { type: 'string' }, basis: { type: 'string', description: 'per container, per kg, per CBM, per BL, per shipment…' },
         quantity: { type: 'number', description: 'How many of the basis for this shipment (e.g. 2 containers). 1 when per shipment.' },
         amount: { type: 'number', description: 'The price for one basis unit.' }, currency: { type: 'string' },
@@ -236,7 +243,8 @@ export async function quoteBox(actor: Actor, fileId: string) {
   const unread = await q(`select e.id, e.from_name, e.from_addr, e.subject, e.sent_at, r.request_no, v.name vendor_name
     from email_messages e join vendor_requests r on r.id = e.vendor_request_id join vendors v on v.id = r.vendor_id
     where e.job_file_id = $1 and e.direction = 'in' and r.status in ('requested', 'quoted')
-      and not exists (select 1 from ai_suggestions s where s.email_id = e.id and s.kind = 'quote') order by e.sent_at desc nulls last limit 5`, [fileId]);
+      and not exists (select 1 from ai_suggestions s where s.email_id = e.id and s.kind = 'quote') order by e.sent_at desc nulls last limit 8`, [fileId])
+    .then((rs) => rs.filter((m: any) => !isBounce(m)).slice(0, 5));          // a bounce linked before 23 Nov is not read
   return { allowed: true, configured: aiConfig().ready, open, no_rate: noRate, unread };
 }
 

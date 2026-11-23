@@ -490,6 +490,8 @@ export async function getJobFile(actor: Actor, id: string) {
       r.assigned_to, r.received_at, r.route_id, v.name vendor_name from vendor_requests r join vendors v on v.id = r.vendor_id where r.job_file_id = $1
       order by coalesce(r.rate_group, r.id), r.quoted_cost nulls last, r.created_at`, [id]), (r) => r.service === 'rate' ? `route:${r.route_id ?? ''}` : r.rate_group)
       .map((r) => (actor.fin.buyingView ? r : { ...r, quoted_cost: undefined, lowest: undefined })) : null;
+  // migration 039: cost viewers get each rate's charge lines (New quotation → split-ups) and the AI's pick
+  if (vendorRequests && actor.fin.buyingView) await (await import('./quotations')).withCharges(vendorRequests, id);
   const docsRequired = (await getSetting('jobfile_docs_required_to_close', true)) !== false;
   const docList = await checklist(f);
   const documents = await q(`select d.id, d.doc_type, d.file_name, d.mime_type, d.size_bytes, d.version, d.replaced_at, d.issue_date, d.expiry_date,
