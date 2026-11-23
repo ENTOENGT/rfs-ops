@@ -878,3 +878,7 @@ giving customers to other salesmen is for the Commercials Manager. Up to 1,000 r
   Box `AiRecommend` under Rates and quotation; "AI recommends" mark on the quotation's rates. Cost viewers only.
 - Part B fixes: a terminal / port operator (DP World, AD Ports…) is never taken as the shipping line (`lineOnly`); the "no rate"
   note names the email and hides once that vendor's rate is shown.
+- 23 Nov: the quotation currency can also be chosen in the Charges header (convert offer opens there). Migration 040:
+  `quotations.company_rate` = the rate to the company currency (AED) on the day the quotation was saved; commercial reports
+  use it (Settings' rate only when missing) and Enquiry tracking shows "Quoted (its currency)" next to the AED amount.
+  Start-up screen: bigger Reliance mark, turning with a soft pulse (pulse only with reduced motion).

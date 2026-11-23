@@ -97,11 +97,11 @@ export function QuoteFields({ f, setF, fe = {}, minMargin, vendorRates = [], job
   };
   // changing the quotation currency: offer to convert the amounts (vendor costs from their own amount and currency)
   const [conv, setConv] = useState<any>(null);
-  const changeCurrency = (to: string) => {
+  const changeCurrency = (to: string, where: 'top' | 'charges' = 'top') => {
     const from = cur;
     if (to === from || !lines.some((l) => l.cost_rate || l.sell_rate)) return setF({ ...f, currency: to });
     const vend = [...new Set(lines.filter((l) => l.cost_currency && l.cost_original).map((l) => String(l.cost_currency)))];
-    setConv({ from, to, manual: String(fxRate(from, to, lk.fx ?? {}) ?? ''), vendor: Object.fromEntries(vend.map((c) => [c, c === to ? '1' : String(fxRate(c, to, lk.fx ?? {}) ?? '')])) });
+    setConv({ where, from, to, manual: String(fxRate(from, to, lk.fx ?? {}) ?? ''), vendor: Object.fromEntries(vend.map((c) => [c, c === to ? '1' : String(fxRate(c, to, lk.fx ?? {}) ?? '')])) });
   };
   const applyConv = (convert: boolean) => {
     if (!convert) { setF({ ...f, currency: conv.to }); return setConv(null); }
@@ -112,11 +112,22 @@ export function QuoteFields({ f, setF, fe = {}, minMargin, vendorRates = [], job
       if (l.cost_currency && l.cost_original && Number(conv.vendor[l.cost_currency]) > 0) { n.cost_fx = String(Number(conv.vendor[l.cost_currency])); n.cost_rate = r2(Number(l.cost_original) * Number(n.cost_fx)); }
       else if (l.cost_rate) n.cost_rate = r2(Number(l.cost_rate) * m);
       if (l.margin_type === 'amount' && l.margin_value) n.margin_value = r2(Number(l.margin_value) * m);
-      n.sell_rate = l.margin_type ? sellFromMargin(n.cost_rate, n.margin_type, n.margin_value) : l.sell_rate ? r2(Number(l.sell_rate) * m) : l.sell_rate;
+      n.sell_rate = l.margin_type && String(n.margin_value ?? '') !== '' ? sellFromMargin(n.cost_rate, n.margin_type, n.margin_value) : l.sell_rate ? r2(Number(l.sell_rate) * m) : l.sell_rate;
       return n;
     }) });
     setConv(null);
   };
+  const convBox = conv ? <div className="span3 conv-box">
+        <b className="small">Change the quotation from {conv.from} to {conv.to}: convert the amounts?</b>
+        <div className="grid g4" style={{ marginTop: 6 }}>
+          {Object.keys(conv.vendor).filter((c) => c !== conv.to).map((c) => <label key={c} className="f"><span>Vendor costs in {c}: {conv.to} for 1 {c}</span>
+            <input value={conv.vendor[c]} onChange={(e) => setConv({ ...conv, vendor: { ...conv.vendor, [c]: e.target.value } })} inputMode="decimal" /></label>)}
+          <label className="f"><span>Other amounts: {conv.to} for 1 {conv.from}</span><input value={conv.manual} onChange={(e) => setConv({ ...conv, manual: e.target.value })} inputMode="decimal" /></label>
+        </div>
+        <p className="muted small" style={{ margin: '4px 0' }}>Vendor costs are worked out again from the vendor's own amount; margins % stay, so the profit stays right. Rates come from Settings — change them here if needed.</p>
+        <div style={{ display: 'flex', gap: 6 }}><button type="button" className="btn small primary" onClick={() => applyConv(true)}>Convert</button>
+          <button type="button" className="btn small" onClick={() => applyConv(false)}>Keep the amounts</button>
+          <button type="button" className="btn small" onClick={() => setConv(null)}>Cancel</button></div></div> : null;
   return <>
     <div className="panel"><h2>Enquiry</h2><div className="grid g3">
       <label className={`f span2${fe.customer_id ? ' bad' : ''}`}><span>Customer <em>*</em></span>
@@ -131,17 +142,7 @@ export function QuoteFields({ f, setF, fe = {}, minMargin, vendorRates = [], job
         {DIRECTIONS.map(([c, n]) => <option key={c} value={c}>{n}</option>)}</select></label>
       <label className="f"><span>Currency</span><select value={cur} onChange={(e) => changeCurrency(e.target.value)}>
         {CURRENCIES.map(([c, n]) => <option key={c} value={c}>{c} — {n}</option>)}</select></label>
-      {conv && <div className="span3 conv-box">
-        <b className="small">Change the quotation from {conv.from} to {conv.to}: convert the amounts?</b>
-        <div className="grid g4" style={{ marginTop: 6 }}>
-          {Object.keys(conv.vendor).filter((c) => c !== conv.to).map((c) => <label key={c} className="f"><span>Vendor costs in {c}: {conv.to} for 1 {c}</span>
-            <input value={conv.vendor[c]} onChange={(e) => setConv({ ...conv, vendor: { ...conv.vendor, [c]: e.target.value } })} inputMode="decimal" /></label>)}
-          <label className="f"><span>Other amounts: {conv.to} for 1 {conv.from}</span><input value={conv.manual} onChange={(e) => setConv({ ...conv, manual: e.target.value })} inputMode="decimal" /></label>
-        </div>
-        <p className="muted small" style={{ margin: '4px 0' }}>Vendor costs are worked out again from the vendor's own amount; margins % stay, so the profit stays right. Rates come from Settings — change them here if needed.</p>
-        <div style={{ display: 'flex', gap: 6 }}><button type="button" className="btn small primary" onClick={() => applyConv(true)}>Convert</button>
-          <button type="button" className="btn small" onClick={() => applyConv(false)}>Keep the amounts</button>
-          <button type="button" className="btn small" onClick={() => setConv(null)}>Cancel</button></div></div>}
+      {conv?.where === 'top' && convBox}
       <label className="f"><span>Rates valid until</span><input type="date" value={f.valid_until ?? ''} onChange={set('valid_until')} /></label>
       <label className="f"><span>From</span><input value={f.origin ?? ''} onChange={set('origin')} /></label>
       <label className="f"><span>To</span><input value={f.destination ?? ''} onChange={set('destination')} /></label>
@@ -175,7 +176,11 @@ export function QuoteFields({ f, setF, fe = {}, minMargin, vendorRates = [], job
           <button type="button" className="btn small" onClick={() => setPick(null)}>Cancel</button></div>
       </div>}
     </div>}
-    <div className="panel"><h2>Charges ({cur}, excluding VAT)</h2>
+    <div className="panel"><div className="charges-head"><h2>Charges ({cur}, excluding VAT)</h2>
+      <label className="small">Quote in <select value={cur} onChange={(e) => changeCurrency(e.target.value, 'charges')} aria-label="Quotation currency">
+        {CURRENCIES.map(([c]) => <option key={c} value={c}>{c}</option>)}</select></label></div>
+      {conv?.where === 'charges' && <div style={{ marginBottom: 10 }}>{convBox}</div>}
+      {cur !== 'AED' && <p className="muted small" style={{ margin: '-4px 0 8px' }}>Quoted in {cur}. Reports show it in AED with today's rate (kept with the quotation) and in {cur}.</p>}
       <div className="table-wrap"><table className="t">
         <thead><tr><th style={{ width: '32%' }}>Charge</th>{multi && <th>Route option</th>}<th>Charged</th><th className="num">Qty</th>
           {buyingView && <th className="num">Cost rate</th>}{canMargin && <th>Margin</th>}{sellingView && <th className="num">Selling rate</th>}

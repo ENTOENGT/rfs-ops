@@ -53,11 +53,11 @@ export async function enquiries(actor: Actor, p: Record<string, string>) {
       (select count(*)::int from job_file_containers k where k.job_file_id = f.id and k.deleted_at is null) containers,
       (select coalesce(sum(case when k.size_type like '20%' then 1 when k.size_type is null then 0 else 2 end), 0)::int
          from job_file_containers k where k.job_file_id = f.id and k.deleted_at is null) teu,
-      qa.quote_no, qa.currency, qa.sell, qa.cost, qa.status quote_status
+      qa.quote_no, qa.currency, qa.company_rate, qa.sell, qa.cost, qa.status quote_status
     from job_files f join customers c on c.id = f.customer_id
       left join users sm on sm.id = f.salesman_id left join users co on co.id = f.coordinator_id
       left join lateral (
-        select x.quote_no, x.currency, x.status,
+        select x.quote_no, x.currency, x.company_rate, x.status,
           sum(l.quantity * l.sell_rate) filter (where l.route_id is null or x.selected_route_id is null or l.route_id = x.selected_route_id) sell,
           sum(l.quantity * l.cost_rate) filter (where l.route_id is null or x.selected_route_id is null or l.route_id = x.selected_route_id) cost
         from quotations x left join quotation_lines l on l.quotation_id = x.id
@@ -70,7 +70,8 @@ export async function toCompany(rows: any[]) {
   const fx = Object.fromEntries((await q(`select key, value from settings where key like 'fx\\_%'`)).map((r) => [String(r.key).slice(3), r.value === null ? null : Number(r.value)]));
   const company = String((await q(`select value from settings where key = 'currency'`))[0]?.value ?? 'AED').replace(/"/g, '');
   return rows.map((r) => {
-    const x = r.currency ? fxRate(r.currency, company, fx) : null;
+    // migration 040: the rate of the day the quotation was saved; else today's Settings rate
+    const x = r.company_rate != null ? Number(r.company_rate) : r.currency ? fxRate(r.currency, company, fx) : null;
     return { ...r, sell_c: r.sell != null && x ? Number(r.sell) * x : null, cost_c: r.cost != null && x ? Number(r.cost) * x : null };
   });
 }
@@ -116,7 +117,8 @@ export async function commercialReport(actor: Actor, def: any, cols: any[], cols
       customer_name: r.customer_name, salesman_name: r.salesman_name, coordinator_name: r.coordinator_name, route: r.route,
       stage_name: stageName(r.stage), days_open: OPEN.includes(r.stage) ? Math.floor((now - new Date(r.created_at).getTime()) / 86400000) : null,
       days_to_quote: daysToQuote(r) === null ? null : Math.round(daysToQuote(r)! * 10) / 10, rate_requests: r.rate_requests,
-      quote_no: r.quote_no, quote_total: r.sell_c === null ? null : money(r.sell_c), quote_profit: r.sell_c === null || r.cost_c === null ? null : money(r.sell_c - r.cost_c),
+      quote_no: r.quote_no, quote_total: r.sell_c === null ? null : money(r.sell_c),
+      quote_own: r.sell != null && r.currency ? `${r.currency} ${Number(r.sell).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : null, quote_profit: r.sell_c === null || r.cost_c === null ? null : money(r.sell_c - r.cost_c),
       volume_cbm: r.volume_cbm === null ? null : Number(r.volume_cbm), weight_kg: r.gross_weight_kg === null ? null : Number(r.gross_weight_kg),
       containers: r.containers || null,
       result: won(r) ? (r.stage === 'handed_over' ? 'Won — handed over' : 'Won') : r.stage === 'lost' ? `Lost${r.cancel_reason ? `: ${r.cancel_reason}` : ''}` : r.stage === 'cancelled' ? 'Cancelled' : 'Open',

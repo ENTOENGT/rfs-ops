@@ -117,3 +117,20 @@ test('23 Nov: the enquiry\'s rate list (New quotation reads it) brings the charg
   assert.equal(a.charges.length, 2);
   assert.equal(typeof a.ai_recommended, 'boolean');
 });
+
+test('23 Nov: a USD quotation keeps the day\'s rate to AED; reports show AED (that rate) and USD', async () => {
+  const cust = (await one('select customer_id from job_files where id = $1', [fileId])).customer_id;
+  const x = await qt.createQuotation(coord, { customer_id: cust, service_type: 'sea_fcl', job_file_id: fileId, currency: 'USD',
+    lines: [{ description: 'Freight and charges (all-in)', charge_unit: 'shipment', quantity: '1', cost_rate: '4000', sell_rate: '5200' }] });
+  assert.equal(Number((await one('select company_rate from quotations where id = $1', [x.id])).company_rate), 3.6725);
+  await q(`update settings set value = '3.70' where key = 'fx_USD'`);                 // the rate changes later
+  const { toCompany } = await import('../src/server/commercialReports');
+  const [r] = await toCompany([{ currency: 'USD', company_rate: (await one('select company_rate from quotations where id = $1', [x.id])).company_rate, sell: 5200, cost: 4000 }]);
+  assert.equal(Math.round(r.sell_c * 100) / 100, 19097, 'AED with the day\'s rate 3.6725, not 3.70');
+  const { runReport } = await import('../src/server/reports');
+  const rep: any = await runReport(admin, 'enquiry_tracking', { from: '2000-01-01', to: '2100-01-01' });
+  const qno = (await one('select quote_no from quotations where id = $1', [x.id])).quote_no;
+  const row = rep.rows.find((r: any) => r.quote_no === qno);
+  assert.equal(row.quote_own, 'USD 5,200.00'); assert.equal(Math.round(row.quote_total), 19097);
+  await q(`update settings set value = '3.6725' where key = 'fx_USD'`);
+});

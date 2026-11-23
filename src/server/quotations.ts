@@ -17,7 +17,7 @@ import { ApiError, bad, Db, forbidden, getSetting, notFound, one, q, tx } from '
 import { fromFils, toFils } from '../lib/finance';
 import { SERVICE_TYPES, DIRECTIONS, CHARGE_UNITS, Q_STATUSES, qStatusName, qStatusColor, label } from '../lib/jobfileRules';
 import { createJobFile } from './jobfiles';
-import { isCurrency } from '../lib/currency';
+import { fxRate, isCurrency } from '../lib/currency';
 
 const UUID = /^[0-9a-f-]{36}$/i;
 const isUuid = (v: unknown): v is string => typeof v === 'string' && UUID.test(v);
@@ -120,6 +120,15 @@ function present(actor: Actor, x: any, lines: any[]) {
 }
 
 /** Vendor rates on a Job File that can become cost lines (cost viewers only). */
+/** Migration 040: the quotation's rate to the company currency (AED) today — kept for reports (1 when it is in AED). */
+async function stampRate(c: any, id: string) {
+  const x = await one('select currency from quotations where id = $1', [id], c);
+  const fx = Object.fromEntries((await q(`select key, value from settings where key like 'fx\\_%'`, [], c)).map((r: any) => [String(r.key).slice(3), r.value === null ? null : Number(r.value)]));
+  const company = String((await q(`select value from settings where key = 'currency'`, [], c))[0]?.value ?? 'AED').replace(/"/g, '');
+  const rate = x?.currency ? fxRate(x.currency, company, fx) : null;
+  await c.query('update quotations set company_rate = $2 where id = $1', [id, rate]);
+}
+
 /**
  * Migration 039: each rate's charge lines (latest rate version) — for "split-ups" — and whether the AI recommends it.
  * Cost viewers only (callers check). Used by the quotation and by the enquiry (New quotation takes its rates from there).
@@ -386,6 +395,7 @@ export async function createQuotation(actor: Actor, b: any) {
           cost_currency, cost_original, cost_fx, rate_mode)
         values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`, [x.id, i, l.description, l.charge_unit, l.quantity, l.cost_rate, l.sell_rate, l.margin_type, l.margin_value, l.vendor_request_id, l.route_id,
         l.cost_currency, l.cost_original, l.cost_fx, l.rate_mode]);
+    await stampRate(c, x.id);                                                // migration 040
     await evt(c, actor, x.id, 'Quotation created', `${lines.length} line(s)`);
     if (vals.job_file_id) {
       const { event } = await import('./jobfiles');
@@ -418,6 +428,7 @@ export async function updateQuotation(actor: Actor, id: string, b: any) {
     }
     if (sets.length) await c.query(`update quotations set ${sets.map(([k], i) => `${k} = $${i + 2}`).join(', ')}, updated_at = now() where id = $1`,
       [id, ...sets.map(([, v]) => v)]);
+    await stampRate(c, id);                                                  // migration 040: today's rate to AED
     if (lines) {
       await c.query('delete from quotation_lines where quotation_id = $1', [id]);
       for (const [i, l] of lines.entries())

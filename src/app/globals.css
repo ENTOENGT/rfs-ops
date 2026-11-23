@@ -33,7 +33,24 @@ h1 { font-size: 22px; font-weight: 700; margin: 0; letter-spacing: -0.015em; col
 h2 { font-size: 15px; font-weight: 700; margin: 0 0 14px; letter-spacing: -0.005em; color: var(--ink); }
 h3 { font-weight: 650; }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
-.boot { min-height: 100vh; display: grid; place-content: center; justify-items: center; gap: 12px; }
+.boot { min-height: 100vh; display: grid; place-content: center; justify-items: center; gap: 10px; background: #fff; }
+/* start-up screen: the mark turns like a spinner, with a soft pulse and glow */
+.boot-mark { position: relative; width: 150px; height: 150px; display: grid; place-items: center; margin-bottom: 4px; }
+.boot-mark img { position: relative; width: 112px; height: auto; animation: boot-spin 1.8s cubic-bezier(.55, .1, .35, .95) infinite, boot-pulse 1.8s ease-in-out infinite; transform-origin: 50% 50%; }
+.boot-glow { position: absolute; inset: -18px; border-radius: 50%; background: radial-gradient(circle, rgba(232,168,0,.22) 0%, rgba(232,168,0,0) 68%); animation: boot-glow 1.8s ease-in-out infinite; }
+.boot-name { font-weight: 700; letter-spacing: .14em; color: #1e3a5f; font-size: 15px; animation: boot-fade 1.8s ease-in-out infinite; }
+.boot-text { color: #718096; font-size: 13px; }
+.boot-dots i { font-style: normal; animation: boot-dot 1.2s infinite; opacity: 0; }
+.boot-dots i:nth-child(2) { animation-delay: .2s; } .boot-dots i:nth-child(3) { animation-delay: .4s; }
+@keyframes boot-spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+@keyframes boot-pulse { 0%, 100% { scale: 1; } 50% { scale: 1.08; } }
+@keyframes boot-glow { 0%, 100% { opacity: .35; transform: scale(.9); } 50% { opacity: 1; transform: scale(1.1); } }
+@keyframes boot-fade { 0%, 100% { opacity: .55; } 50% { opacity: 1; } }
+@keyframes boot-dot { 0%, 20% { opacity: 0; } 40%, 100% { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) {
+  .boot-mark img { animation: boot-pulse 2.4s ease-in-out infinite; }
+  .boot-glow, .boot-name, .boot-dots i { animation: none; opacity: 1; }
+}
 
 /* ---------- application frame ---------- */
 .shell { display: flex; min-height: 100vh; }
@@ -895,3 +912,6 @@ tr.row-new-enq td { background: #F7F3FF; }
 .rec-issue + .rec-issue { border-top: 1px dashed #E8D9B0; margin-top: 6px; padding-top: 4px; }
 .rec-watch td { border-top: none !important; padding-top: 0 !important; color: #7B341E; }
 .rec-watch span { margin-right: 10px; }
+.charges-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.charges-head h2 { margin-bottom: 8px; }
+.charges-head select { width: auto; min-width: 96px; margin-left: 6px; padding: 4px 8px; }

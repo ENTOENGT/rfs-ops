@@ -328,7 +328,7 @@ export default function Shell({ children }: { children: React.ReactNode }) {
     : me.permissions.includes('pro.update') && !me.permissions.includes('runs.update_status') ? '/pro' : '/runs') : null;
   const appAllowed = !appHome || ['/my-jobs', '/runs', '/pro', '/change-password'].some((p) => path.startsWith(p));
   useEffect(() => { if (appHome && !appAllowed) router.replace(appHome); }, [appHome, appAllowed]);  // eslint-disable-line react-hooks/exhaustive-deps
-  if (!me || !lk || !appAllowed) return <div className="boot"><img src="/brand/mark.png" alt="" width={44} height={40} /><span className="muted">Loading…</span></div>;
+  if (!me || !lk || !appAllowed) return <BootScreen />;
   const can = (p: string) => me.permissions.includes(p);
   const logout = async () => { await api('/api/auth/logout', { body: {} }); location.href = '/login'; };
   const ctx = { me, can, lk, reloadLookups: () => api('/api/lookups').then(setLk) };
@@ -350,9 +350,18 @@ export default function Shell({ children }: { children: React.ReactNode }) {
   );
   return (
     <MeCtx.Provider value={ctx}>
-      <Suspense fallback={<div className="boot"><span className="muted">Loading…</span></div>}>
+      <Suspense fallback={<BootScreen />}>
         <Frame me={me} lk={lk} can={can}>{children}</Frame>
       </Suspense>
     </MeCtx.Provider>
   );
+}
+
+/** The start-up screen: the Reliance mark, large, turning while the app loads (a gentle pulse only when motion is reduced). */
+function BootScreen() {
+  return <div className="boot" role="status" aria-live="polite">
+    <div className="boot-mark"><span className="boot-glow" /><img src="/brand/mark.png" alt="Reliance Freight Systems" width={112} height={103} /></div>
+    <span className="boot-name">RFS CRM</span>
+    <span className="boot-text">Loading<span className="boot-dots"><i>.</i><i>.</i><i>.</i></span></span>
+  </div>;
 }

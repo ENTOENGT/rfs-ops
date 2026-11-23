@@ -140,6 +140,7 @@ export const REPORTS: Record<string, ReportDef> = {
       { key: 'volume_cbm', label: 'CBM', type: 'qty', width: 9 }, { key: 'weight_kg', label: 'Weight kg', type: 'qty', width: 10 },
       { key: 'containers', label: 'Containers', type: 'int', width: 9 },
       { key: 'quote_no', label: 'Quotation', type: 'text', width: 12 }, { key: 'quote_total', label: 'Quoted', type: 'money', needs: 'revenue', width: 13, sort: 'x' },
+      { key: 'quote_own', label: 'Quoted (its currency)', type: 'text', needs: 'revenue', width: 16 },
       { key: 'quote_profit', label: 'Profit / loss', type: 'money', needs: 'profit', width: 12, sort: 'x' }, { key: 'result', label: 'Result / reason', type: 'text', width: 26 },
       { key: 'job_no', label: 'Job No.', type: 'text', width: 13 }, { key: 'handed_over_at', label: 'Handed over', type: 'datetime', width: 17 }] },
   shipment_types: { key: 'shipment_types', title: 'Shipments by type', kind: 'commercial', category: 'Commercial',
