@@ -35,11 +35,15 @@ export const isBounce = (m: { from_addr?: string | null; subject?: string | null
 
 /** The rate request on this enquiry that a received email answers, or null (then it is the customer's or someone else's). */
 export async function matchVendorRequest(db: Db, fileId: string, m: { from_addr?: string | null; subject?: string | null; body_excerpt?: string | null }) {
-  const reqs = await q(`select r.id, r.request_no, r.status, r.created_at, lower(v.email) vendor_email, lower(vt.email) team_email, lower(vt.cc_emails) team_cc
+  // 24 Nov (migration 042): the booking request too — the line's / agent's booking confirmation and later updates are its replies
+  const reqs = await q(`select r.id, r.request_no, r.status, r.service, r.rate_request_id, r.created_at, lower(v.email) vendor_email, lower(vt.email) team_email, lower(vt.cc_emails) team_cc
     from vendor_requests r join vendors v on v.id = r.vendor_id left join vendor_teams vt on vt.id = r.team_id
-    where r.job_file_id = $1 and r.service = 'rate' and r.status <> 'cancelled' order by r.created_at desc`, [fileId], db);
+    where r.job_file_id = $1 and r.service in ('rate', 'booking') and r.status <> 'cancelled' order by r.created_at desc`, [fileId], db);
   if (!reqs.length) return null;
-  const best = (rs: any[]) => rs.find((r) => r.status === 'requested') ?? rs.find((r) => r.status === 'quoted') ?? rs[0] ?? null;
+  // once a rate is booked, the same vendor's later mail (even in the old rate thread) is about the booking
+  const booked = (r: any) => (r?.service === 'rate' ? reqs.find((b) => b.service === 'booking' && b.rate_request_id === r.id) ?? r : r);
+  const pick = (rs: any[]) => rs.find((r) => r.status === 'requested') ?? rs.find((r) => r.status === 'quoted') ?? rs[0] ?? null;
+  const best = (rs: any[]) => booked(pick(rs.some((r) => r.service === 'booking') ? rs.filter((r) => r.service === 'booking') : rs));
   // our reference in the subject or the text
   const nos = new Set(`${m.subject ?? ''} ${m.body_excerpt ?? ''}`.toUpperCase().match(/VR-\d+/g) ?? []);
   const byNo = reqs.filter((r) => nos.has(String(r.request_no).toUpperCase()));
@@ -81,7 +85,7 @@ export async function linkReply(db: Db, actor: Actor | null, emailId: string, fi
 export async function linkOldReplies(fileId: string) {
   const rows = await q(`select e.id, e.from_addr, e.from_name, e.subject, e.body_excerpt from email_messages e
     where e.job_file_id = $1 and e.direction = 'in' and e.vendor_request_id is null
-      and exists (select 1 from vendor_requests r where r.job_file_id = e.job_file_id and r.service = 'rate' and r.created_at <= coalesce(e.sent_at, e.created_at))
+      and exists (select 1 from vendor_requests r where r.job_file_id = e.job_file_id and r.service in ('rate', 'booking') and r.created_at <= coalesce(e.sent_at, e.created_at))
       and not exists (select 1 from ai_suggestions s where s.email_id = e.id and s.kind = 'enquiry')`, [fileId]);
   for (const e of rows) {
     if (isBounce(e)) continue;
@@ -120,6 +124,15 @@ const TOOL = {
       inclusions: { type: 'string' }, exclusions: { type: 'string', description: 'What is not included (subject to, excluding…), short.' },
       quote: { type: 'string', description: 'The few words in the email that give the price (copied, max 160 characters).' },
       summary: { type: 'string', description: 'One short sentence: what the vendor offers.' },
+      options: { type: 'array', description: 'ONLY when they offer two or more different choices for this shipment (two lines, direct and via, two loading ports, two services): every choice, the first one included, in their order. Leave out when there is one offer.',
+        items: { type: 'object', properties: {
+          label: { type: 'string', description: 'What makes this choice different, in a few words, e.g. "MSC direct", "CMA CGM via Colombo", "from Mundra". The customer sees it: never the agent\'s own company name or prices' },
+          total: { type: 'number' }, currency: { type: 'string' }, carrier: { type: 'string' }, routing: { type: 'string' },
+          transit_days: { type: 'integer' }, free_days: { type: 'integer' }, etd: { type: 'string', description: 'YYYY-MM-DD' }, valid_until: { type: 'string', description: 'YYYY-MM-DD' },
+          port_of_loading: { type: 'string', description: 'Only when this choice loads at another port than asked' }, port_of_discharge: { type: 'string', description: 'Only when it discharges at another port than asked' },
+          charges: { type: 'array', items: { type: 'object', properties: { section: { type: 'string', enum: CHARGE_SECTIONS.map(([k]) => k) }, description: { type: 'string' }, basis: { type: 'string' },
+            quantity: { type: 'number' }, amount: { type: 'number' }, currency: { type: 'string' } }, required: ['section', 'description', 'amount', 'currency'] } },
+        }, required: ['label', 'total', 'currency'] } },
     },
     required: ['has_rate', 'summary'],
   },
@@ -167,6 +180,7 @@ export async function readQuote(actor: Actor, emailId: string) {
   if (!canRead(actor)) throw forbidden('Only people who handle rate requests and see cost can read vendor rates');
   const e = await one('select * from email_messages where id = $1', [emailId]);
   if (!e || !e.vendor_request_id || e.direction !== 'in') throw bad('This email is not a reply to a rate request');
+  if ((await one('select service from vendor_requests where id = $1', [e.vendor_request_id]))?.service !== 'rate') throw bad('This email is about the booking, not a rate');
   await loadFile(actor, e.job_file_id);                                   // may this person open the enquiry?
   const old = await one(`select * from ai_suggestions where email_id = $1 and kind = 'quote'`, [emailId]);
   if (old) return { suggestion: old };                                    // read once
@@ -189,16 +203,17 @@ ${body || '(no text)'}`
     `You read an agent's or carrier's reply to a rate request from Reliance Freight Systems, a freight forwarder in Dubai, UAE.
 Pick out the price they offer for this shipment. Use only what the email and attachments say; never guess a price or fill from general knowledge.
 Our own request text is often quoted below their reply: prices only count when the VENDOR wrote them. Dates as YYYY-MM-DD (today is ${today()}; with no year, use the next such date).
-If they give several options (e.g. two carriers), take the cheapest complete one and mention the others in the summary.
+If they give several options (two carriers, direct and via, two loading ports…): the main fields are the FIRST option they list, and options lists every option (the first one too), each with its own total and charge lines.
 "All in 4500, breakup: 500 + 75 + 3925" → total 4500 and three charge lines (the all-in line is NOT a charge line).
 Leave a field out when the email does not say it — never write "not stated", "N/A" or similar.`,
     att.blocks.length ? [...att.blocks, { type: 'text', text }] : text, TOOL, 1500, 9000);
 
   // checked here, never taken on trust
-  const charges = (Array.isArray(x?.charges) ? x.charges : []).slice(0, 40).map((l: any) => ({
+  const chargesOf = (a: unknown) => (Array.isArray(a) ? a : []).slice(0, 40).map((l: any) => ({
     section: CHARGE_SECTIONS.some(([k]) => k === l?.section) ? l.section : 'other', description: txt(l?.description, 200) ?? 'Charge', basis: txt(l?.basis, 60),
     quantity: num(l?.quantity) ?? 1, amount: num(l?.amount), currency: String(l?.currency ?? '').trim().toUpperCase().slice(0, 3) || null,
   })).filter((l: any) => l.amount !== null);
+  const charges = chargesOf(x?.charges);
   const t = settleTotal(num(x?.total), String(x?.currency ?? '').trim().toUpperCase().slice(0, 3) || null, charges);
   const { total, currency } = t;
   const hasRate = !!x?.has_rate && total !== null;
@@ -212,6 +227,18 @@ Leave a field out when the email does not say it — never write "not stated", "
     rate_valid_until: date(x?.valid_until), vendor_reference: ref, inclusions: blank(txt(x?.inclusions, 2000)), exclusions: blank(txt(x?.exclusions, 2000)),
     quote: txt(x?.quote, 200),
   } : { v: QUOTE_V };
+  // 24 Nov (migration 043): the vendor's options, each its own rate — the person picks which go on the quotation
+  if (hasRate && Array.isArray(x?.options) && x.options.length >= 2) {
+    const opts = x.options.slice(0, 6).map((o: any) => {
+      const oc = chargesOf(o?.charges);
+      const ot = settleTotal(num(o?.total), String(o?.currency ?? '').trim().toUpperCase().slice(0, 3) || null, oc);
+      return ot.total === null ? null : { label: txt(o?.label, 120) ?? 'Option', quoted_cost: ot.total, currency: ot.currency, currency_ok: isCurrency(ot.currency),
+        charges: isCurrency(ot.currency) ? ot.lines : [], charges_seen: oc, note: ot.note,
+        carrier: lineOnly(blank(txt(o?.carrier, 120))), routing: blank(txt(o?.routing, 300)), transit_days: int(o?.transit_days, 365), free_days: int(o?.free_days, 365),
+        etd: date(o?.etd), rate_valid_until: date(o?.valid_until) ?? (rate as any).rate_valid_until, pol: blank(txt(o?.port_of_loading, 80)), pod: blank(txt(o?.port_of_discharge, 80)) };
+    }).filter(Boolean);
+    if (opts.length >= 2) (rate as any).options = opts;
+  }
   const summary = txt(x?.summary, 300) ?? '';
   const unclear = hasRate ? [...(t.note ? [{ note: t.note }] : []), ...att.notes.map((n: string) => ({ note: n }))]
     : [{ note: txt(x?.no_rate_reason, 200) ?? 'No price in this reply' }];
@@ -234,7 +261,7 @@ export async function quoteBox(actor: Actor, fileId: string) {
   const open = await q(`select s.id, s.email_id, s.summary, s.answers rate, s.unclear, s.created_at, e.from_name, e.from_addr, e.subject, e.sent_at,
       r.id request_id, r.request_no, r.status request_status, r.quoted_cost current_cost, r.currency current_currency, v.name vendor_name
     from ai_suggestions s join email_messages e on e.id = s.email_id join vendor_requests r on r.id = s.vendor_request_id join vendors v on v.id = r.vendor_id
-    where s.job_file_id = $1 and s.kind = 'quote' and s.status = 'open' and r.status in ('requested', 'quoted') order by e.sent_at desc nulls last`, [fileId]);
+    where s.job_file_id = $1 and s.kind = 'quote' and s.status = 'open' and r.service = 'rate' and r.status in ('requested', 'quoted') order by e.sent_at desc nulls last`, [fileId]);
   const noRate = await q(`select s.id, s.unclear, s.summary, e.sent_at, r.request_no, v.name vendor_name
     from ai_suggestions s join email_messages e on e.id = s.email_id join vendor_requests r on r.id = s.vendor_request_id join vendors v on v.id = r.vendor_id
     where s.job_file_id = $1 and s.kind = 'quote' and s.status = 'nothing' and r.status = 'requested'
@@ -242,7 +269,7 @@ export async function quoteBox(actor: Actor, fileId: string) {
     order by e.sent_at desc`, [fileId]);
   const unread = await q(`select e.id, e.from_name, e.from_addr, e.subject, e.sent_at, r.request_no, v.name vendor_name
     from email_messages e join vendor_requests r on r.id = e.vendor_request_id join vendors v on v.id = r.vendor_id
-    where e.job_file_id = $1 and e.direction = 'in' and r.status in ('requested', 'quoted')
+    where e.job_file_id = $1 and e.direction = 'in' and r.service = 'rate' and r.status in ('requested', 'quoted')
       and not exists (select 1 from ai_suggestions s where s.email_id = e.id and s.kind = 'quote') order by e.sent_at desc nulls last limit 8`, [fileId])
     .then((rs) => rs.filter((m: any) => !isBounce(m)).slice(0, 5));          // a bounce linked before 23 Nov is not read
   return { allowed: true, configured: aiConfig().ready, open, no_rate: noRate, unread };
@@ -257,31 +284,69 @@ export async function applyQuote(actor: Actor, id: string, b: any) {
   if (s.status !== 'open') throw bad('This suggestion is already handled');
   const r = await one('select id, status, request_no from vendor_requests where id = $1', [s.vendor_request_id]);
   if (!['requested', 'quoted'].includes(r?.status)) throw new ApiError(409, 'VR_STATE', 'This rate request is no longer waiting for a rate');
+  // 24 Nov (migration 043): with several options, `main` is the one saved on this request (the form shows it) and `extra`
+  // the others that go on the quotation too, each as its own option with its own rate
+  const opts: any[] = Array.isArray(s.answers?.options) ? s.answers.options : [];
+  const mainNo = opts.length && Number.isInteger(b?.main) && opts[b.main] ? b.main : null;
+  const base = mainNo !== null ? { ...(s.answers ?? {}), ...opts[mainNo] } : (s.answers ?? {});
   // what the person checked on the screen (they may have corrected the AI)
-  const v = { ...(s.answers ?? {}), ...(b?.rate ?? {}) };
+  const v = { ...base, ...(b?.rate ?? {}) };
   if (num(v.quoted_cost) === null) throw bad('Enter the rate');
   if (!isCurrency(v.currency)) throw bad('Rate currency: AED, USD, EUR, INR or CNY');
-  const fields: any = { quoted_cost: String(num(v.quoted_cost)), currency: String(v.currency).toUpperCase() };
-  for (const k of ['transit_days', 'free_days']) fields[k] = v[k] === '' || v[k] === null || v[k] === undefined ? null : v[k];
-  for (const k of ['etd', 'routing', 'carrier', 'rate_valid_until', 'vendor_reference', 'inclusions', 'exclusions']) fields[k] = v[k] ?? null;
-  // the charge lines only when kept as the AI read them (one currency, adding up to the rate)
-  const ch: any[] = Array.isArray(s.answers?.charges) ? s.answers.charges : [];
-  const sum = Math.round(ch.reduce((t, l) => t + Number(l.quantity) * Number(l.amount) * 100, 0)) / 100;
-  if (b?.use_charges && ch.length && sum === num(v.quoted_cost) && ch.every((l) => l.currency === fields.currency)) {
-    fields.charges = ch.map((l) => ({ section: l.section, description: l.description, basis: l.basis, quantity: String(l.quantity), amount: String(l.amount), currency: l.currency, exchange_rate: '1' }));
-    delete fields.quoted_cost;
-  }
+  const fieldsOf = (o: any, ch: any[], useCharges: boolean) => {
+    const fields: any = { quoted_cost: String(num(o.quoted_cost)), currency: String(o.currency).toUpperCase() };
+    for (const k of ['transit_days', 'free_days']) fields[k] = o[k] === '' || o[k] === null || o[k] === undefined ? null : o[k];
+    for (const k of ['etd', 'routing', 'carrier', 'rate_valid_until', 'vendor_reference', 'inclusions', 'exclusions']) fields[k] = o[k] ?? null;
+    // the charge lines only when kept as the AI read them (one currency, adding up to the rate)
+    const sum = Math.round(ch.reduce((t, l) => t + Number(l.quantity) * Number(l.amount) * 100, 0)) / 100;
+    if (useCharges && ch.length && sum === num(o.quoted_cost) && ch.every((l) => l.currency === fields.currency)) {
+      fields.charges = ch.map((l) => ({ section: l.section, description: l.description, basis: l.basis, quantity: String(l.quantity), amount: String(l.amount), currency: l.currency, exchange_rate: '1' }));
+      delete fields.quoted_cost;
+    }
+    return fields;
+  };
+  const fields = fieldsOf(v, Array.isArray(base.charges) ? base.charges : [], !!b?.use_charges);
+  const extra: number[] = [...new Set<number>((Array.isArray(b?.extra) ? b.extra : []).filter((i: unknown) => Number.isInteger(i) && opts[i as number] && i !== mainNo))];
+  for (const i of extra) if (!isCurrency(opts[i].currency)) throw bad(`${opts[i].label}: the rate currency must be AED, USD, EUR, INR or CNY`);
   const { vendorRequestAction } = await import('./vendorreqs');
+  const added: string[] = [];
   await tx(async (c) => {
     if (r.status === 'requested') await vendorRequestAction(actor, r.id, { status: 'quoted', ...fields }, c);
     else await vendorRequestAction(actor, r.id, { what: 'revise_rate', note: 'New rate from the vendor\'s email (AI suggestion, checked)', ...fields }, c);
+    if (extra.length) {
+      const f = await loadFile(actor, s.job_file_id, c);
+      const { canEdit } = await import('./jobfiles');
+      if (!canEdit(actor, f)) throw forbidden('You cannot add options to this enquiry');
+      const { addOption } = await import('./routing');
+      const full = await one(`select r.*, v.name vendor_name from vendor_requests r join vendors v on v.id = r.vendor_id where r.id = $1`, [r.id], c);
+      for (const i of extra) {
+        const o = opts[i];
+        const fr = await one('select * from job_files where id = $1', [f.id], c);
+        const from = await one('select * from vendor_requests where id = $1', [r.id], c);   // option 1 now exists (made by the first addOption)
+        const base = from.route_id ? await one('select * from enquiry_routes where id = $1', [from.route_id], c) : null;
+        const route = await addOption(c, actor, fr, {
+          origin_country: base?.origin_country ?? undefined, origin_city: base?.origin_city ?? fr.origin ?? undefined,
+          pol: o.pol ?? base?.pol ?? fr.port_of_loading ?? undefined, destination_country: base?.destination_country ?? undefined,
+          destination_city: base?.destination_city ?? fr.destination ?? undefined, pod: o.pod ?? base?.pod ?? fr.port_of_discharge ?? undefined,
+          mode: base?.mode ?? fr.mode ?? undefined, cargo_description: base?.cargo_description ?? fr.cargo_description ?? undefined,
+          label: String(o.label).slice(0, 200) });   // the customer sees it: never the vendor's name
+        const nr = await one(`insert into vendor_requests (request_no, vendor_id, job_file_id, department_id, service, description, currency, created_by, rate_source, route_id, team_id)
+            values ('VR-' || nextval('vendor_request_no_seq'), $1, $2, $3, 'rate', $4, $5, $6, $7, $8, $9) returning id, request_no`,
+          [full.vendor_id, f.id, full.department_id, `${o.label} — option ${route.option_no}, from ${full.vendor_name}'s reply to ${full.request_no}\n\n${String(full.description ?? '').slice(0, 1500)}`,
+           String(o.currency).toUpperCase(), actor.id, full.rate_source, route.id, full.team_id], c);
+        await c.query(`insert into vendor_request_events (request_id, title, details, user_id, user_name) values ($1, $2, $3, $4, $5)`,
+          [nr.id, 'Request created', `Another option the vendor gave in the reply to ${full.request_no} (AI reading, checked)`, actor.id, actor.full_name]);
+        await vendorRequestAction(actor, nr.id, { status: 'quoted', ...fieldsOf(o, o.charges ?? [], b?.use_charges !== false) }, c);
+        added.push(`${nr.request_no} (option ${route.option_no}: ${o.label})`);
+      }
+    }
     await c.query(`update ai_suggestions set status = 'applied', applied_keys = $2, decided_by = $3, decided_at = now() where id = $1`,
-      [id, JSON.stringify(Object.keys(fields)), actor.id]);
+      [id, JSON.stringify([...Object.keys(fields), ...(added.length ? ['options'] : [])]), actor.id]);
     await c.query(`insert into vendor_request_events (request_id, title, details, user_id, user_name) values ($1, $2, $3, $4, $5)`,
-      [r.id, 'Rate filled in from the vendor\'s email (AI suggestion, checked)', `${fields.currency} ${num(v.quoted_cost)}`, actor.id, actor.full_name]);
-    await event(c, actor, s.job_file_id, { kind: 'note', title: `Rate saved from the vendor's email — ${r.request_no}`, new_value: 'AI suggestion, checked' });
+      [r.id, 'Rate filled in from the vendor\'s email (AI suggestion, checked)', `${fields.currency} ${num(v.quoted_cost)}${added.length ? ` — other options added: ${added.join(', ')}` : ''}`, actor.id, actor.full_name]);
+    await event(c, actor, s.job_file_id, { kind: 'note', title: `Rate saved from the vendor's email — ${r.request_no}`, new_value: added.length ? `Also as options: ${added.join(', ')}` : 'AI suggestion, checked' });
   });
-  return { ok: true };
+  return { ok: true, added };
 }
 
 export async function dismissQuote(actor: Actor, id: string) {

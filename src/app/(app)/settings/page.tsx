@@ -4,6 +4,7 @@ import { api, fmtDateTime } from '@/components/api';
 import { useMe } from '@/components/Shell';
 import MasterPage from '@/components/MasterPage';
 import { CURRENCIES } from '@/lib/currency';
+import { DEFAULT_TRACKING, trackingText } from '@/lib/tracking';
 
 const FIELDS: [string, string, string, string?][] = [
   ['company_name', 'Company name', 'text'],
@@ -173,6 +174,17 @@ export default function Settings() {
               {hint && <span className="muted small" style={{ fontWeight: 400, marginTop: 3 }}>{hint}</span>}</label>))}
         </div>
         <div className="form-actions"><button className="btn primary" onClick={() => run(() => api('/api/settings', { method: 'PUT', body: f }), 'Settings saved')}>Save settings</button></div>
+      </div>
+
+      <div className="panel">
+        <h2>Tracking links</h2>
+        <p className="muted small" style={{ marginTop: 0 }}>The "Track" buttons on a shipment open the line's own tracking page. One line each: <b>Name | words in the line name | web address</b> with <b>{'{number}'}</b> where
+          the container / BL / booking number goes. If a line changes its website, correct it here. Lines not in the list open a general tracking site.</p>
+        <textarea rows={9} style={{ width: '100%', fontFamily: 'monospace', fontSize: 12 }} aria-label="Tracking links"
+          value={typeof f.tracking_links === 'string' ? f.tracking_links : trackingText(Array.isArray(f.tracking_links) && f.tracking_links.length ? f.tracking_links : DEFAULT_TRACKING)}
+          onChange={(e) => setF({ ...f, tracking_links: e.target.value })} />
+        <div className="form-actions"><button className="btn" onClick={() => setF({ ...f, tracking_links: trackingText(DEFAULT_TRACKING) })}>Use the built-in list</button>
+          <button className="btn primary" onClick={() => run(() => api('/api/settings', { method: 'PUT', body: { tracking_links: f.tracking_links ?? trackingText(DEFAULT_TRACKING) } }), 'Tracking links saved')}>Save tracking links</button></div>
       </div>
 
       <div className="panel">

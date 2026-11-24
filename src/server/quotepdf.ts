@@ -87,7 +87,7 @@ export async function quotationPdf(actor: Actor, id: string): Promise<{ bytes: U
     { k: 'rate', w: 80, a: 'r', t: `Rate (${d.currency})` }, { k: 'amount', w: 90, a: 'r', t: `Amount (${d.currency})` }];
   const tables = d.options ?? [{ option_no: null, lines: d.lines, total: d.total }];
   for (const o of tables) {
-    if (o.option_no) { room(40); text(`Option ${o.option_no}: ${[o.pol, o.pod].filter(Boolean).join(' to ')}${o.selected ? ' (chosen)' : ''}`, M, 10.5, bold, NAVY); y -= 16; }
+    if (o.option_no) { room(40); text(`Option ${o.option_no}: ${[o.pol, o.pod].filter(Boolean).join(' to ')}${o.label ? ` — ${o.label}` : ''}${o.selected ? ' (chosen)' : ''}`, M, 10.5, bold, NAVY); y -= 16; }
     const headRow = () => { room(22); page.drawRectangle({ x: M, y: y - 6, width: W - 2 * M, height: 20, color: NAVY });
       let x = M + 6; for (const col of cols) { const s = col.t; page.drawText(s, { x: col.a === 'r' ? x + col.w - 12 - bold.widthOfTextAtSize(s, 8.5) : x, y: y, size: 8.5, font: bold, color: rgb(1, 1, 1) }); x += col.w; } y -= 22; };
     headRow();

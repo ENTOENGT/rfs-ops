@@ -45,7 +45,7 @@ export async function replyBox(actor: Actor, quotationId: string) {
     from ai_suggestions s join email_messages e on e.id = s.email_id left join users u on u.id = s.decided_by
     where s.kind = 'quote_reply' and s.answers->>'quotation_id' = $1 order by e.sent_at desc nulls last`, [quotationId]);
   const unread = theirs.filter((m) => !sugs.some((s: any) => s.email_id === m.id)).slice(0, 5);
-  const routes = await q('select id, option_no, coalesce(pol, origin_city) pol, coalesce(pod, destination_city) pod from enquiry_routes where job_file_id = $1 order by option_no', [x.job_file_id]);
+  const routes = await q('select id, option_no, coalesce(pol, origin_city) pol, coalesce(pod, destination_city) pod, label from enquiry_routes where job_file_id = $1 order by option_no', [x.job_file_id]);
   return { allowed: true, watching: x.status === 'sent' || x.status === 'approved', configured: aiConfig().ready, status: x.status,
     open: sugs.filter((s: any) => s.status === 'open'), done: sugs.filter((s: any) => s.status !== 'open').slice(0, 6), unread,
     routes: routes.length > 1 ? routes : [], reasons: REASONS };
@@ -84,7 +84,7 @@ export async function readReply(actor: Actor, quotationId: string, emailId: stri
   const full = await emailText(e);
   const mine = ownWords(full);
   const lines = (x.lines ?? []).map((l: any) => `${l.description}: ${x.currency} ${l.sell_rate} ${l.unit_name ?? ''} × ${Number(l.quantity)}`).join('; ');
-  const opts = (x.options ?? []).length > 1 ? `\nRoute options: ${x.options.map((o: any) => `Option ${o.option_no} ${[o.pol, o.pod].filter(Boolean).join(' to ')} ${x.currency} ${o.sell_total}`).join('; ')}` : '';
+  const opts = (x.options ?? []).length > 1 ? `\nRoute options: ${x.options.map((o: any) => `Option ${o.option_no} ${[o.pol, o.pod].filter(Boolean).join(' to ')}${o.label ? ` (${o.label})` : ''} ${x.currency} ${o.sell_total}`).join('; ')}` : '';
   const { input: a, model } = await askWithTool(
     `You read a customer's email about a freight quotation from Reliance Freight Systems, Dubai. Decide what they answer: accepted, wants changes, declined, a question, or not about the quotation. Read only what the customer wrote (our quotation may be quoted below their text). Be careful: "please send the booking details" or "go ahead" = accepted; "can you do better" / "too high" = changes; "we went with another forwarder" / "not going ahead" = declined. When unsure between accepted and something else, do not say accepted.`,
     `Our quotation ${x.quote_no}: ${lines}. Total ${x.currency} ${x.totals?.sell_total}. Valid until ${x.valid_until}.${opts}\n\nThe customer's email — from ${e.from_name ? `${e.from_name} <${e.from_addr}>` : e.from_addr}, subject: ${e.subject ?? ''}\n\nWHAT THEY WROTE:\n${mine.slice(0, 6000) || '(empty)'}\n\n(Full email for context:)\n${full.slice(0, 4000)}`,

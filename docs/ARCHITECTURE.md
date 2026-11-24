@@ -899,3 +899,35 @@ giving customers to other salesmen is for the Commercials Manager. Up to 1,000 r
   fixed light colours; the printed customer copy stays white.
 - Bulk upload (Administration → Bulk upload): fifth sheet "Vendor teams" — vendor, team, email, CC, contact, phone, modes,
   direction, note; a team with the same name on that vendor is updated (never a duplicate).
+
+### 24 Nov — booking emails read by AI, Track buttons, shipment reminders (migration 042)
+- `quotereader.matchVendorRequest` now also matches the **booking** request (service 'booking'); once a rate is booked the same
+  vendor's later mail (even in the old rate thread) is linked to the booking request. The rate box / `readQuote` only take
+  replies to service 'rate'.
+- `src/server/bookingreader.ts`: the line's / agent's emails on the booking request are read once (tool `record_booking`) →
+  `ai_suggestions` kind 'booking': booking ref., line, vessel, voyage, ETD / ETA, ports, direct / via (+ legs), containers booked,
+  SI / VGM / gate-in cut-offs, empty pick-up, MBL, container numbers (ISO 6346 check digit — a wrong one is left out and noted),
+  sailed / arrived (never a future date). Box `AiBooking` (Overview and Booking tabs) shows old → new; untick / correct, then
+  **Save booking**: at stage booking_requested = the normal `confirmBooking`; later a vessel / date change = `vesselAction`
+  (team told "vessel changed", vessel to verify again); everything else one history line each; containers `on conflict do nothing`.
+  People who can change the shipment only.
+- New columns on job_files: `cutoff_si`, `cutoff_vgm`, `cutoff_gate` (timestamp, as the line writes it), `empty_pickup`.
+  Sailed / arrived = the existing `atd` / `ata` (so the customer update email, "Past ETA" list etc. use them too). Box `TrackBox`: links from `src/lib/tracking.ts` (the line's page by container → BL → booking no.,
+  plus VesselFinder for the vessel; a line not in the list → track-trace.com), cut-offs, Sailed / Arrived by hand
+  (`/api/job-files/[id]/tracking`). The list is in Settings → Tracking links (`tracking_links`; empty = the built-in list).
+- `src/server/reminders.ts` `runShipmentReminders`, hourly from `netlify/functions/shipment-reminders.mjs` →
+  `POST /api/cron/shipment-reminders` (key = HMAC(SESSION_SECRET, 'shipment-reminders')). To the handling group: ETD passed and
+  not sailed, ETA within 2 days, ETA changed (unless a vessel / ETA change was told in the last 6 hours), a cut-off tomorrow.
+  Each once — `shipment_reminders` (job file, kind, date). New notification events: sailed, arrived, etd_passed, eta_soon,
+  eta_changed, cutoff_soon.
+
+### 24 Nov — a vendor's several options on the quotation (migration 043)
+- The rate reader's tool has `options` (only when the vendor offers 2+ choices: two lines, direct / via, another port…): each with
+  its label, total, currency, charge lines (`settleTotal` each), carrier, routing, transit, free days, ETD, validity, other POL / POD.
+  Kept in `ai_suggestions.answers.options`.
+- The AI rate box lists them: one is saved on the request (radio, loads the form), the others can be ticked "Also on the quotation".
+  `applyQuote` { main, extra }: each extra = a new route option (`routing.addOption`, copied from the request's route, its POL / POD
+  if different, `enquiry_routes.label` = the option's label — shown to the customer, so never the vendor's name) + a new rate request
+  (same vendor / team / source, status quoted with the option's own rate and lines), in the same transaction. Only before the customer confirms.
+- `routeLabel` adds the label; the PDF / print / Excel option headings too. From there everything is the existing route options:
+  one section and total per option on the quotation, the customer chooses one option when confirming.

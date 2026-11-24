@@ -208,7 +208,7 @@ export async function getQuotation(actor: Actor, id: string) {
   ]);
   const v = present(actor, { ...x, ...extra }, lines);
   // Part G2: the route options of the shipment, and a selling total per option used on this quotation
-  const routes = x.job_file_id ? await q('select id, option_no, origin_city, pol, destination_city, pod, mode from enquiry_routes where job_file_id = $1 and removed_at is null order by option_no', [x.job_file_id]) : [];
+  const routes = x.job_file_id ? await q('select id, option_no, origin_city, pol, destination_city, pod, mode, label from enquiry_routes where job_file_id = $1 and removed_at is null order by option_no', [x.job_file_id]) : [];
   const options = routes.filter((r) => lines.some((l) => l.route_id === r.id)).map((r) => {
     const t = quoteTotals(lines.filter((l) => l.route_id === r.id));
     return { ...r, ...(actor.fin.sellingView ? { sell_total: t.sell_total } : {}), ...(actor.fin.buyingView && actor.fin.sellingView ? { margin: t.margin } : {}) };
@@ -718,7 +718,7 @@ export async function customerCopy(actor: Actor, id: string, how: 'print' | 'exc
     q('select description, charge_unit, quantity, sell_rate, route_id from quotation_lines where quotation_id = $1 order by sort_order', [id]),
   ]);
   // Part G2: one section per route option (with its own total)
-  const routes = x.job_file_id ? await q('select id, option_no, origin_city, pol, destination_city, pod from enquiry_routes where job_file_id = $1 order by option_no', [x.job_file_id]) : [];
+  const routes = x.job_file_id ? await q('select id, option_no, origin_city, pol, destination_city, pod, label from enquiry_routes where job_file_id = $1 order by option_no', [x.job_file_id]) : [];
   const used = routes.filter((r) => lines.some((l) => l.route_id === r.id));
   const company: Record<string, string> = {};
   for (const k of ['company_name', 'company_address', 'company_phone', 'company_email', 'company_trn', 'quote_vat_note'])
@@ -737,7 +737,7 @@ export async function customerCopy(actor: Actor, id: string, how: 'print' | 'exc
     total: t.sell_total, scope: x.scope, exclusions: x.exclusions, terms: x.terms, additional_remarks: x.additional_remarks, payment_terms: x.payment_terms,
     options: used.length > 1 ? used.map((r) => {
       const mine = lines.map((l, i) => ({ l, i })).filter(({ l }) => l.route_id === r.id);
-      return { option_no: r.option_no, pol: r.pol ?? r.origin_city, pod: r.pod ?? r.destination_city, selected: x.selected_route_id === r.id,
+      return { option_no: r.option_no, pol: r.pol ?? r.origin_city, pod: r.pod ?? r.destination_city, label: r.label ?? null, selected: x.selected_route_id === r.id,
         lines: mine.map(({ l, i }) => ({ description: l.description, unit_name: label(CHARGE_UNITS, l.charge_unit), quantity: l.quantity, rate: l.sell_rate, amount: t.each[i].sell })),
         total: quoteTotals(mine.map(({ l }) => ({ ...l, cost_rate: '0' }))).sell_total };
     }) : null,
@@ -768,8 +768,8 @@ export async function customerExcel(actor: Actor, id: string) {
     d.volume_cbm && `${Number(d.volume_cbm)} CBM`, d.chargeable_weight_kg && `chargeable ${Number(d.chargeable_weight_kg)} kg`].filter(Boolean).join(', '));
   add([]);
   // Part G2: one block per route option, each with its own total
-  for (const o of d.options ?? [{ option_no: null, pol: null, pod: null, lines: d.lines, total: d.total }]) {
-    if (o.option_no) add([`Option ${o.option_no}: ${[o.pol, o.pod].filter(Boolean).join(' → ')}`], bold);
+  for (const o of d.options ?? [{ option_no: null, pol: null, pod: null, label: null as string | null, lines: d.lines, total: d.total }]) {
+    if (o.option_no) add([`Option ${o.option_no}: ${[o.pol, o.pod].filter(Boolean).join(' → ')}${o.label ? ` — ${o.label}` : ''}`], bold);
     const head = add(['Description', 'Charged', 'Qty', `Rate (${d.currency})`, `Amount (${d.currency})`], bold);
     head.eachCell((c) => { c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF3E7C7' } }; c.border = { bottom: { style: 'thin' } }; });
     for (const l of o.lines) {

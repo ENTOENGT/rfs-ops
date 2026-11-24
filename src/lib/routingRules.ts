@@ -18,7 +18,7 @@ export const ROUTING_TYPES: [string, string][] = [['direct', 'Direct'], ['via', 
 
 /** "Option 2 · Ningbo → Jebel Ali" */
 export const routeLabel = (r: any) => r ? `Option ${r.option_no}${[r.pol || r.origin_city, r.pod || r.destination_city].filter(Boolean).length
-  ? ` · ${[r.pol || r.origin_city, r.pod || r.destination_city].filter(Boolean).join(' → ')}` : ''}` : '';
+  ? ` · ${[r.pol || r.origin_city, r.pod || r.destination_city].filter(Boolean).join(' → ')}` : ''}${r.label ? ` · ${r.label}` : ''}` : '';
 
 /** Divisions where the customer must confirm the BL draft before handover (decision D3; a manager can override with a reason). */
 export const BL_BEFORE_HANDOVER = ['exports', 'cross_trade'];

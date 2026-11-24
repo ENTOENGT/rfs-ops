@@ -49,7 +49,7 @@ export default function QuotePrint({ params }: { params: { id: string } }) {
         </dl>
         {/* Part G2: one table per route option, each with its own total; the customer picks one */}
         {(d.options ?? [{ option_no: null, lines: d.lines, total: d.total }]).map((o: any) => <div key={o.option_no ?? 'all'} style={{ marginBottom: 14 }}>
-          {o.option_no && <h3 style={{ margin: '10px 0 4px', fontSize: 14 }}>Option {o.option_no}: {[o.pol, o.pod].filter(Boolean).join(' → ')}{o.selected ? ' (chosen)' : ''}</h3>}
+          {o.option_no && <h3 style={{ margin: '10px 0 4px', fontSize: 14 }}>Option {o.option_no}: {[o.pol, o.pod].filter(Boolean).join(' → ')}{o.label ? ` — ${o.label}` : ''}{o.selected ? ' (chosen)' : ''}</h3>}
           <table className="qp-lines">
             <thead><tr><th>Description</th><th>Charged</th><th className="num">Qty</th><th className="num">Rate ({d.currency})</th><th className="num">Amount ({d.currency})</th></tr></thead>
             <tbody>{o.lines.map((l: any, i: number) => <tr key={i}><td>{l.description}</td><td>{l.unit_name}</td><td className="num">{Number(l.quantity)}</td>

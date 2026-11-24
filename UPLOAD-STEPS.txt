@@ -1,15 +1,22 @@
-RFS CRM — everything not yet uploaded, in one commit:
-batch 3 fix · loading screen · quotation currency · quotation PDF + clean email · AI reads the customer's answer · light / dark
+RFS CRM update — 24 Nov v2 (replaces rfs-crm-update-24nov.zip; everything not uploaded yet, in ONE commit)
 
-1. Supabase → SQL editor, run these two (each is safe to run again):
+NEW in this one: when a vendor gives several options (e.g. MSC direct and CMA via Colombo), the AI keeps each one.
+You choose which one is saved on the rate request, and tick the others to offer on the quotation too.
+Also inside: the booking reader, Track buttons and reminders (042), and everything from 23 Nov.
+
+STEP 1 — Supabase (SQL editor), run these one by one, in this order. Each is safe to run twice,
+   so if you are not sure whether you ran one, just run it again.
    db/migrations/040_quote_company_rate.sql
    db/migrations/041_quote_reply.sql
+   db/migrations/042_booking_tracking.sql
+   db/migrations/043_vendor_options.sql
+   Check: each says "Success. No rows returned".
 
-2. GitHub: upload all the files in this zip, in their folders, in ONE commit.
-   (package.json and package-lock.json are included: Netlify installs the new PDF part by itself.)
+STEP 2 — GitHub: upload all the folders and files in this zip (except this UPLOAD-STEPS.txt) to the
+   main folder of ENTOENGT/rfs-ops, as ONE commit. They replace the old files with the same names.
 
-3. When published, check:
-   - The moon button at the top right → dark mode; the sun → back to light.
-   - A sent-ready quotation → "Download PDF".
-   - Email customer → the PDF is ticked to attach → Send from my Outlook.
-   - The customer replies → the quotation shows "Customer's answer" read by AI → confirm.
+STEP 3 — Netlify builds by itself. Wait for "Published".
+
+STEP 4 — Check: on an enquiry, when a vendor's reply has two options, the purple "Rates from vendors' emails"
+   box shows "The vendor gave 2 options". Pick the one to save, tick "Also on the quotation" for the other,
+   press "Save rate + 1 option". The quotation then shows Option 1 and Option 2, each with its own total.

@@ -17,6 +17,7 @@ import { TeamChat } from '@/components/TeamChat';
 import { AiSuggestions } from '@/components/AiSuggestions';
 import { HsCheck } from '@/components/HsCheck';
 import { PastJobHints } from '@/components/PastJobHints';
+import { AiBooking, TrackBox } from '@/components/AiBooking';
 import { StageHeader, HandlersPanel, RatesAndQuotes, BookingPanel, PrealertPanel, HandoverPanel, LclPanel } from '@/components/CommercialPanels';
 
 const RUN_STATUS: Record<string, string> = { pending: 'Waiting', assigned: 'Assigned', collected: 'Collected', delivered: 'Delivered', failed: 'Could not complete', cancelled: 'Cancelled' };
@@ -189,6 +190,7 @@ export default function JobFile({ params }: { params: { id: string } }) {
         </div>
 
         {tab === 'overview' && <div className="tab-panel">
+          {d.booking && <AiBooking fileId={d.id} onChanged={load} />}
           <HandoverPanel d={d} act={act} />
           <PrealertPanel d={d} act={act} onError={(m) => { setErr(m); window.scrollTo(0, 0); }} />
         </div>}
@@ -240,6 +242,7 @@ export default function JobFile({ params }: { params: { id: string } }) {
             </div>
           </div>
           <div>
+            {(d.booking || d.booking_reference || d.vessel_flight) && !noVessel(d.mode) && <TrackBox fileId={d.id} stamp={d.updated_at} />}
             {d.mode === 'sea_lcl' && <LclPanel d={d} />}
             {open && d.status !== 'enquiry' && <div className={`panel${d.closure.can_close ? '' : ' warnbox'}`}><h2>Before it can close</h2>
               {d.closure.can_close ? <p className="small" style={{ margin: 0 }}>✓ All linked work is finished. It can be closed.</p>
@@ -256,7 +259,8 @@ export default function JobFile({ params }: { params: { id: string } }) {
         {tab === 'rates' && <div className="tab-panel"><RatesAndQuotes d={d} reload={load} /></div>}
         {tab === 'emails' && <div className="tab-panel"><EmailsPanel key={emailsKey} d={d} onSaved={load} /></div>}
         {tab === 'chat' && <div className="tab-panel"><TeamChat d={d} /></div>}
-        {tab === 'booking' && <div className="tab-panel"><BookingPanel d={d} act={act} /></div>}
+        {tab === 'booking' && <div className="tab-panel">{d.booking && <AiBooking fileId={d.id} onChanged={load} />}<BookingPanel d={d} act={act} />
+          {(d.booking_reference || d.vessel_flight) && !noVessel(d.mode) && <TrackBox fileId={d.id} stamp={d.updated_at} />}</div>}
         {tab === 'vessel' && <div className="tab-panel"><VesselPanel d={d} act={act} /></div>}
         {tab === 'bl' && <div className="tab-panel"><BlPanel d={d} act={act} /></div>}
         {tab === 'documents' && <div className="tab-panel"><JobFileDocs d={d} onChange={(v) => { setD(v); setErr(''); }} onError={(m) => { setErr(m); window.scrollTo(0, 0); }} /></div>}

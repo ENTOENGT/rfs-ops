@@ -11,6 +11,7 @@ import { canMove } from './transitions';
 import { jobNoProblem, phoneProblem } from '../lib/requestRules';
 import { jobScope } from './scope';
 import { isCurrency } from '../lib/currency';
+import { parseTracking } from '../lib/tracking';
 
 const UUID = /^[0-9a-f-]{36}$/i;
 const LOCAL_DT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/;
@@ -362,6 +363,14 @@ export async function updateRequest(actor: Actor, jobId: string, b: any) {
 
 // ------------------------------------------------------------ settings
 const SETTINGS: Record<string, (v: any) => unknown> = {
+  // migration 042: the shipping lines' / airlines' tracking pages (empty = the built-in list)
+  tracking_links: (v) => {
+    if (v === null || v === undefined || (typeof v === 'string' && !v.trim())) return null;
+    const list = Array.isArray(v) ? parseTracking(v.map((t: any) => `${t?.name ?? ''} | ${t?.match ?? ''} | ${t?.url ?? ''}`).join('\n')) : parseTracking(v);
+    if (!list.length) throw bad('Tracking links: one line each — Name | words in the line name | https://… with {number}');
+    if (list.some((t) => !t.url.includes('{number}'))) throw bad('Each tracking web address needs {number} where the booking / BL / container number goes');
+    return list;
+  },
   company_name: (v) => { const s = String(v ?? '').trim(); if (!s || s.length > 120) throw bad('Company name is required'); return s; },
   currency: (v) => { const s = String(v ?? '').trim().toUpperCase(); if (!isCurrency(s)) throw bad('Currency: AED, USD, EUR, INR or CNY'); return s; },
   vat_rate: (v) => { const n = Number(v); if (!Number.isFinite(n) || n < 0 || n > 100) throw bad('VAT rate must be between 0 and 100'); return n; },

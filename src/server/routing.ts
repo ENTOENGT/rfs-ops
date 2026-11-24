@@ -64,10 +64,10 @@ async function ensureFirst(c: Db, actor: Actor, f: any) {
   await c.query('update vendor_requests set route_id = $2 where job_file_id = $1 and route_id is null', [f.id, r.id]);
   await c.query('update quotation_lines l set route_id = $2 from quotations x where x.id = l.quotation_id and x.job_file_id = $1 and l.route_id is null', [f.id, r.id]);
 }
-const ROUTE_FIELDS = ['origin_country', 'origin_city', 'pol', 'destination_country', 'destination_city', 'pod', 'final_delivery', 'mode', 'cargo_description', 'notes'];
+const ROUTE_FIELDS = ['origin_country', 'origin_city', 'pol', 'destination_country', 'destination_city', 'pod', 'final_delivery', 'mode', 'cargo_description', 'notes', 'label'];
 function routeValues(b: any) {
   const v: Record<string, unknown> = {};
-  for (const k of ROUTE_FIELDS) if (b[k] !== undefined) v[k] = txt(b[k], k === 'notes' || k === 'cargo_description' ? 1000 : 120);
+  for (const k of ROUTE_FIELDS) if (b[k] !== undefined) v[k] = txt(b[k], k === 'notes' || k === 'cargo_description' ? 1000 : k === 'label' ? 200 : 120);
   if (b.packages !== undefined) v.packages = num(b.packages, 'Packages', true);
   if (b.gross_weight_kg !== undefined) v.gross_weight_kg = num(b.gross_weight_kg, 'Weight');
   if (b.volume_cbm !== undefined) v.volume_cbm = num(b.volume_cbm, 'Volume');
@@ -84,21 +84,7 @@ export async function routeAction(actor: Actor, fileId: string, b: any) {
     const f = await fileFor(actor, fileId, c);
     if (!PRE_CONFIRM.includes(f.stage ?? '')) throw new ApiError(409, 'ROUTE_LOCKED', 'The customer has confirmed — the chosen route is locked');
     const step = String(b.step ?? '');
-    if (step === 'add') {
-      await ensureFirst(c, actor, f);
-      const v = routeValues(b);
-      if (!v.pol && !v.origin_city) throw bad('Enter the loading port or origin city');
-      if (!v.pod && !v.destination_city && !f.port_of_discharge && !f.destination) throw bad('Enter the destination');
-      // the destination defaults to the enquiry's own
-      v.destination_city ??= f.destination; v.pod ??= f.port_of_discharge;
-      const next = (await one('select coalesce(max(option_no), 0) + 1 n from enquiry_routes where job_file_id = $1', [fileId], c)).n;
-      if (next > 20) throw bad('Up to 20 options');
-      const cols = Object.keys(v);
-      await c.query(`insert into enquiry_routes (job_file_id, option_no, ${cols.join(', ')}, created_by) values ($1, $2, ${cols.map((_, i) => `$${i + 3}`).join(', ')}, $${cols.length + 3})`,
-        [fileId, next, ...cols.map((k) => v[k]), actor.id]);
-      await ev(c, actor, fileId, { kind: 'edit', title: `Route option ${next} added`, new_value: routeLabel({ option_no: next, ...v }) });
-      return;
-    }
+    if (step === 'add') { await addOption(c, actor, f, routeValues(b)); return; }
     if (!isUuid(b.route_id)) throw bad('Choose the option');
     const r = await one('select * from enquiry_routes where id = $1 and job_file_id = $2 and removed_at is null for update', [b.route_id, fileId], c);
     if (!r) throw bad('Option not found');
@@ -124,6 +110,23 @@ export async function routeAction(actor: Actor, fileId: string, b: any) {
   });
   const { getJobFile } = await import('./jobfiles');
   return getJobFile(actor, fileId);
+}
+
+/** A new route option (option 1 is made from the shipment first). Also used for a vendor's extra option (migration 043). */
+export async function addOption(c: Db, actor: Actor, f: any, v: Record<string, unknown>) {
+  if (!PRE_CONFIRM.includes(f.stage ?? '')) throw new ApiError(409, 'ROUTE_LOCKED', 'The customer has confirmed — the chosen route is locked');
+  await ensureFirst(c, actor, f);
+  if (!v.pol && !v.origin_city) throw bad('Enter the loading port or origin city');
+  if (!v.pod && !v.destination_city && !f.port_of_discharge && !f.destination) throw bad('Enter the destination');
+  // the destination defaults to the enquiry's own
+  v.destination_city ??= f.destination; v.pod ??= f.port_of_discharge;
+  const next = (await one('select coalesce(max(option_no), 0) + 1 n from enquiry_routes where job_file_id = $1', [f.id], c)).n;
+  if (next > 20) throw bad('Up to 20 options');
+  const cols = Object.keys(v).filter((k) => v[k] !== undefined);
+  const r = await one(`insert into enquiry_routes (job_file_id, option_no, ${cols.join(', ')}, created_by) values ($1, $2, ${cols.map((_, i) => `$${i + 3}`).join(', ')}, $${cols.length + 3}) returning *`,
+    [f.id, next, ...cols.map((k) => v[k]), actor.id], c);
+  await ev(c, actor, f.id, { kind: 'edit', title: `Route option ${next} added`, new_value: routeLabel(r) });
+  return r;
 }
 
 /** The option a new rate request is for: required when the shipment has more than one. */
