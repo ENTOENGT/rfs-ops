@@ -51,7 +51,7 @@ test('not connected: a clear message', async () => {
   await assert.rejects(syncInbox(other), (e: any) => e.code === 'NOT_CONNECTED');
 });
 
-test('first check: last 7 days; tag, conversation, known sender, unknown sender', async () => {
+test('first check: the last day; tag, conversation, known sender, unknown sender', async () => {
   pages = {
     '$select=subject': { value: [
       mail('m1', 'omar@desert.ae', `RE: [${enqRef}] Shipment Enquiry – Ningbo to Jebel Ali`, { conversationId: 'conv-A' }),
@@ -117,7 +117,7 @@ test('"Not for a shipment" hides it for good', async () => {
   await assert.rejects(ignoreEmail(sales, id), /already handled/);
 });
 
-test('Microsoft says the saved place is too old: next check starts again from the last 7 days', async () => {
+test('Microsoft says the saved place is too old: next check starts again from the last day', async () => {
   pages = { 'deltatoken=D4': () => new Response(JSON.stringify({ error: { message: 'Resync required. Replace any local cached copies.' } }), { status: 410 }) };
   await assert.rejects(syncInbox(sales));
   assert.equal((await one('select delta_link from outlook_connections where user_id = $1', [sales.id])).delta_link, null);
@@ -144,4 +144,18 @@ test('a short check: stops before the time limit and carries on next time', asyn
   const r: any = await syncInbox(sales, 0);            // no time left after the first page
   assert.equal(r.more, true); assert.equal(n, 1);
   assert.match((await one('select delta_link from outlook_connections where user_id = $1', [sales.id])).delta_link, /skiptoken=S1/);
+});
+
+test('background check (every 2 minutes): connected people the longest-waiting first; someone checked in the last 90 seconds is skipped', async () => {
+  const { runInboxChecks } = await import('../src/server/inboxcron');
+  pages = { 'skiptoken=S1': { value: [], '@odata.deltaLink': 'https://graph.microsoft.com/v1.0/me/mailFolders/inbox/messages/delta?$deltatoken=D10' } };
+  await q(`update outlook_connections set last_sync_at = now() - interval '5 minutes', last_error = null, sync_started_at = null where user_id = $1`, [sales.id]);
+  let r: any = await runInboxChecks();
+  assert.ok(r.done.some((d: any) => d.user === sales.id && !d.error), JSON.stringify(r));
+  assert.match((await one('select delta_link from outlook_connections where user_id = $1', [sales.id])).delta_link, /deltatoken=D10/);
+  r = await runInboxChecks();
+  assert.ok(!r.done.some((d: any) => d.user === sales.id), 'just checked: skipped');
+  // a pilot switched off, or a connection with a problem: not checked
+  await q(`update outlook_connections set last_sync_at = null, last_error = 'token expired' where user_id = $1`, [sales.id]);
+  assert.ok(!(await runInboxChecks()).done.some((d: any) => d.user === sales.id));
 });

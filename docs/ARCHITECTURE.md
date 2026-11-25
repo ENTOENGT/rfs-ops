@@ -931,3 +931,10 @@ giving customers to other salesmen is for the Commercials Manager. Up to 1,000 r
   (same vendor / team / source, status quoted with the option's own rate and lines), in the same transaction. Only before the customer confirms.
 - `routeLabel` adds the label; the PDF / print / Excel option headings too. From there everything is the existing route options:
   one section and total per option on the quotation, the customer chooses one option when confirming.
+
+### 24 Nov — Outlook inboxes checked in the background
+- `netlify/functions/inbox-check.mjs` (every 2 minutes) → `POST /api/cron/inbox-check` (key = HMAC(SESSION_SECRET, 'inbox-check'))
+  → `inboxcron.runInboxChecks`: every connected pilot user without a connection problem, longest-waiting first, skipping anyone
+  checked in the last 90 seconds (their app is open); `syncInbox` then the AI's quick look (4 emails). About 7 seconds per call,
+  "more" → the function calls again (3 calls at most). The app's own check every minute while open stays.
+- A new connection looks back 1 day (was 7) and reads pages of 50 (was 25), up to 20 per check, so a busy inbox reaches today quickly.

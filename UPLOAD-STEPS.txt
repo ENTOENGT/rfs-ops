@@ -1,6 +1,8 @@
-RFS CRM update — 24 Nov v2 (replaces rfs-crm-update-24nov.zip; everything not uploaded yet, in ONE commit)
+RFS CRM update — 24 Nov v3 (replaces rfs-crm-update-24nov-v2.zip; everything not uploaded yet, in ONE commit)
 
-NEW in this one: when a vendor gives several options (e.g. MSC direct and CMA via Colombo), the AI keeps each one.
+NEW in this one: Outlook emails are now checked in the background every 2 minutes, even when nobody has
+RFS CRM open, and a newly connected inbox only looks back 1 day (it was 7), so it reaches today quickly.
+Also: when a vendor gives several options (e.g. MSC direct and CMA via Colombo), the AI keeps each one.
 You choose which one is saved on the rate request, and tick the others to offer on the quotation too.
 Also inside: the booking reader, Track buttons and reminders (042), and everything from 23 Nov.
 
@@ -20,3 +22,7 @@ STEP 3 — Netlify builds by itself. Wait for "Published".
 STEP 4 — Check: on an enquiry, when a vendor's reply has two options, the purple "Rates from vendors' emails"
    box shows "The vendor gave 2 options". Pick the one to save, tick "Also on the quotation" for the other,
    press "Save rate + 1 option". The quotation then shows Option 1 and Option 2, each with its own total.
+
+STEP 5 — Background email check: in Netlify → your site → Logs → Functions, you will see "inbox-check" running
+   every 2 minutes. Nothing to set. Test: close RFS CRM, send the new user a test enquiry, wait 2–3 minutes,
+   then open RFS CRM — it should already be there.

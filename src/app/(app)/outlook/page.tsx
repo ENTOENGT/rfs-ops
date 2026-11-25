@@ -80,7 +80,7 @@ function Inbox() {
       <p className="muted small" style={{ marginTop: 0 }}>RFS CRM reads your inbox (it never changes or deletes anything) and files each email on its shipment by the
         tag in the subject, like [ENQ-…] or the Job No., or by the same email conversation. Emails from your customers and agents that match
         no shipment wait here; the AI marks the ones that are <b>new enquiries</b> — also from new customers — and puts them at the top.
-        Other emails are not saved. It also checks by itself every minute while RFS CRM is open.</p>
+        Other emails are not saved. It also checks by itself every 2 minutes, even when RFS CRM is closed (every minute while it is open).</p>
       {note && <div className={`msg ${note.t}`}>{note.m}</div>}
       {d?.last_sync_at && <p className="muted small">Last checked {fmtDateTime(d.last_sync_at)}
         {d.other_hidden > 0 && <> · {d.other_hidden} other email(s) from customers hidden (the AI says they are not about a shipment) — <button className="linkish small" onClick={() => { setShowAll(true); load(true); }}>show them</button></>}

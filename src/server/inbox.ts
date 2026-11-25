@@ -16,9 +16,9 @@ import { aiConfig } from './ai';
 import { event, loadFile } from './jobfiles';
 import { notifyGroup } from './notify';
 
-export const FIRST_LOOK_BACK_DAYS = 7;
-const PAGES_PER_CHECK = 10;            // at most 10 pages of 25 per check; the rest on the next check
-const PAGE_SIZE = 25;
+export const FIRST_LOOK_BACK_DAYS = 1;    // 24 Nov: was 7 — a busy new inbox took too long to reach today's mail
+const PAGES_PER_CHECK = 20;            // at most 20 pages of 50 per check; the rest on the next check
+const PAGE_SIZE = 50;
 const TIME_BUDGET_MS = 6000;           // no new page after 6 seconds (requests are cut at 10)
 const SELECT = 'subject,from,toRecipients,ccRecipients,receivedDateTime,internetMessageId,conversationId,bodyPreview,hasAttachments,isDraft,webLink';
 const PUBLIC_DOMAINS = new Set(['gmail.com', 'googlemail.com', 'yahoo.com', 'hotmail.com', 'outlook.com', 'live.com', 'msn.com', 'icloud.com', 'me.com',
