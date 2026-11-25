@@ -26,6 +26,7 @@ export const SERVICE_TYPES: [string, string][] = [
 export const CHARGE_UNITS: [string, string][] = [
   ['shipment', 'per shipment'], ['container', 'per container'], ['cbm', 'per CBM'], ['kg', 'per kg'], ['trip', 'per trip'],
   ['pallet', 'per pallet'], ['carton', 'per carton'], ['day', 'per day'], ['lump_sum', 'lump sum'],
+  ['bl', 'per BL / AWB'], ['document', 'per document'],   // migration 044
 ];
 export const Q_STATUSES: [string, string, string][] = [
   ['draft', 'Draft', '#8A94A6'], ['pending_approval', 'Waiting for approval', '#B7791F'], ['approved', 'Approved — ready to send', '#2B6CB0'],

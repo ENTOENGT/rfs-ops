@@ -13,7 +13,7 @@ const WAREHOUSE = ['warehouse.view', 'warehouse.receive', 'warehouse.dispatch', 
 
 export const MODULES: NavModule[] = [
   { key: 'dashboard', label: 'Dashboard', icon: 'dashboard', items: [{ href: '/dashboard', label: 'Dashboard' }], paths: ['/notifications'] },
-  { key: 'commercials', label: 'Commercials', icon: 'briefcase', perm: [...COMMERCIAL, 'templates.manage', 'commercial.manage', 'settings.manage'], items: [
+  { key: 'commercials', label: 'Commercials', icon: 'briefcase', perm: [...COMMERCIAL, 'templates.manage', 'commercial.manage', 'settings.manage', 'local_charges.manage'], items: [
     { href: '/commercials', label: 'Overview', perm: COMMERCIAL },
     { href: '/commercials?division=imports', label: 'Imports', section: 'Divisions', perm: COMMERCIAL },
     { href: '/commercials?division=exports', label: 'Exports', section: 'Divisions', perm: COMMERCIAL },
@@ -22,7 +22,8 @@ export const MODULES: NavModule[] = [
     { href: '/settings/email-templates', label: 'Email templates', section: 'Templates', perm: 'templates.manage' },
     { href: '/commercials/checklists', label: 'Checklists', section: 'Templates', perm: ['commercial.manage', 'settings.manage'] },   // migration 028
     { href: '/commercials/places', label: 'Ports & regions', section: 'Templates', perm: ['commercial.manage', 'settings.manage'] },
-    { href: '/commercials/hs-codes', label: 'HS codes', section: 'Templates', perm: ['commercial.manage', 'settings.manage'] }] },   // migration 034
+    { href: '/commercials/hs-codes', label: 'HS codes', section: 'Templates', perm: ['commercial.manage', 'settings.manage'] },   // migration 034
+    { href: '/commercials/local-charges', label: 'Local charges', section: 'Templates', perm: ['local_charges.manage', 'finance.buying.view'] }] },   // migration 044
   { key: 'enquiries', label: 'Enquiries', icon: 'inbox', perm: COMMERCIAL, items: [
     { href: '/commercials/enquiries', label: 'All enquiries' },
     { href: '/commercials/enquiries?mine=1', label: 'My enquiries' },

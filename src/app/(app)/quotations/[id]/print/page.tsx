@@ -52,9 +52,15 @@ export default function QuotePrint({ params }: { params: { id: string } }) {
           {o.option_no && <h3 style={{ margin: '10px 0 4px', fontSize: 14 }}>Option {o.option_no}: {[o.pol, o.pod].filter(Boolean).join(' → ')}{o.label ? ` — ${o.label}` : ''}{o.selected ? ' (chosen)' : ''}</h3>}
           <table className="qp-lines">
             <thead><tr><th>Description</th><th>Charged</th><th className="num">Qty</th><th className="num">Rate ({d.currency})</th><th className="num">Amount ({d.currency})</th></tr></thead>
-            <tbody>{o.lines.map((l: any, i: number) => <tr key={i}><td>{l.description}</td><td>{l.unit_name}</td><td className="num">{Number(l.quantity)}</td>
-              <td className="num">{fmtMoney(l.rate, '')}</td><td className="num">{fmtMoney(l.amount, '')}</td></tr>)}</tbody>
-            <tfoot><tr><td colSpan={4} className="num"><b>{o.option_no ? `Option ${o.option_no} total` : 'Total'}</b></td><td className="num"><b>{fmtMoney(o.total, d.currency)}</b></td></tr></tfoot>
+            {/* migration 044: our local charges under their own heading; "if applicable" lines after the total, not counted */}
+            {(() => { const main = o.lines.filter((l: any) => !l.optional), fr = main.filter((l: any) => l.section !== 'local'), lo = main.filter((l: any) => l.section === 'local');
+              const row = (l: any, i: number) => <tr key={i}><td>{l.description}{l.note ? ` (${l.note})` : ''}</td><td>{l.unit_name}</td><td className="num">{Number(l.quantity)}</td>
+                <td className="num">{fmtMoney(l.rate, '')}</td><td className="num">{fmtMoney(l.amount, '')}</td></tr>;
+              return <tbody>{fr.map(row)}{lo.length > 0 && fr.length > 0 && <tr><td colSpan={5}><b>Local charges</b></td></tr>}{lo.map((l: any, i: number) => row(l, 1000 + i))}</tbody>; })()}
+            <tfoot><tr><td colSpan={4} className="num"><b>{o.option_no ? `Option ${o.option_no} total` : 'Total'}</b></td><td className="num"><b>{fmtMoney(o.total, d.currency)}</b></td></tr>
+              {o.lines.some((l: any) => l.optional) && <><tr><td colSpan={5}><b>If applicable (not included in the total)</b></td></tr>
+                {o.lines.filter((l: any) => l.optional).map((l: any, i: number) => <tr key={i}><td>{l.description}{l.note ? ` (${l.note})` : ''}</td><td>{l.unit_name}</td><td className="num">{Number(l.quantity)}</td>
+                  <td className="num">{fmtMoney(l.rate, '')}</td><td className="num">{fmtMoney(l.amount, '')}</td></tr>)}</>}</tfoot>
           </table></div>)}
         {d.options && <p className="qp-note">Please tell us which option you choose.</p>}
         {c.quote_vat_note && <p className="qp-note">{c.quote_vat_note}</p>}

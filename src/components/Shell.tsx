@@ -157,32 +157,39 @@ function usePresence() {
   return [st, setSt] as const;
 }
 
-/** Outlook step 3: while the app is open, a connected pilot user's inbox is checked every minute (quietly). */
-function useInboxCheck() {
+/**
+ * Outlook step 3: while the app is open, a connected pilot user's inbox is checked every minute (quietly).
+ * 25 Nov: shown as the Outlook button at the top (next to "+ New"), with the number of emails waiting to be filed.
+ */
+function OutlookIcon() {
+  const [s, setS] = useState<any>(null);
   useEffect(() => {
-    let on = false, last = 0;
+    let st: any = null, last = 0;
+    const load = () => api('/api/outlook').then((x) => { st = x; setS(x); return x; });
+    const on = () => !!(st?.configured && st?.pilot && st?.connected && !st?.last_error);
     const check = () => {
-      if (!on || document.visibilityState !== 'visible' || Date.now() - last < 50_000) return;
+      if (document.visibilityState !== 'visible') return;
+      if (!on() || Date.now() - last < 50_000) { if (st) load().catch(() => {}); return; }
       last = Date.now();
       api('/api/outlook/sync', { body: {} }).then((r) => { if (r?.to_screen > 0) return api('/api/outlook/screen', { body: {} }); })
-        .catch(() => { /* shown on My Outlook */ });
+        .catch(() => { /* shown on My Outlook */ }).finally(() => load().catch(() => {}));
     };
-    api('/api/outlook').then((s) => {
-      on = !!(s?.configured && s?.pilot && s?.connected && !s?.last_error);
-      if (on && s.last_sync_at) last = new Date(s.last_sync_at).getTime();
-      check();
-    }).catch(() => {});
+    load().then((x) => { if (x?.last_sync_at) last = new Date(x.last_sync_at).getTime(); check(); }).catch(() => {});
     const t = setInterval(check, 60_000);
     document.addEventListener('visibilitychange', check);
     return () => { clearInterval(t); document.removeEventListener('visibilitychange', check); };
   }, []);
+  if (!s?.configured || !s?.pilot) return null;
+  const n = s.waiting ?? 0, label = !s.connected ? 'My Outlook — not connected' : s.last_error ? 'My Outlook — needs attention'
+    : `My Outlook${n ? `, ${n} email${n === 1 ? '' : 's'} to file${s.new_enquiries ? ` (${s.new_enquiries} new enquir${s.new_enquiries === 1 ? 'y' : 'ies'})` : ''}` : ''}`;
+  return <Link className="icon-btn chat-btn bell" href="/outlook" aria-label={label} title={label}>
+    <Icon name="mail" />{(n > 0 || !s.connected || s.last_error) && <span className="dot">{!s.connected || s.last_error ? '!' : n > 99 ? '99+' : n}</span>}</Link>;
 }
 
 function Profile({ me, logout }: { me: Me; logout: () => void }) {
   const [open, setOpen] = useState(false);
   const ref = useOutside(open, () => setOpen(false));
   const [st, setSt] = usePresence();
-  useInboxCheck();
   const [leave, setLeave] = useState<{ until: string; note: string } | null>(null);
   const set = async (b: any) => { try { setSt(await api('/api/presence', { method: 'PUT', body: b })); setLeave(null); setOpen(false); } catch (e: any) { alert(e.message); } };
   return (
@@ -299,6 +306,7 @@ function Frame({ me, lk, can, children }: { me: Me; lk: any; can: (p: string) =>
           </nav>
           <GlobalSearch />
           <div className="top-actions">
+            <OutlookIcon />
             <QuickCreate can={can} />
             {['jobfiles.view_all', 'jobfiles.view_department', 'jobfiles.view_assigned', 'jobfiles.view_handed_over', 'jobfiles.create', 'jobfiles.edit'].some((p) => can(p as any)) && <ChatIcon />}
             <Bell />

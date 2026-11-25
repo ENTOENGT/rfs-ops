@@ -77,14 +77,15 @@ const money = (v: unknown, lbl: string) => {
   return s;
 };
 
-/** Totals in integer fils: quantity can have decimals (CBM, kg), so each line rounds to the fils once. */
-export function quoteTotals(lines: { quantity: string | number; cost_rate: string | number; sell_rate: string | number }[]) {
+/** Totals in integer fils: quantity can have decimals (CBM, kg), so each line rounds to the fils once.
+ *  Migration 044: an "if applicable" line (optional) has its own amount but is not in the totals. */
+export function quoteTotals(lines: { quantity: string | number; cost_rate: string | number; sell_rate: string | number; optional?: boolean | null }[]) {
   let cost = 0, sell = 0;
   const each = lines.map((l) => {
     const qty = Number(l.quantity);
     const c = Math.round(qty * toFils(String(l.cost_rate)));
     const s = Math.round(qty * toFils(String(l.sell_rate)));
-    cost += c; sell += s;
+    if (!l.optional) { cost += c; sell += s; }
     return { cost: fromFils(c), sell: fromFils(s) };
   });
   const margin = sell - cost;
@@ -110,6 +111,8 @@ function present(actor: Actor, x: any, lines: any[]) {
       ...(profitView ? { margin_type: l.margin_type, margin_value: l.margin_value } : {}),
       ...(buyingView ? { vendor_request_id: l.vendor_request_id, cost_currency: l.cost_currency ?? null, cost_original: l.cost_original ?? null, cost_fx: l.cost_fx ?? null, rate_mode: l.rate_mode ?? null } : {}),
       route_id: l.route_id ?? null,
+      section: l.section ?? 'freight', optional: !!l.optional, note: l.note ?? null,          // migration 044
+      ...(buyingView ? { internal_note: l.internal_note ?? null } : {}),
     })),
     totals: {
       ...(buyingView ? { cost_total: t.cost_total } : {}),
@@ -313,7 +316,13 @@ function parseLines(actor: Actor, raw: unknown, old: any[]) {
         if (Math.abs(Number(orig) * Number(fx) - Number(cost)) < 0.006) src = { cost_currency: String(l.cost_currency).toUpperCase(), cost_original: orig, cost_fx: fx, rate_mode: mode };
       }
     }
-    return { description, charge_unit: l.charge_unit, quantity: String(l.quantity).trim(), cost_rate: cost, sell_rate: sell, margin_type, margin_value, vendor_request_id, route_id, ...src };
+    // migration 044: freight or our local charges; "if applicable" (not in the total); a note the customer sees; a staff-only note
+    const section = l.section === 'local' ? 'local' : l.section === 'freight' ? 'freight' : prev?.section ?? 'freight';
+    const optional = l.optional === undefined ? !!prev?.optional : !!l.optional;
+    const note = l.note === undefined ? prev?.note ?? null : txt(l.note, 200);
+    const internal_note = actor.fin.buyingView && l.internal_note !== undefined ? txt(l.internal_note, 2000) : prev?.internal_note ?? null;
+    return { description, charge_unit: l.charge_unit, quantity: String(l.quantity).trim(), cost_rate: cost, sell_rate: sell, margin_type, margin_value, vendor_request_id, route_id, ...src,
+      section, optional, note, internal_note };
   });
 }
 
@@ -392,9 +401,9 @@ export async function createQuotation(actor: Actor, b: any) {
       [dept, actor.id, ...cols.map((k) => vals[k])], c);
     for (const [i, l] of lines.entries())
       await c.query(`insert into quotation_lines (quotation_id, sort_order, description, charge_unit, quantity, cost_rate, sell_rate, margin_type, margin_value, vendor_request_id, route_id,
-          cost_currency, cost_original, cost_fx, rate_mode)
-        values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`, [x.id, i, l.description, l.charge_unit, l.quantity, l.cost_rate, l.sell_rate, l.margin_type, l.margin_value, l.vendor_request_id, l.route_id,
-        l.cost_currency, l.cost_original, l.cost_fx, l.rate_mode]);
+          cost_currency, cost_original, cost_fx, rate_mode, section, optional, note, internal_note)
+        values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)`, [x.id, i, l.description, l.charge_unit, l.quantity, l.cost_rate, l.sell_rate, l.margin_type, l.margin_value, l.vendor_request_id, l.route_id,
+        l.cost_currency, l.cost_original, l.cost_fx, l.rate_mode, l.section, l.optional, l.note, l.internal_note]);
     await stampRate(c, x.id);                                                // migration 040
     await evt(c, actor, x.id, 'Quotation created', `${lines.length} line(s)`);
     if (vals.job_file_id) {
@@ -433,9 +442,9 @@ export async function updateQuotation(actor: Actor, id: string, b: any) {
       await c.query('delete from quotation_lines where quotation_id = $1', [id]);
       for (const [i, l] of lines.entries())
         await c.query(`insert into quotation_lines (quotation_id, sort_order, description, charge_unit, quantity, cost_rate, sell_rate, margin_type, margin_value, vendor_request_id, route_id,
-          cost_currency, cost_original, cost_fx, rate_mode)
-          values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`, [id, i, l.description, l.charge_unit, l.quantity, l.cost_rate, l.sell_rate, l.margin_type, l.margin_value, l.vendor_request_id, l.route_id,
-          l.cost_currency, l.cost_original, l.cost_fx, l.rate_mode]);
+          cost_currency, cost_original, cost_fx, rate_mode, section, optional, note, internal_note)
+          values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)`, [id, i, l.description, l.charge_unit, l.quantity, l.cost_rate, l.sell_rate, l.margin_type, l.margin_value, l.vendor_request_id, l.route_id,
+          l.cost_currency, l.cost_original, l.cost_fx, l.rate_mode, l.section, l.optional, l.note, l.internal_note]);
     }
     // a changed quotation must be checked again before it goes out
     if (x.status !== 'draft') {
@@ -461,7 +470,7 @@ async function notifyApprovers(db: Db, actor: Actor, x: any) {
 
 /** Keep the quotation as it stands (header, lines, totals) — at approval, revision and customer confirmation. */
 async function snapshot(db: Db, actor: Actor, x: any, reason: string) {
-  const lines = await q('select description, charge_unit, quantity, cost_rate, sell_rate, margin_type, margin_value, vendor_request_id, route_id, cost_currency, cost_original, cost_fx, rate_mode from quotation_lines where quotation_id = $1 order by sort_order', [x.id], db);
+  const lines = await q('select description, charge_unit, quantity, cost_rate, sell_rate, margin_type, margin_value, vendor_request_id, route_id, cost_currency, cost_original, cost_fx, rate_mode, section, optional, note, internal_note from quotation_lines where quotation_id = $1 order by sort_order', [x.id], db);
   const head = Object.fromEntries(Object.keys(HEAD).map((k) => [k, x[k]]));
   await db.query(`insert into quotation_versions (quotation_id, version_no, reason, snapshot, made_by, made_by_name) values ($1,$2,$3,$4,$5,$6)`,
     [x.id, x.version_no ?? 1, reason, JSON.stringify({ ...head, quote_no: x.quote_no, currency: x.currency, lines, totals: quoteTotals(lines) }), actor.id, actor.full_name]);
@@ -701,6 +710,9 @@ export { Q_STATUSES };
 
 // ------------------------------------------------------------ customer copy (print / PDF / Excel)
 const CUSTOMER_READY = ['approved', 'sent', 'accepted'];
+/** One line as the customer sees it (migration 044: its note — "as per receipt" — and whether it is "if applicable", not in the total). */
+const cline = (l: any, amount: string) => ({ description: l.description, unit_name: label(CHARGE_UNITS, l.charge_unit), quantity: l.quantity, rate: l.sell_rate, amount,
+  section: l.section ?? 'freight', optional: !!l.optional, note: l.note ?? null });
 /**
  * What the customer receives: selling rates and totals only — never cost, margin or internal notes, whoever asks.
  * Only an approved (or sent / accepted) quotation that has not expired can go out, so a low-margin draft can't be sent by mistake.
@@ -715,7 +727,7 @@ export async function customerCopy(actor: Actor, id: string, how: 'print' | 'exc
   const [extra, lines] = await Promise.all([
     one(`select c.name customer_name, c.address customer_address, c.trn customer_trn, c.contact_person customer_contact, u.full_name prepared_by, u.email prepared_by_email
        from quotations x join customers c on c.id = x.customer_id join users u on u.id = x.created_by where x.id = $1`, [id]),
-    q('select description, charge_unit, quantity, sell_rate, route_id from quotation_lines where quotation_id = $1 order by sort_order', [id]),
+    q('select description, charge_unit, quantity, sell_rate, route_id, section, optional, note from quotation_lines where quotation_id = $1 order by sort_order', [id]),
   ]);
   // Part G2: one section per route option (with its own total)
   const routes = x.job_file_id ? await q('select id, option_no, origin_city, pol, destination_city, pod, label from enquiry_routes where job_file_id = $1 order by option_no', [x.job_file_id]) : [];
@@ -732,13 +744,12 @@ export async function customerCopy(actor: Actor, id: string, how: 'print' | 'exc
     enquiry_reference: x.enquiry_reference, service_name: label(SERVICE_TYPES, x.service_type), direction_name: label(DIRECTIONS, x.direction),
     origin: x.origin, destination: x.destination, cargo_description: x.cargo_description, packages: x.packages,
     gross_weight_kg: x.gross_weight_kg, volume_cbm: x.volume_cbm, chargeable_weight_kg: x.chargeable_weight_kg,
-    lines: lines.map((l, i) => ({ description: l.description, unit_name: label(CHARGE_UNITS, l.charge_unit), quantity: l.quantity,
-      rate: l.sell_rate, amount: t.each[i].sell })),
+    lines: lines.map((l, i) => cline(l, t.each[i].sell)),
     total: t.sell_total, scope: x.scope, exclusions: x.exclusions, terms: x.terms, additional_remarks: x.additional_remarks, payment_terms: x.payment_terms,
     options: used.length > 1 ? used.map((r) => {
       const mine = lines.map((l, i) => ({ l, i })).filter(({ l }) => l.route_id === r.id);
       return { option_no: r.option_no, pol: r.pol ?? r.origin_city, pod: r.pod ?? r.destination_city, label: r.label ?? null, selected: x.selected_route_id === r.id,
-        lines: mine.map(({ l, i }) => ({ description: l.description, unit_name: label(CHARGE_UNITS, l.charge_unit), quantity: l.quantity, rate: l.sell_rate, amount: t.each[i].sell })),
+        lines: mine.map(({ l, i }) => cline(l, t.each[i].sell)),
         total: quoteTotals(mine.map(({ l }) => ({ ...l, cost_rate: '0' }))).sell_total };
     }) : null,
     prepared_by: extra.prepared_by, prepared_by_email: extra.prepared_by_email,
@@ -772,12 +783,16 @@ export async function customerExcel(actor: Actor, id: string) {
     if (o.option_no) add([`Option ${o.option_no}: ${[o.pol, o.pod].filter(Boolean).join(' → ')}${o.label ? ` — ${o.label}` : ''}`], bold);
     const head = add(['Description', 'Charged', 'Qty', `Rate (${d.currency})`, `Amount (${d.currency})`], bold);
     head.eachCell((c) => { c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF3E7C7' } }; c.border = { bottom: { style: 'thin' } }; });
-    for (const l of o.lines) {
-      const r = add([l.description, l.unit_name, Number(l.quantity), Number(l.rate), Number(l.amount)]);
-      r.getCell(3).numFmt = '#,##0.###'; r.getCell(4).numFmt = '#,##0.00'; r.getCell(5).numFmt = '#,##0.00';
-    }
+    // migration 044: local charges under their own heading; "if applicable" after the total, not counted
+    const row = (l: any) => { const r = add([l.note ? `${l.description} (${l.note})` : l.description, l.unit_name, Number(l.quantity), Number(l.rate), Number(l.amount)]);
+      r.getCell(3).numFmt = '#,##0.###'; r.getCell(4).numFmt = '#,##0.00'; r.getCell(5).numFmt = '#,##0.00'; };
+    const main = o.lines.filter((l: any) => !l.optional), fr = main.filter((l: any) => l.section !== 'local'), lo = main.filter((l: any) => l.section === 'local');
+    fr.forEach(row);
+    if (lo.length) { if (fr.length) add(['Local charges'], bold); lo.forEach(row); }
     const tot = add(['', '', '', o.option_no ? `Option ${o.option_no} total` : 'Total', Number(o.total)], bold);
     tot.getCell(5).numFmt = '#,##0.00'; tot.getCell(5).border = { top: { style: 'thin' }, bottom: { style: 'double' } };
+    const extra = o.lines.filter((l: any) => l.optional);
+    if (extra.length) { add(['If applicable (not included in the total)'], bold); extra.forEach(row); }
     add([]);
   }
   if (d.company.quote_vat_note) add([d.company.quote_vat_note], { italic: true });

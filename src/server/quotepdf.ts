@@ -86,30 +86,42 @@ export async function quotationPdf(actor: Actor, id: string): Promise<{ bytes: U
   const cols = [{ k: 'description', w: W - 2 * M - 300, a: 'l', t: 'Description' }, { k: 'unit_name', w: 90, a: 'l', t: 'Charged' }, { k: 'quantity', w: 40, a: 'r', t: 'Qty' },
     { k: 'rate', w: 80, a: 'r', t: `Rate (${d.currency})` }, { k: 'amount', w: 90, a: 'r', t: `Amount (${d.currency})` }];
   const tables = d.options ?? [{ option_no: null, lines: d.lines, total: d.total }];
-  for (const o of tables) {
-    if (o.option_no) { room(40); text(`Option ${o.option_no}: ${[o.pol, o.pod].filter(Boolean).join(' to ')}${o.label ? ` — ${o.label}` : ''}${o.selected ? ' (chosen)' : ''}`, M, 10.5, bold, NAVY); y -= 16; }
-    const headRow = () => { room(22); page.drawRectangle({ x: M, y: y - 6, width: W - 2 * M, height: 20, color: NAVY });
-      let x = M + 6; for (const col of cols) { const s = col.t; page.drawText(s, { x: col.a === 'r' ? x + col.w - 12 - bold.widthOfTextAtSize(s, 8.5) : x, y: y, size: 8.5, font: bold, color: rgb(1, 1, 1) }); x += col.w; } y -= 22; };
-    headRow();
-    for (const l of o.lines) {
-      const cells: Record<string, string> = { description: l.description, unit_name: l.unit_name ?? '', quantity: String(Number(l.quantity)), rate: money(l.rate), amount: money(l.amount) };
+  // migration 044: our local charges under their own heading; "if applicable" lines after the total, not counted in it
+  const withNote = (l: any) => (l.note ? `${l.description} (${l.note})` : l.description);
+  const rows = (ls: any[]) => {
+    for (const l of ls) {
+      const cells: Record<string, string> = { description: withNote(l), unit_name: l.unit_name ?? '', quantity: String(Number(l.quantity)), rate: money(l.rate), amount: money(l.amount) };
       const desc = wrap(font, cells.description, 9.5, cols[0].w - 10);
       const h = desc.length * 12 + 8;
       if (y - h < 60) { newPage(); headRow(); }
       let x = M + 6;
       for (const col of cols) {
         if (col.k === 'description') desc.forEach((l2, i) => page.drawText(l2, { x, y: y - i * 12, size: 9.5, font, color: BLACK }));
-        else { const s = safe(font, cells[col.k]); page.drawText(s, { x: col.a === 'r' ? x + col.w - 12 - font.widthOfTextAtSize(s, 9.5) : x, y, size: 9.5, font, color: BLACK }); }
+        else { const s2 = safe(font, cells[col.k]); page.drawText(s2, { x: col.a === 'r' ? x + col.w - 12 - font.widthOfTextAtSize(s2, 9.5) : x, y, size: 9.5, font, color: BLACK }); }
         x += col.w;
       }
       y -= h; page.drawLine({ start: { x: M, y: y + 9 }, end: { x: W - M, y: y + 9 }, thickness: 0.5, color: LINE });
     }
+  };
+  const subHead = (t: string) => { room(24); page.drawRectangle({ x: M, y: y - 5, width: W - 2 * M, height: 17, color: HEAD }); page.drawText(safe(bold, t), { x: M + 6, y: y, size: 9, font: bold, color: NAVY }); y -= 20; };
+  let headRow = () => {};
+  for (const o of tables) {
+    if (o.option_no) { room(40); text(`Option ${o.option_no}: ${[o.pol, o.pod].filter(Boolean).join(' to ')}${o.label ? ` — ${o.label}` : ''}${o.selected ? ' (chosen)' : ''}`, M, 10.5, bold, NAVY); y -= 16; }
+    headRow = () => { room(22); page.drawRectangle({ x: M, y: y - 6, width: W - 2 * M, height: 20, color: NAVY });
+      let x = M + 6; for (const col of cols) { const s2 = col.t; page.drawText(s2, { x: col.a === 'r' ? x + col.w - 12 - bold.widthOfTextAtSize(s2, 8.5) : x, y: y, size: 8.5, font: bold, color: rgb(1, 1, 1) }); x += col.w; } y -= 22; };
+    headRow();
+    const main = o.lines.filter((l: any) => !l.optional), freight = main.filter((l: any) => l.section !== 'local'), local = main.filter((l: any) => l.section === 'local');
+    rows(freight);
+    if (local.length) { if (freight.length) subHead('Local charges'); rows(local); }
     room(26);
     const label = o.option_no ? `Option ${o.option_no} total` : 'Total', amt = `${d.currency} ${money(o.total)}`;
     y -= 4;
     page.drawText(label, { x: W - M - 120 - bold.widthOfTextAtSize(label, 10.5), y, size: 10.5, font: bold, color: NAVY });
     page.drawText(amt, { x: W - M - 6 - bold.widthOfTextAtSize(amt, 11), y, size: 11, font: bold, color: NAVY });
-    y -= 26;
+    y -= 22;
+    const extra = o.lines.filter((l: any) => l.optional);
+    if (extra.length) { subHead('If applicable (not included in the total)'); rows(extra); y -= 6; }
+    y -= 4;
   }
   if (d.options) para('Please tell us which option you choose.', M, W - 2 * M, 9, font, GREY);
   if (c.quote_vat_note) para(c.quote_vat_note, M, W - 2 * M, 9, font, GREY);

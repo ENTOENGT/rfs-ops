@@ -5,6 +5,7 @@ import { CURRENCIES, fxRate } from '@/lib/currency';
 import { routeLabel } from '@/lib/routingRules';
 import { fmtMoney } from './api';
 import { SERVICE_TYPES, DIRECTIONS, CHARGE_UNITS } from '@/lib/jobfileRules';
+import { LocalChargesBox } from './LocalCharges';
 
 const Err = ({ m }: { m?: string }) => (m ? <small className="ferr">{m}</small> : null);
 export const emptyLine = () => ({ description: '', charge_unit: 'shipment', quantity: '1', cost_rate: '', sell_rate: '', margin_type: '', margin_value: '' });
@@ -27,6 +28,8 @@ export function unitOf(basis: unknown): string {
   if (/\bkg|kilo/.test(b)) return 'kg';
   if (/pallet|plt/.test(b)) return 'pallet';
   if (/carton|ctn/.test(b)) return 'carton';
+  if (/\bb\/?l\b|\bawb\b|\bhbl\b|\bmbl\b/.test(b)) return 'bl';          // migration 044
+  if (/\bdoc/.test(b)) return 'document';
   if (/truck|trip/.test(b)) return 'trip';
   if (/day/.test(b)) return 'day';
   return 'shipment';
@@ -36,7 +39,7 @@ export function unitOf(basis: unknown): string {
 function totals(lines: any[]) {
   const f = (v: string) => Math.round(Number(v || 0) * 100);
   let cost = 0, sell = 0;
-  for (const l of lines) { const qn = Number(l.quantity || 0); cost += Math.round(qn * f(l.cost_rate)); sell += Math.round(qn * f(l.sell_rate)); }
+  for (const l of lines) { if (l.optional) continue; const qn = Number(l.quantity || 0); cost += Math.round(qn * f(l.cost_rate)); sell += Math.round(qn * f(l.sell_rate)); }   // migration 044: "if applicable" not in the total
   return { cost: (cost / 100).toFixed(2), sell: (sell / 100).toFixed(2), margin: ((sell - cost) / 100).toFixed(2), pct: sell > 0 ? (((sell - cost) / sell) * 100).toFixed(2) : null };
 }
 
@@ -62,7 +65,7 @@ export function QuoteFields({ f, setF, fe = {}, minMargin, vendorRates = [], job
   const lines: any[] = f.lines ?? [];
   const canMargin = buyingView && sellingView;
   // when a line uses a margin, its selling rate follows the cost and margin as you type
-  const setLine = (i: number, k: string, v: string) => setF({ ...f, lines: lines.map((l, j) => {
+  const setLine = (i: number, k: string, v: any) => setF({ ...f, lines: lines.map((l, j) => {
     if (j !== i) return l;
     const n = { ...l, [k]: v };
     if (k === 'cost_rate') { n.cost_original = null; n.cost_currency = null; n.cost_fx = null; }      // typed by hand: the person's own figure
@@ -191,7 +194,15 @@ export function QuoteFields({ f, setF, fe = {}, minMargin, vendorRates = [], job
               return r ? <div className="small" style={{ marginTop: 3 }}><span className="muted">Vendor rate {r.request_no} · {r.vendor_name}
                 {l.rate_mode && ` · ${l.rate_mode === 'split' ? 'split-up' : 'all-in'}`}
                 {l.cost_currency && l.cost_original && l.cost_currency !== cur && ` · ${l.cost_currency} ${Number(l.cost_original).toLocaleString()} × ${Number(l.cost_fx)}`}</span>
-                {w && <div className="flag" style={{ display: 'block', marginTop: 3, whiteSpace: 'normal' }}>{w}</div>}</div> : null; })()}</td>
+                {w && <div className="flag" style={{ display: 'block', marginTop: 3, whiteSpace: 'normal' }}>{w}</div>}</div> : null; })()}
+            {/* migration 044: local charges, "if applicable" (not in the total), a note the customer sees, and the staff note */}
+            <div className="small" style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginTop: 3 }}>
+              {l.section === 'local' && <span className="badge" style={{ background: '#2F855A' }}>Local charges</span>}
+              <label style={{ display: 'flex', gap: 4, alignItems: 'center', whiteSpace: 'nowrap' }}><input type="checkbox" style={{ width: 'auto' }} checked={!!l.optional}
+                onChange={(e) => setLine(i, 'optional', e.target.checked)} />If applicable (not in total)</label>
+              <input style={{ flex: 1, minWidth: 120, fontSize: 12, padding: '2px 6px' }} value={l.note ?? ''} placeholder="Note the customer sees, e.g. as per receipt"
+                onChange={(e) => setLine(i, 'note', e.target.value)} aria-label="Note for the customer" /></div>
+            {buyingView && l.internal_note && <details className="muted small" style={{ marginTop: 3 }}><summary>Staff note</summary><div style={{ whiteSpace: 'pre-wrap' }}>{l.internal_note}</div></details>}</td>
           {multi && <td><select value={l.route_id ?? ''} disabled={!!l.vendor_request_id && !!rates.find((x) => x.id === l.vendor_request_id)?.route_id} onChange={(e) => setLine(i, 'route_id', e.target.value)} aria-label="Option">
             <option value="">Option?</option>{routes.map((r: any) => <option key={r.id} value={r.id}>{routeLabel(r)}</option>)}</select></td>}
           <td><select value={l.charge_unit} onChange={(e) => setLine(i, 'charge_unit', e.target.value)}>
@@ -206,11 +217,12 @@ export function QuoteFields({ f, setF, fe = {}, minMargin, vendorRates = [], job
           {sellingView && <td className="num"><input style={{ width: 110, textAlign: 'right', background: l.margin_type ? 'var(--line-soft)' : undefined }}
             value={l.sell_rate ?? ''} readOnly={!!l.margin_type} title={l.margin_type ? 'Worked out from cost + margin' : ''}
             onChange={(e) => setLine(i, 'sell_rate', e.target.value)} inputMode="decimal" /></td>}
-          {sellingView && <td className="num">{fmtMoney((Math.round(Number(l.quantity || 0) * Math.round(Number(l.sell_rate || 0) * 100)) / 100).toFixed(2), '')}</td>}
+          {sellingView && <td className="num" style={l.optional ? { color: 'var(--muted, #6B7280)' } : undefined}>{fmtMoney((Math.round(Number(l.quantity || 0) * Math.round(Number(l.sell_rate || 0) * 100)) / 100).toFixed(2), '')}{l.optional && <div className="small">not in total</div>}</td>}
           <td><button className="btn small" type="button" disabled={lines.length === 1} onClick={() => setF({ ...f, lines: lines.filter((_, j) => j !== i) })}>✕</button></td>
         </tr>)}</tbody>
       </table></div>
-      <button className="btn small" type="button" style={{ marginTop: 8 }} onClick={() => setF({ ...f, lines: [...lines, emptyLine()] })}>+ Add charge</button>
+      <div style={{ display: 'flex', gap: 6, marginTop: 8, flexWrap: 'wrap' }}><button className="btn small" type="button" onClick={() => setF({ ...f, lines: [...lines, emptyLine()] })}>+ Add charge</button></div>
+      {buyingView && <div style={{ marginTop: 8 }}><LocalChargesBox f={f} setF={setF} routes={routes} cur={cur} /></div>}
       {canMargin && <p className="muted small" style={{ margin: '8px 0 0' }}>Margin %: the margin is that share of the selling price (cost 1,000 at 20% → selling 1,250). Margin {cur}: added to the cost per unit. The customer copy never shows cost or margin.</p>}
       <dl className="kv" style={{ marginTop: 12 }}>
         {buyingView && <><dt>Total cost</dt><dd>{fmtMoney(t.cost, cur)}</dd></>}

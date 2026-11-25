@@ -58,8 +58,8 @@ export async function enquiries(actor: Actor, p: Record<string, string>) {
       left join users sm on sm.id = f.salesman_id left join users co on co.id = f.coordinator_id
       left join lateral (
         select x.quote_no, x.currency, x.company_rate, x.status,
-          sum(l.quantity * l.sell_rate) filter (where l.route_id is null or x.selected_route_id is null or l.route_id = x.selected_route_id) sell,
-          sum(l.quantity * l.cost_rate) filter (where l.route_id is null or x.selected_route_id is null or l.route_id = x.selected_route_id) cost
+          sum(l.quantity * l.sell_rate) filter (where not l.optional and (l.route_id is null or x.selected_route_id is null or l.route_id = x.selected_route_id)) sell,
+          sum(l.quantity * l.cost_rate) filter (where not l.optional and (l.route_id is null or x.selected_route_id is null or l.route_id = x.selected_route_id)) cost
         from quotations x left join quotation_lines l on l.quotation_id = x.id
         where x.job_file_id = f.id and x.deleted_at is null
         group by x.id order by (x.status = 'accepted') desc, x.sent_at desc nulls last, x.created_at desc limit 1) qa on true

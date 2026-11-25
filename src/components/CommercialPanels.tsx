@@ -163,6 +163,13 @@ export function RatesAndQuotes({ d, reload }: { d: any; reload: () => void }) {
   const groups: any[][] = [];
   for (const r of rates) { const g = r.rate_group && groups.find((x) => x[0].rate_group === r.rate_group); if (g) g.push(r); else groups.push([r]); }
   const canAsk = d.can.ask_vendor && PRE_CONFIRM.includes(d.stage ?? 'enquiry');
+  // 25 Nov: offer any vendor's rate as its own option on the quotation (the label is what the customer sees)
+  const ownOption = async (r: any) => {
+    const label = prompt(`Offer ${r.vendor_name}'s rate as its own option.\nShort name the customer sees (never the vendor's name), e.g. "MSC direct, 14 days":`,
+      [r.carrier, r.routing, r.transit_days ? `${r.transit_days} days` : null].filter(Boolean).join(', '));
+    if (label === null) return;
+    try { await api(`/api/job-files/${d.id}`, { body: { action: 'route', step: 'own_option', request_id: r.id, label } }); reload(); } catch (e: any) { alert(e.message); }
+  };
   // Part G2: with several route options, rates are shown under their option (never compared across options)
   const routes: any[] = d.routes ?? [];
   const sections: [any | null, any[][]][] = routes.length > 1
@@ -194,7 +201,9 @@ export function RatesAndQuotes({ d, reload }: { d: any; reload: () => void }) {
               <td>{r.transit_days !== null && r.transit_days !== undefined ? `${r.transit_days} d` : '—'}</td><td>{r.free_days ?? '—'}</td>
               <td>{fmtDate(r.rate_etd)}</td><td className="small">{r.routing ?? '—'}</td><td>{fmtDate(r.rate_valid_until)}</td>
               <td className="small">{rateStatus(r.status)}</td>
-              {d.can.ask_vendor && <td style={{ textAlign: 'right' }}>{r.status !== 'cancelled' && <EmailButton kind="vendor_request" id={r.id} className="btn small" label="Email" />}</td>}</tr>)}</tbody></table></div>
+              {d.can.ask_vendor && <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>{r.status !== 'cancelled' && <EmailButton kind="vendor_request" id={r.id} className="btn small" label="Email" />}
+                {cost && canAsk && r.status === 'quoted' && (routes.length <= 1 || rates.some((x: any) => x.id !== r.id && x.route_id === r.route_id && x.status !== 'cancelled')) &&
+                  <button className="btn small" style={{ marginLeft: 4 }} title="Offer this rate to the customer as its own option, with its own total" onClick={() => ownOption(r)}>Own option</button>}</td>}</tr>)}</tbody></table></div>
         </div>)}</div>)}
         {others.length > 0 && <p className="small muted">Bookings and other requests: {others.map((r: any, i: number) => <span key={r.id}>{i ? ', ' : ''}<Link href={`/vendor-requests/${r.id}`}>{r.request_no}</Link> ({r.vendor_name}, {r.service})</span>)}</p>}
         {canAsk && <button className="btn small" onClick={() => setAsk({})}>Ask agents / carriers for a rate</button>}

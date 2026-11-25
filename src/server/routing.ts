@@ -85,6 +85,30 @@ export async function routeAction(actor: Actor, fileId: string, b: any) {
     if (!PRE_CONFIRM.includes(f.stage ?? '')) throw new ApiError(409, 'ROUTE_LOCKED', 'The customer has confirmed — the chosen route is locked');
     const step = String(b.step ?? '');
     if (step === 'add') { await addOption(c, actor, f, routeValues(b)); return; }
+    // 25 Nov: any vendor's rate offered to the customer as its own option (e.g. a second vendor's better offer)
+    if (step === 'own_option') {
+      if (!actor.fin.buyingView) throw forbidden();
+      if (!isUuid(b.request_id)) throw bad('Choose the rate');
+      const r = await one(`select * from vendor_requests where id = $1 and job_file_id = $2 and service = 'rate' for update`, [b.request_id, fileId], c);
+      if (!r || r.status !== 'quoted' || r.quoted_cost === null) throw bad('Only a quoted rate can be offered as its own option');
+      const used = await one(`select x.quote_no from quotation_lines l join quotations x on x.id = l.quotation_id
+          where l.vendor_request_id = $1 and x.deleted_at is null and x.status in ('draft', 'pending_approval', 'approved', 'sent') limit 1`, [r.id], c);
+      if (used) throw bad(`This rate is used on quotation ${used.quote_no} — take it off there first, then make it its own option`);
+      if (r.route_id) {
+        const others = await one(`select count(*)::int n from vendor_requests where route_id = $1 and id <> $2 and status <> 'cancelled'`, [r.route_id, r.id], c);
+        if (!others.n) throw bad('This rate is already the only one on its option');
+      }
+      const label = txt(b.label, 200) ?? ([r.carrier, r.routing, r.transit_days ? `${r.transit_days} days` : null].filter(Boolean).join(', ') || null);
+      const from = r.route_id ? await one('select * from enquiry_routes where id = $1', [r.route_id], c) : null;
+      const v: Record<string, unknown> = {};
+      for (const k of ROUTE_FIELDS) if (k !== 'label' && k !== 'notes' && from?.[k]) v[k] = from[k];
+      if (!from) Object.assign(v, { origin_city: f.origin ?? undefined, pol: f.port_of_loading ?? undefined, destination_city: f.destination ?? undefined, pod: f.port_of_discharge ?? undefined, mode: f.mode ?? undefined });
+      const nr = await addOption(c, actor, f, { ...v, label });            // the customer sees the label: never the vendor's name
+      await c.query('update vendor_requests set route_id = $2, rate_group = null, updated_at = now() where id = $1', [r.id, nr.id]);
+      await c.query(`insert into vendor_request_events (request_id, title, details, user_id, user_name) values ($1, $2, $3, $4, $5)`,
+        [r.id, `Offered to the customer as option ${nr.option_no}`, label, actor.id, actor.full_name]);
+      return;
+    }
     if (!isUuid(b.route_id)) throw bad('Choose the option');
     const r = await one('select * from enquiry_routes where id = $1 and job_file_id = $2 and removed_at is null for update', [b.route_id, fileId], c);
     if (!r) throw bad('Option not found');

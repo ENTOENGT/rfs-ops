@@ -1,10 +1,15 @@
-RFS CRM update — 24 Nov v3 (replaces rfs-crm-update-24nov-v2.zip; everything not uploaded yet, in ONE commit)
+RFS CRM update — 25 Nov v2 (replaces rfs-crm-update-25nov.zip; everything not uploaded yet, in ONE commit)
 
-NEW in this one: Outlook emails are now checked in the background every 2 minutes, even when nobody has
-RFS CRM open, and a newly connected inbox only looks back 1 day (it was 7), so it reaches today quickly.
-Also: when a vendor gives several options (e.g. MSC direct and CMA via Colombo), the AI keeps each one.
-You choose which one is saved on the rate request, and tick the others to offer on the quotation too.
-Also inside: the booking reader, Track buttons and reminders (042), and everything from 23 Nov.
+NEW in this one:
+ - Outlook button at the top, next to "+ New", with the number of emails waiting to be filed
+   (a "!" when Outlook is not connected or needs attention). Click it to open My Outlook.
+ - Local charges rate cards (Commercials → Templates → Local charges): our cost for clearance, transport and handling.
+   Your 6 cards are already loaded from the rate sheets (Jebel Ali, Khorfakkan, DNATA non-DG / DG, Emirates general / DG).
+ - On a quotation: "Local charges" works them out by itself (containers 20 / 40 ft, BLs, documents, weight, DG) and
+   shows what to check. Add them as separate lines, or inside the all-in price.
+ - "If applicable" lines: shown to the customer, not counted in the total. New units: per BL / AWB, per document.
+ - Vendor options: one "Offer" tick per option. And an "Own option" button on any vendor's quoted rate.
+Also inside: Outlook background check, vendor options, booking reader, Track, reminders, and everything from 23 Nov.
 
 STEP 1 — Supabase (SQL editor), run these one by one, in this order. Each is safe to run twice,
    so if you are not sure whether you ran one, just run it again.
@@ -12,6 +17,7 @@ STEP 1 — Supabase (SQL editor), run these one by one, in this order. Each is s
    db/migrations/041_quote_reply.sql
    db/migrations/042_booking_tracking.sql
    db/migrations/043_vendor_options.sql
+   db/migrations/044_local_charges.sql
    Check: each says "Success. No rows returned".
 
 STEP 2 — GitHub: upload all the folders and files in this zip (except this UPLOAD-STEPS.txt) to the
@@ -19,10 +25,10 @@ STEP 2 — GitHub: upload all the folders and files in this zip (except this UPL
 
 STEP 3 — Netlify builds by itself. Wait for "Published".
 
-STEP 4 — Check: on an enquiry, when a vendor's reply has two options, the purple "Rates from vendors' emails"
-   box shows "The vendor gave 2 options". Pick the one to save, tick "Also on the quotation" for the other,
-   press "Save rate + 1 option". The quotation then shows Option 1 and Option 2, each with its own total.
-
-STEP 5 — Background email check: in Netlify → your site → Logs → Functions, you will see "inbox-check" running
-   every 2 minutes. Nothing to set. Test: close RFS CRM, send the new user a test enquiry, wait 2–3 minutes,
-   then open RFS CRM — it should already be there.
+STEP 4 — Check:
+   - Commercials → Local charges: the 6 cards. Open one and check the amounts against your rate sheet.
+   - A sea FCL import enquiry to Jebel Ali → New quotation → the "Local charges" box shows the charges for its
+     containers. Press "Add to the quotation", put your margin, save. The PDF shows "Local charges" and
+     "If applicable (not included in the total)".
+   - Who can change the cards: Super Admin and the Commercials / Operations / Customer Service managers.
+     To let one more person change them: Users → that person → give "Manage local charges".

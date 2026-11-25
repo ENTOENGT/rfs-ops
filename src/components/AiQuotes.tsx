@@ -49,15 +49,18 @@ export function AiQuotes({ fileId, onSaved }: { fileId: string; onSaved: () => v
   const dismiss = async (s: any) => { try { await api(`/api/ai/quotes/${s.id}`, { body: { action: 'dismiss' } }); load(); } catch (e: any) { setErr(e.message); } };
   const opts = (s: any): any[] => s.rate?.options ?? [];
   const mainOf = (s: any) => (opts(s).length ? opts(s)[(pick[s.id] ?? { main: 0 }).main] : s.rate);
-  const choose = (s: any, i: number) => {
-    const o = opts(s)[i], p = pick[s.id] ?? { main: 0, extra: [] };
-    setPick({ ...pick, [s.id]: { main: i, extra: p.extra.filter((x) => x !== i) } });
-    const e: any = {};
-    for (const k of ['quoted_cost', 'currency', 'transit_days', 'free_days', 'etd', 'routing', 'carrier', 'rate_valid_until']) e[k] = o[k] ?? '';
-    setEdit({ ...edit, [s.id]: { ...(edit[s.id] ?? {}), ...e } });
+  // 25 Nov: one question — which options go to the customer? The first ticked one is saved on this request, the others become their own options
+  const tick = (s: any, i: number, on: boolean) => {
+    const p = pick[s.id] ?? { main: 0, extra: [] };
+    const list = [...new Set([p.main, ...p.extra].filter((x) => on || x !== i).concat(on ? [i] : []))].sort((a, b) => a - b);
+    if (!list.length) return;                                    // at least one option is kept
+    setPick({ ...pick, [s.id]: { main: list[0], extra: list.slice(1) } });
+    if (list[0] !== p.main) {                                    // the form shows the option saved on the request
+      const o = opts(s)[list[0]], e: any = {};
+      for (const k of ['quoted_cost', 'currency', 'transit_days', 'free_days', 'etd', 'routing', 'carrier', 'rate_valid_until']) e[k] = o[k] ?? '';
+      setEdit({ ...edit, [s.id]: { ...(edit[s.id] ?? {}), ...e } });
+    }
   };
-  const toggle = (s: any, i: number, on: boolean) => { const p = pick[s.id] ?? { main: 0, extra: [] };
-    setPick({ ...pick, [s.id]: { ...p, extra: on ? [...p.extra, i] : p.extra.filter((x) => x !== i) } }); };
   const field = (s: any, k: string, label: string, type = 'text', w = 1) => <label className="f" style={{ gridColumn: `span ${w}` }}><span>{label}</span>
     <input type={type} value={val(s, k) ?? ''} onChange={put(s, k)} /></label>;
   return (
@@ -74,16 +77,15 @@ export function AiQuotes({ fileId, onSaved }: { fileId: string; onSaved: () => v
             {s.request_status === 'quoted' && s.current_cost && <span className="muted"> (a rate is already in: {fmtMoney(s.current_cost, s.current_currency)} — saving makes this a new version)</span>}</p>
           {s.rate?.quote && <span className="ai-quote" style={{ marginBottom: 6 }}>“{s.rate.quote}”</span>}
           {opts(s).length > 0 && <div className="small" style={{ margin: '4px 0 8px' }}>
-            <b>The vendor gave {opts(s).length} options.</b> Choose the one to save on {s.request_no}, and tick any others you also want to offer on the quotation (each becomes its own option, with its own total).
+            <b>The vendor gave {opts(s).length} options. Which do you want to offer the customer?</b> Each ticked option is its own option on the quotation, with its own total.
             <div className="table-wrap"><table className="t compact" style={{ marginTop: 4 }}>
-              <thead><tr><th>Save on {s.request_no}</th><th>Also on the quotation</th><th>Option</th><th>Line / routing</th><th className="num">Transit</th><th className="num">Total</th></tr></thead>
-              <tbody>{opts(s).map((o: any, i: number) => <tr key={i}>
-                <td><input type="radio" style={{ width: 'auto' }} name={`main-${s.id}`} checked={p.main === i} onChange={() => choose(s, i)} aria-label={`Save ${o.label} on ${s.request_no}`} /></td>
-                <td>{p.main === i ? <span className="muted">—</span> : <input type="checkbox" style={{ width: 'auto' }} checked={p.extra.includes(i)} onChange={(e) => toggle(s, i, e.target.checked)} aria-label={`Also offer ${o.label}`} />}</td>
-                <td><b>{o.label}</b>{(o.pol || o.pod) && <div className="muted">{[o.pol, o.pod].filter(Boolean).join(' → ')}</div>}{o.note && <div style={{ color: '#B7791F' }}>{o.note}</div>}</td>
+              <thead><tr><th>Offer</th><th>Option</th><th>Line / routing</th><th className="num">Transit</th><th className="num">Total</th></tr></thead>
+              <tbody>{opts(s).map((o: any, i: number) => { const on = p.main === i || p.extra.includes(i); return <tr key={i}>
+                <td><input type="checkbox" style={{ width: 'auto' }} checked={on} onChange={(e) => tick(s, i, e.target.checked)} aria-label={`Offer ${o.label}`} /></td>
+                <td><b>{o.label}</b>{p.main === i && <span className="muted"> · saved on {s.request_no}</span>}{(o.pol || o.pod) && <div className="muted">{[o.pol, o.pod].filter(Boolean).join(' → ')}</div>}{o.note && <div style={{ color: '#B7791F' }}>{o.note}</div>}</td>
                 <td>{[o.carrier, o.routing].filter(Boolean).join(' · ') || '—'}</td><td className="num">{o.transit_days ? `${o.transit_days} days` : '—'}</td>
-                <td className="num">{fmtMoney(o.quoted_cost, o.currency)}</td></tr>)}</tbody></table></div>
-            {p.extra.length > 0 && <p className="muted" style={{ margin: '4px 0 0' }}>The enquiry will then have route options: every new rate request asks which option it is for, and the customer chooses one option when confirming.</p>}
+                <td className="num">{fmtMoney(o.quoted_cost, o.currency)}</td></tr>; })}</tbody></table></div>
+            {p.extra.length > 0 && <p className="muted" style={{ margin: '4px 0 0' }}>The enquiry will then have options: every new rate request asks which option it is for, and the customer chooses one when confirming.</p>}
           </div>}
           <div className="grid g4">
             {field(s, 'quoted_cost', 'Rate (total) *', 'number')}

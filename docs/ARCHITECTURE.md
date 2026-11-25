@@ -938,3 +938,17 @@ giving customers to other salesmen is for the Commercials Manager. Up to 1,000 r
   checked in the last 90 seconds (their app is open); `syncInbox` then the AI's quick look (4 emails). About 7 seconds per call,
   "more" → the function calls again (3 calls at most). The app's own check every minute while open stays.
 - A new connection looks back 1 day (was 7) and reads pages of 50 (was 25), up to 20 per check, so a busy inbox reaches today quickly.
+
+### 25 Nov — local charges rate cards, "if applicable" lines, per BL / document, any rate as its own option (migration 044)
+- `local_charge_cards` / `local_charge_lines` / `local_charge_history`: our COST for clearance, transport, handling; one card per
+  mode + import/export + port words + airline words + DG (no / yes / any). Lines per container (20 / 40 ft), BL, document, kg (minimum),
+  shipment or % of invoice value; tag always / as per receipt / if applicable; DG extra; "our selling charge" (RFS handling: cost 0).
+  Kept by Super Admin + commercials / operations / customer service managers + anyone given `local_charges.manage`; read by buying view.
+  Page /commercials/local-charges. Six cards seeded from the 24 Nov rate sheets (only when a card of that name is missing).
+- `localcharges.calcLocal`: picks the card (airline-specific beats general), counts containers from the first place that says it,
+  1 BL / 1 document by default, chargeable weight; unticks clearance / transport the enquiry does not need; lists what to check.
+- Quotation lines: `section` (freight / local), `optional` (if applicable: shown, never in totals or reports), `note` (customer sees),
+  `internal_note` (buying view only). Units `bl`, `document`. PDF / print / Excel / email: local charges heading, "If applicable" after the total.
+  Quotation form: `LocalChargesBox` adds lines (on every option), or puts them inside the all-in line (margin kept as an amount; breakup in the staff note).
+- `routeAction` step `own_option`: any quoted rate becomes its own option (label = what the customer sees); refused while it is on an open quotation.
+- AI rate box: one "Offer" tick per vendor option (first ticked is saved on the request, the others become options).

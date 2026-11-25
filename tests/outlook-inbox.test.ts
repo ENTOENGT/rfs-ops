@@ -159,3 +159,14 @@ test('background check (every 2 minutes): connected people the longest-waiting f
   await q(`update outlook_connections set last_sync_at = null, last_error = 'token expired' where user_id = $1`, [sales.id]);
   assert.ok(!(await runInboxChecks()).done.some((d: any) => d.user === sales.id));
 });
+
+test('the Outlook button at the top: the number of emails waiting to be filed (new enquiries among them)', async () => {
+  const { status } = await import('../src/server/outlook');
+  await q(`update outlook_connections set last_error = null where user_id = $1`, [sales.id]);
+  await q(`insert into outlook_inbox (user_id, ms_message_id, status, ai_kind) values ($1, 'w1', 'unmatched', 'new_enquiry'), ($1, 'w2', 'unmatched', null), ($1, 'w3', 'unmatched', 'other')`, [sales.id]);
+  const want = await one(`select count(*)::int n, count(*) filter (where ai_kind = 'new_enquiry')::int e from outlook_inbox
+    where user_id = $1 and status = 'unmatched' and ai_kind is distinct from 'other'`, [sales.id]);
+  const s: any = await status(sales);
+  assert.deepEqual([s.waiting, s.new_enquiries], [want.n, want.e]);
+  assert.ok(want.n > 0, 'the test has emails waiting');
+});

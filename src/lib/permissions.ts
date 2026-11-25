@@ -22,7 +22,7 @@ export type Perm =
   | 'commercial.manage' | 'jobfiles.view_assigned' | 'jobfiles.view_handed_over' | 'jobfiles.handover' | 'quotes.salesman_approve'
   | 'rates.agent_coordination' | 'customers.view_all'
   | 'lcl.view' | 'lcl.manage' | 'lcl.receive' | 'lcl.stuff'
-  | 'templates.manage' | 'emails.view';
+  | 'templates.manage' | 'emails.view' | 'local_charges.manage';
 
 export type Side = 'admin' | 'operations' | 'transport' | 'messenger' | 'finance' | 'pro' | 'warehouse';
 /** Sides that can never see selling price, revenue, profit or quotations (database rule user_has_perm). */

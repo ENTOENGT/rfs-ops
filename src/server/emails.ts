@@ -190,25 +190,33 @@ async function quotationDraft(actor: Actor, id: string, key?: string): Promise<D
     CustomerName: d.customer_name, CustomerReference: d.enquiry_reference, Origin: d.origin, Destination: d.destination,
     CargoDetails: d.cargo_description, ShipmentDetails: facts([['Route', [d.origin, d.destination].filter(Boolean).join(' to ')], ['Cargo', d.cargo_description]]) };
   // 23 Nov: one clean line per charge in the text; sent from Outlook, the charges become a table (see blocks)
-  const line = (l: any) => `• ${l.description} – ${money(l.sell_rate, cur)} ${l.unit_name}${Number(l.quantity) !== 1 ? ` × ${Number(l.quantity)} = ${money(l.sell_amount, cur)}` : ''}`;
+  const line = (l: any) => `• ${l.description}${l.note ? ` (${l.note})` : ''} – ${money(l.sell_rate, cur)} ${l.unit_name}${Number(l.quantity) !== 1 ? ` × ${Number(l.quantity)} = ${money(l.sell_amount, cur)}` : ''}`;
+  // migration 044: our local charges under their own heading; "if applicable" lines listed after, not in the total
+  const listOf = (ls: any[]) => { const main = ls.filter((l) => !l.optional), fr = main.filter((l) => l.section !== 'local'), lo = main.filter((l) => l.section === 'local');
+    return [...fr.map(line), ...(lo.length ? [...(fr.length ? ['Local charges:'] : []), ...lo.map(line)] : [])].join('\n'); };
+  const extraOf = (ls: any[]) => { const ex = ls.filter((l) => l.optional); return ex.length ? `If applicable (not included in the total):\n${ex.map(line).join('\n')}` : ''; };
   // Part G2: several route options → the charges are listed per option, each with its own total
   const opts: any[] = d.options ?? [];
   const { routeLabel } = await import('../lib/routingRules');
   const multi = opts.length > 1;
   const vals = { ...base,
     QuoteNumber: d.quote_no, QuoteVersion: String(d.version_no ?? 1),
-    Charges: multi ? opts.map((o) => `${routeLabel(o)}\n${d.lines.filter((l: any) => l.route_id === o.id).map(line).join('\n')}\nOption ${o.option_no} total: ${money(o.sell_total, cur)}`).join('\n\n')
-      : d.lines.map(line).join('\n'),
+    Charges: multi ? opts.map((o) => { const ls = d.lines.filter((l: any) => l.route_id === o.id); return [`${routeLabel(o)}\n${listOf(ls)}\nOption ${o.option_no} total: ${money(o.sell_total, cur)}`, extraOf(ls)].filter(Boolean).join('\n'); }).join('\n\n')
+      : [listOf(d.lines), extraOf(d.lines)].filter(Boolean).join('\n'),
     Total: multi ? opts.map((o) => `Option ${o.option_no} ${money(o.sell_total, cur)}`).join(' / ') : money(d.totals.sell_total, cur),
     RouteOptions: multi ? opts.map((o) => `${routeLabel(o)}: ${money(o.sell_total, cur)}`).join('\n') : '', ValidUntil: D(d.valid_until), Exclusions: d.exclusions ? `Not included: ${d.exclusions}` : '',
     Greeting: dear(recipients, `${d.customer_name} team`), Signature: await signature(actor) };
   const t = await fromTemplate(key!, f, vals);
   // the charges block (with its "Charges:" heading and the "Total:" line) → one neat table per option in the sent email
+  const row = (l: any, i: number) => `<tr style="background:${i % 2 ? '#f6f8fb' : '#ffffff'}">${[esc(l.description) + (l.note ? ` <span style="color:#6b7280">(${esc(l.note)})</span>` : ''), esc(l.unit_name), String(Number(l.quantity)), money(l.sell_rate, '').trim(), money(l.sell_amount, '').trim()]
+      .map((v, j) => `<td style="padding:6px 10px;border-bottom:1px solid #e2e8f0;text-align:${j > 1 ? 'right' : 'left'}">${v}</td>`).join('')}</tr>`;
+  const sub = (t: string) => `<tr><td colspan="5" style="padding:7px 10px;background:#eef2f7;font-weight:600;color:#1e3a5f">${esc(t)}</td></tr>`;
   const table = (ls: any[], totalLabel: string, total: unknown) => `<table cellpadding="0" cellspacing="0" style="border-collapse:collapse;margin:6px 0 12px;font-family:Arial,sans-serif;font-size:13px;min-width:520px">`
     + `<tr style="background:#1e3a5f;color:#fff">${['Description', 'Charged', 'Qty', `Rate (${cur})`, `Amount (${cur})`].map((h, i) => `<th style="padding:7px 10px;text-align:${i > 1 ? 'right' : 'left'};font-weight:600">${h}</th>`).join('')}</tr>`
-    + ls.map((l: any, i: number) => `<tr style="background:${i % 2 ? '#f6f8fb' : '#ffffff'}">${[esc(l.description), esc(l.unit_name), String(Number(l.quantity)), money(l.sell_rate, '').trim(), money(l.sell_amount, '').trim()]
-      .map((v, j) => `<td style="padding:6px 10px;border-bottom:1px solid #e2e8f0;text-align:${j > 1 ? 'right' : 'left'}">${v}</td>`).join('')}</tr>`).join('')
-    + `<tr><td colspan="4" style="padding:8px 10px;text-align:right;font-weight:700;color:#1e3a5f">${totalLabel}</td><td style="padding:8px 10px;text-align:right;font-weight:700;color:#1e3a5f;white-space:nowrap">${money(total, cur)}</td></tr></table>`;
+    + (() => { const main = ls.filter((l: any) => !l.optional), fr = main.filter((l: any) => l.section !== 'local'), lo = main.filter((l: any) => l.section === 'local');
+      return [...fr.map(row), ...(lo.length && fr.length ? [sub('Local charges')] : []), ...lo.map(row)].join(''); })()
+    + `<tr><td colspan="4" style="padding:8px 10px;text-align:right;font-weight:700;color:#1e3a5f">${totalLabel}</td><td style="padding:8px 10px;text-align:right;font-weight:700;color:#1e3a5f;white-space:nowrap">${money(total, cur)}</td></tr>`
+    + (ls.some((l: any) => l.optional) ? sub('If applicable (not included in the total)') + ls.filter((l: any) => l.optional).map(row).join('') : '') + `</table>`;
   const html = multi ? opts.map((o) => `<p style="margin:10px 0 2px;font-weight:600">${esc(routeLabel(o))}</p>${table(d.lines.filter((l: any) => l.route_id === o.id), `Option ${o.option_no} total (excluding VAT)`, o.sell_total)}`).join('')
     : table(d.lines, 'Total (excluding VAT)', d.totals.sell_total);
   const blocks = [{ text: `Charges:\n${vals.Charges}\nTotal: ${vals.Total} (excluding VAT)`, html }, { text: String(vals.Charges), html }];

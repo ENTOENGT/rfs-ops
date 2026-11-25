@@ -70,7 +70,10 @@ export async function setPilot(actor: Actor, userId: string, on: boolean) {
 
 export async function status(actor: Actor) {
   const c = await one('select ms_email, ms_name, connected_at, last_sync_at, last_error from outlook_connections where user_id = $1', [actor.id]);
-  return { configured: config().ready, pilot: await isPilot(actor.id), connected: !!c, ...(c ?? {}) };
+  // 25 Nov: the count on the Outlook button at the top — emails waiting to be filed (new enquiries among them)
+  const w = c ? await one(`select count(*)::int waiting, count(*) filter (where ai_kind = 'new_enquiry')::int new_enquiries
+      from outlook_inbox where user_id = $1 and status = 'unmatched' and ai_kind is distinct from 'other'`, [actor.id]) : null;
+  return { configured: config().ready, pilot: await isPilot(actor.id), connected: !!c, waiting: w?.waiting ?? 0, new_enquiries: w?.new_enquiries ?? 0, ...(c ?? {}) };
 }
 
 // ---------------------------------------------------------------- sign-in with Microsoft
