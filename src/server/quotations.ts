@@ -15,9 +15,11 @@
 import { Actor } from './auth';
 import { ApiError, bad, Db, forbidden, getSetting, notFound, one, q, tx } from './db';
 import { fromFils, toFils } from '../lib/finance';
-import { SERVICE_TYPES, DIRECTIONS, CHARGE_UNITS, Q_STATUSES, qStatusName, qStatusColor, label } from '../lib/jobfileRules';
+import { SERVICE_TYPES, DIRECTIONS, CHARGE_UNITS, Q_STATUSES, qStatusName, qStatusColor, label, detailText } from '../lib/jobfileRules';
 import { createJobFile } from './jobfiles';
 import { fxRate, isCurrency } from '../lib/currency';
+import { scopeConflicts } from '../lib/opsRules';
+import { answersFor } from './quoteanswers';
 
 const UUID = /^[0-9a-f-]{36}$/i;
 const isUuid = (v: unknown): v is string => typeof v === 'string' && UUID.test(v);
@@ -200,7 +202,7 @@ export async function listQuotations(actor: Actor, p: Record<string, string>) {
 export async function getQuotation(actor: Actor, id: string) {
   const x = await load(actor, id);
   const [extra, lines, events] = await Promise.all([
-    one(`select c.name customer_name, u.full_name created_by_name, a.full_name approved_by_name, dep.name department_name, f.job_no, f.enquiry_ref, f.shipping_ref, f.stage file_stage,
+    one(`select c.name customer_name, u.full_name created_by_name, a.full_name approved_by_name, dep.name department_name, f.job_no, f.enquiry_ref, f.shipping_ref, f.stage file_stage, f.incoterm file_incoterm, f.needs_clearance file_clearance, f.needs_transport file_transport,
        sm.full_name salesman_name, sd.full_name salesman_decided_by_name, tt.name terms_template_name
        from quotations x join customers c on c.id = x.customer_id join users u on u.id = x.created_by left join users a on a.id = x.approved_by
        left join departments dep on dep.id = x.department_id left join job_files f on f.id = x.job_file_id
@@ -224,7 +226,10 @@ export async function getQuotation(actor: Actor, id: string) {
   const responses = await q('select version_no, response, note, document_id, user_name, at from quotation_responses where quotation_id = $1 order by at desc, id desc', [id]);
   const pending = x.status === 'pending_approval';
   const salesmanTurn = pending && !!x.salesman_id && !x.salesman_decision;
-  return { ...v, events, versions, responses, min_margin_pct: minMargin, vendor_rates: vendorRates, rate_warnings: rateWarnings, routes, options,
+  const [details, answers] = await Promise.all([optionDetails(x, lines, routes), answersFor(id)]);
+  const scopeFlags = x.job_file_id ? scopeConflicts({ incoterm: extra.file_incoterm, direction: x.direction, needs_clearance: extra.file_clearance, needs_transport: extra.file_transport },
+    { freight: lines.some((l) => l.section !== 'local' && l.vendor_request_id) }) : [];
+  return { ...v, events, versions, responses, min_margin_pct: minMargin, vendor_rates: vendorRates, rate_warnings: rateWarnings, routes, options, details, details_saved: x.details ?? {}, scope_flags: scopeFlags, answers,
     approvals: { salesman: x.salesman_id ? (x.salesman_decision ?? (pending ? 'waiting' : null)) : null,
       manager: x.needs_manager ? (x.approved_by && pending ? 'approved' : pending ? 'waiting' : null) : null },
     can: { edit: editable, submit: x.status === 'draft' && actor.has('quotes.create'),
@@ -328,6 +333,50 @@ function parseLines(actor: Actor, raw: unknown, old: any[]) {
 
 // vendors whose rate is the freight itself (a transporter's or customs broker's rate may sit beside it in an option)
 const NOT_FREIGHT = ['customs_broker', 'transporter', 'warehouse'];
+
+/**
+ * 26 Nov (migration 046): the shipment details of each option for the customer — POL, POD, line / airline, transit, free days,
+ * ETD, ETA and validity. Taken from the option's freight vendor rate; what staff typed (quotations.details, by option id or
+ * 'main') wins. ETA = ETD + transit when not typed. `missing` names what is still empty so nobody sends it blind.
+ */
+const DETAIL_NAMES: Record<string, string> = { pol: 'POL', pod: 'POD', line: 'shipping line / airline', transit_days: 'transit time', free_days: 'free days',
+  etd: 'ETD', eta: 'ETA', valid_until: 'validity' };
+const FREIGHT_SERVICES = ['sea_fcl', 'sea_lcl', 'air', 'road', 'door_to_door'];
+export async function optionDetails(x: any, lines: any[], routes: any[], db?: Db) {
+  if (!FREIGHT_SERVICES.includes(x.service_type)) return [];
+  const used = routes.filter((r) => lines.some((l) => l.route_id === r.id));
+  const ids = [...new Set(lines.map((l) => l.vendor_request_id).filter(Boolean))];
+  const rates = ids.length ? await q(`select r.id, r.carrier, r.transit_days, r.free_days, r.etd, r.rate_valid_until, coalesce(v.vendor_type, '') = any($2) not_freight
+    from vendor_requests r left join vendors v on v.id = r.vendor_id where r.id = any($1)`, [ids, NOT_FREIGHT], db) : [];
+  const saved = x.details ?? {};
+  return (used.length ? used : [null]).map((r) => {
+    const key = r?.id ?? 'main';
+    const mine = lines.filter((l) => !r || l.route_id === r.id);
+    const fv = rates.find((v) => !v.not_freight && mine.some((l) => l.vendor_request_id === v.id));
+    const d: any = { pol: r ? (r.pol ?? r.origin_city) : x.origin, pod: r ? (r.pod ?? r.destination_city) : x.destination, line: fv?.carrier ?? null,
+      transit_days: fv?.transit_days ?? null, free_days: fv?.free_days ?? null, etd: fv?.etd ?? null, eta: null, valid_until: x.valid_until };
+    for (const [k, v] of Object.entries(saved[key] ?? {})) if (!blankish(v)) d[k] = v;
+    if (!d.eta && d.etd && d.transit_days !== null && DATE.test(String(d.etd))) {
+      const t = new Date(`${d.etd}T00:00:00Z`); t.setUTCDate(t.getUTCDate() + Number(d.transit_days)); d.eta = t.toISOString().slice(0, 10);
+    }
+    const need = Object.keys(DETAIL_NAMES).filter((k) => !(k === 'free_days' && !x.service_type.startsWith('sea')));
+    return { key, option_no: r?.option_no ?? null, ...d, missing: need.filter((k) => blankish(d[k])).map((k) => DETAIL_NAMES[k]) };
+  });
+}
+/** Staff's own values for those details: { [option id | 'main']: { pol, pod, line, transit_days, free_days, etd, eta, valid_until } } */
+function parseDetails(v: any) {
+  if (!v || typeof v !== 'object') throw bad('Shipment details: wrong format');
+  const out: Record<string, any> = {};
+  for (const [key, o] of Object.entries<any>(v)) {
+    if (key !== 'main' && !isUuid(key)) continue;
+    const d: any = {};
+    for (const k of ['pol', 'pod', 'line']) if (!blankish(o?.[k])) d[k] = txt(o[k], 120);
+    for (const k of ['transit_days', 'free_days']) if (!blankish(o?.[k])) { const n = Number(o[k]); if (!Number.isInteger(n) || n < 0 || n > 365) throw bad(`${DETAIL_NAMES[k]}: days from 0 to 365`); d[k] = n; }
+    for (const k of ['etd', 'eta', 'valid_until']) if (!blankish(o?.[k])) { if (!DATE.test(String(o[k]))) throw bad(`${DETAIL_NAMES[k]}: choose a date`); d[k] = o[k]; }
+    out[key] = d;
+  }
+  return out;
+}
 
 /**
  * 26 Nov — one option = ONE vendor's freight quote. When a quotation uses two vendors' freight rates under the same option
@@ -480,6 +529,7 @@ export async function updateQuotation(actor: Actor, id: string, b: any) {
       throw new ApiError(409, 'QUOTE_LOCKED', `This quotation is ${qStatusName(x.status).toLowerCase()}. Make a copy to change it.`);
     const sets: [string, unknown][] = [];
     for (const [k, parse] of Object.entries(HEAD)) if (b[k] !== undefined) sets.push([k, parse(b[k])]);
+    if (b.details !== undefined) sets.push(['details', JSON.stringify(parseDetails(b.details))]);
     const old = await q('select * from quotation_lines where quotation_id = $1 order by sort_order', [id], c);
     const lines = parseLines(actor, b.lines, old);
     if (lines) { if (x.job_file_id) await splitVendors(c, actor, x.job_file_id, lines, x.id); await validateVendorLines(c, x.job_file_id, lines); if (!x.job_file_id) for (const l of lines) l.route_id = null; }
@@ -781,11 +831,12 @@ export async function customerCopy(actor: Actor, id: string, how: 'print' | 'exc
   const [extra, lines] = await Promise.all([
     one(`select c.name customer_name, c.address customer_address, c.trn customer_trn, c.contact_person customer_contact, u.full_name prepared_by, u.email prepared_by_email
        from quotations x join customers c on c.id = x.customer_id join users u on u.id = x.created_by where x.id = $1`, [id]),
-    q('select description, charge_unit, quantity, sell_rate, route_id, section, optional, note from quotation_lines where quotation_id = $1 order by sort_order', [id]),
+    q('select description, charge_unit, quantity, sell_rate, route_id, section, optional, note, vendor_request_id from quotation_lines where quotation_id = $1 order by sort_order', [id]),
   ]);
   // Part G2: one section per route option (with its own total)
   const routes = x.job_file_id ? await q('select id, option_no, origin_city, pol, destination_city, pod, label from enquiry_routes where job_file_id = $1 order by option_no', [x.job_file_id]) : [];
   const used = routes.filter((r) => lines.some((l) => l.route_id === r.id));
+  const details = (await optionDetails(x, lines, routes)).map(({ key, missing, ...d }) => d);   // no vendor, no notes
   const company: Record<string, string> = {};
   for (const k of ['company_name', 'company_address', 'company_phone', 'company_email', 'company_trn', 'quote_vat_note'])
     company[k] = String(await getSetting(k, ''));
@@ -799,10 +850,11 @@ export async function customerCopy(actor: Actor, id: string, how: 'print' | 'exc
     origin: x.origin, destination: x.destination, cargo_description: x.cargo_description, packages: x.packages,
     gross_weight_kg: x.gross_weight_kg, volume_cbm: x.volume_cbm, chargeable_weight_kg: x.chargeable_weight_kg,
     lines: lines.map((l, i) => cline(l, t.each[i].sell)),
-    total: t.sell_total, scope: x.scope, exclusions: x.exclusions, terms: x.terms, additional_remarks: x.additional_remarks, payment_terms: x.payment_terms,
+    total: t.sell_total, details: used.length > 1 ? null : details[0] ?? null, scope: x.scope, exclusions: x.exclusions, terms: x.terms, additional_remarks: x.additional_remarks, payment_terms: x.payment_terms,
     options: used.length > 1 ? used.map((r) => {
       const mine = lines.map((l, i) => ({ l, i })).filter(({ l }) => l.route_id === r.id);
       return { option_no: r.option_no, pol: r.pol ?? r.origin_city, pod: r.pod ?? r.destination_city, label: r.label ?? null, selected: x.selected_route_id === r.id,
+        details: details.find((d) => d.option_no === r.option_no) ?? null,
         lines: mine.map(({ l, i }) => cline(l, t.each[i].sell)),
         total: quoteTotals(mine.map(({ l }) => ({ ...l, cost_rate: '0' }))).sell_total };
     }) : null,
@@ -833,8 +885,9 @@ export async function customerExcel(actor: Actor, id: string) {
     d.volume_cbm && `${Number(d.volume_cbm)} CBM`, d.chargeable_weight_kg && `chargeable ${Number(d.chargeable_weight_kg)} kg`].filter(Boolean).join(', '));
   add([]);
   // Part G2: one block per route option, each with its own total
-  for (const o of d.options ?? [{ option_no: null, pol: null, pod: null, label: null as string | null, lines: d.lines, total: d.total }]) {
+  for (const o of d.options ?? [{ option_no: null, pol: null, pod: null, label: null as string | null, lines: d.lines, total: d.total, details: d.details }]) {
     if (o.option_no) add([`Option ${o.option_no}: ${[o.pol, o.pod].filter(Boolean).join(' → ')}${o.label ? ` — ${o.label}` : ''}`], bold);
+    if (detailText(o.details)) add([detailText(o.details)], { italic: true });
     const head = add(['Description', 'Charged', 'Qty', `Rate (${d.currency})`, `Amount (${d.currency})`], bold);
     head.eachCell((c) => { c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF3E7C7' } }; c.border = { bottom: { style: 'thin' } }; });
     // migration 044: local charges under their own heading; "if applicable" after the total, not counted

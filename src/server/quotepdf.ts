@@ -8,6 +8,7 @@ import { PDFDocument, PDFFont, PDFPage, StandardFonts, rgb } from 'pdf-lib';
 import { Actor } from './auth';
 import { customerCopy } from './quotations';
 import { LOGO_PNG_B64, LOGO_SIZE } from './brandLogo';
+import { detailText } from '../lib/jobfileRules';
 
 const NAVY = rgb(0.118, 0.227, 0.373), GREY = rgb(0.38, 0.42, 0.47), LINE = rgb(0.85, 0.87, 0.9), HEAD = rgb(0.95, 0.96, 0.98), BLACK = rgb(0.1, 0.1, 0.12);
 const W = 595.28, H = 841.89, M = 42;
@@ -85,7 +86,7 @@ export async function quotationPdf(actor: Actor, id: string): Promise<{ bytes: U
   // ---- charges: one table per route option, each with its total
   const cols = [{ k: 'description', w: W - 2 * M - 300, a: 'l', t: 'Description' }, { k: 'unit_name', w: 90, a: 'l', t: 'Charged' }, { k: 'quantity', w: 40, a: 'r', t: 'Qty' },
     { k: 'rate', w: 80, a: 'r', t: `Rate (${d.currency})` }, { k: 'amount', w: 90, a: 'r', t: `Amount (${d.currency})` }];
-  const tables = d.options ?? [{ option_no: null, lines: d.lines, total: d.total }];
+  const tables = d.options ?? [{ option_no: null, lines: d.lines, total: d.total, details: d.details }];
   // migration 044: our local charges under their own heading; "if applicable" lines after the total, not counted in it
   const withNote = (l: any) => (l.note ? `${l.description} (${l.note})` : l.description);
   const rows = (ls: any[]) => {
@@ -107,6 +108,7 @@ export async function quotationPdf(actor: Actor, id: string): Promise<{ bytes: U
   let headRow = () => {};
   for (const o of tables) {
     if (o.option_no) { room(40); text(`Option ${o.option_no}: ${[o.pol, o.pod].filter(Boolean).join(' to ')}${o.label ? ` — ${o.label}` : ''}${o.selected ? ' (chosen)' : ''}`, M, 10.5, bold, NAVY); y -= 16; }
+    if (o.details) { const dt = detailText(o.details); if (dt) { para(dt, M, W - 2 * M, 9, font, GREY); y -= 4; } }
     headRow = () => { room(22); page.drawRectangle({ x: M, y: y - 6, width: W - 2 * M, height: 20, color: NAVY });
       let x = M + 6; for (const col of cols) { const s2 = col.t; page.drawText(s2, { x: col.a === 'r' ? x + col.w - 12 - bold.widthOfTextAtSize(s2, 8.5) : x, y: y, size: 8.5, font: bold, color: rgb(1, 1, 1) }); x += col.w; } y -= 22; };
     headRow();

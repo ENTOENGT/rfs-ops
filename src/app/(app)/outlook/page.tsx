@@ -43,6 +43,7 @@ export default function MyOutlook() {
             <a className="btn primary" href="/api/outlook/connect">Connect my Outlook</a>
           </>}
       </div>}
+      {s?.connected && <Signature />}
       {s?.connected && !s.last_error && <Inbox />}
     </div>
   );
@@ -104,6 +105,45 @@ function Inbox() {
               <button className={`btn small${m.ai_kind === 'new_enquiry' ? '' : ' primary'}`} disabled={!refs[m.id]?.trim()} onClick={() => act(m.id, { action: 'file', ref: refs[m.id] }, 'Filed on the shipment.')}>File</button></div>
               <button className="linkish small" style={{ marginTop: 6 }} onClick={() => act(m.id, { action: 'ignore' }, 'Hidden: not for a shipment.')}>Not for a shipment</button></td>
           </tr>)}</tbody></table></div>}
+    </div>
+  );
+}
+
+/** 26 Nov: my email signature (a JPG / PNG picture): added once under every email I send from RFS CRM. */
+function Signature() {
+  const [d, setD] = useState<any>(null);
+  const [pending, setPending] = useState<{ url: string; width: number; height: number } | null>(null);
+  const [note, setNote] = useState<{ t: 'ok' | 'err'; m: string } | null>(null);
+  useEffect(() => { api('/api/outlook/signature').then(setD).catch(() => setD({ signature: null })); }, []);
+  const pick = (f?: File) => {
+    setNote(null);
+    if (!f) return;
+    if (!['image/png', 'image/jpeg'].includes(f.type)) return setNote({ t: 'err', m: 'Choose a JPG or PNG picture' });
+    if (f.size > 400_000) return setNote({ t: 'err', m: 'The picture is too big — up to 400 KB' });
+    const r = new FileReader();
+    r.onload = () => { const img = new Image(); img.onload = () => setPending({ url: String(r.result), width: img.naturalWidth, height: img.naturalHeight }); img.src = String(r.result); };
+    r.readAsDataURL(f);
+  };
+  const save = async (b: any, ok: string) => {
+    try { setD(await api('/api/outlook/signature', { body: b })); setPending(null); setNote({ t: 'ok', m: ok }); } catch (e: any) { setNote({ t: 'err', m: e.message }); }
+  };
+  if (!d) return null;
+  const show = pending ?? d.signature;
+  return (
+    <div className="panel">
+      <h2 style={{ marginTop: 0 }}>My email signature</h2>
+      <p className="muted small" style={{ marginTop: 0 }}>A picture of your company signature (JPG or PNG, up to 400 KB). It is added once under every email you send from RFS CRM — to customers and to vendors — at its own size (wider than 600 px is shown at 600 px).</p>
+      {note && <div className={`msg ${note.t}`}>{note.m}</div>}
+      {show ? <div style={{ border: '1px solid var(--line)', borderRadius: 10, padding: 12, background: '#fff', display: 'inline-block', maxWidth: '100%' }}>
+        <img src={show.url} alt="Signature preview" style={{ width: Math.min(show.width, 600), maxWidth: '100%', height: 'auto', display: 'block' }} />
+        <div className="muted small" style={{ marginTop: 6 }}>{pending ? 'Preview — not saved yet' : 'Saved'} · {show.width} × {show.height} px</div></div>
+        : <p className="muted">No signature yet.</p>}
+      <div style={{ display: 'flex', gap: 8, marginTop: 10, flexWrap: 'wrap', alignItems: 'center' }}>
+        <label className="btn"><input type="file" accept="image/png,image/jpeg" style={{ display: 'none' }} onChange={(e) => pick(e.target.files?.[0])} />{d.signature || pending ? 'Choose another picture' : 'Upload signature'}</label>
+        {pending && <button className="btn primary" onClick={() => save({ data_url: pending.url, width: pending.width, height: pending.height }, 'Signature saved — it is added to your emails from now on.')}>Save signature</button>}
+        {pending && <button className="btn" onClick={() => setPending(null)}>Cancel</button>}
+        {d.signature && !pending && <button className="btn danger" onClick={() => { if (confirm('Remove your signature from your emails?')) save({ remove: true }, 'Signature removed.'); }}>Remove</button>}
+      </div>
     </div>
   );
 }

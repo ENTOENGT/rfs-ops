@@ -16,4 +16,4 @@ export async function middleware(req: NextRequest) {
   return NextResponse.next();
 }
 // /join = the one-time app link (no sign-in yet); manifest and app icons are needed before sign-in to install the app.
-export const config = { matcher: ['/((?!api|login|join|_next|favicon.ico|brand/|icon|apple-icon|app-icon|manifest.webmanifest).*)'] };
+export const config = { matcher: ['/((?!api|login|join|answer|_next|favicon.ico|brand/|icon|apple-icon|app-icon|manifest.webmanifest).*)'] };

@@ -125,3 +125,21 @@ export function notNeeded(label: string, f: Record<string, any>): string | null 
   if (/ready/i.test(label) && f.cargo_ready_confirmed) return 'Cargo ready for collection';
   return null;
 }
+
+/**
+ * 26 Nov: what the file asks us to do that the Incoterm says is the other party's job (shown on the quotation and the local
+ * charges). Only flags; nothing is changed. `quoted` = services the quotation charges for.
+ */
+export function scopeConflicts(x: { incoterm?: string | null; direction?: string | null; needs_clearance?: boolean | null; needs_transport?: boolean | null },
+  quoted: Partial<Record<Svc, boolean>> = {}): string[] {
+  const t = String(x.incoterm ?? '').toUpperCase();
+  const scope = customerScope(t, x.direction);
+  if (!scope || (x.direction !== 'import' && x.direction !== 'export')) return [];
+  const imp = x.direction === 'import';
+  const other = imp ? 'seller' : 'buyer';
+  const want: Partial<Record<Svc, boolean>> = { ...quoted };
+  if (x.needs_clearance) want[imp ? 'import_clearance' : 'export_clearance'] = true;
+  if (x.needs_transport) want[imp ? 'delivery' : 'origin_pickup'] = true;
+  return (Object.keys(want) as Svc[]).filter((s) => want[s] && !scope.has(s))
+    .map((s) => `${SVC_LABEL[s].charAt(0).toUpperCase()}${SVC_LABEL[s].slice(1)} is in the scope, but under ${t} ${imp ? 'import' : 'export'} it is the ${other}'s side — confirm who pays it.`);
+}

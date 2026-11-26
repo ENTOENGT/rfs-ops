@@ -44,7 +44,7 @@ export default function NewJobFile() {
       const r = fromEmail && aiState === 'done'
         ? await api(`/api/outlook/inbox/${fromEmail}/enquiry`, { body: { enquiry: { ...payload, new_customer: undefined }, new_customer: f.customer_id ? null : (f.new_customer ?? nc) } })
         : await api('/api/job-files', { body: payload });
-      router.push(`/job-files/${r.id}`);
+      router.push(`/job-files/${r.id}${r.ack ? `?ack=${r.ack.sent ? "sent" : "failed"}` : ""}`);
     } catch (e: any) {
       setBusy(false);
       setErr({ m: e.message, id: e.code === 'JOB_FILE_EXISTS' ? e.details?.id : undefined });

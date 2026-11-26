@@ -15,6 +15,8 @@ import { createFromEmail, draftEnquiry, screenInbox } from '../src/server/newenq
 
 let admin: Actor, sam: Actor, cora: Actor, desert: string;
 const ai: { tool: string; user: string }[] = [];
+const sends: any[] = [];
+let failSend = false;
 const mail = (id: string, from: string, name: string, subject: string, preview: string, to = 'samsales@x.ae', cc = 'coracoord@x.ae') => ({
   id, subject, isDraft: false, from: { emailAddress: { address: from, name } }, toRecipients: [{ emailAddress: { address: to } }], ccRecipients: cc ? [{ emailAddress: { address: cc } }] : [],
   receivedDateTime: '2026-11-20T06:00:00Z', internetMessageId: `<${id}@mail>`, conversationId: `conv-${id}`, bodyPreview: preview, hasAttachments: false, webLink: `https://outlook/${id}` });
@@ -50,6 +52,7 @@ before(async () => {
     if (u.includes('/messages/delta')) return json({ value: inbox[tok], '@odata.deltaLink': 'https://graph.microsoft.com/v1.0/me/mailFolders/inbox/messages/delta?$deltatoken=Z' });
     if (u.includes('/me/messages/e1?')) return json({ body: { content: BODY } });
     if (u.includes('/me/messages/e4?')) return json({ body: { content: 'Hi, new shipment: 5 pallets of tiles from Chennai to Jebel Ali, CIF, 4,000 kg. Omar' } });
+    if (u.endsWith('/me/sendMail')) { if (failSend) return new Response('{"error":{"message":"Mailbox busy"}}', { status: 503 }); sends.push(JSON.parse(init.body).message); return new Response(null, { status: 202 }); }
     return new Response('{}', { status: 404 });
   }) as typeof fetch);
   setAiNetwork((async (_url: any, init: any) => {
@@ -141,4 +144,56 @@ test('a known customer\'s new enquiry: their customer and main Salesman, no new 
 test('someone else cannot use another person\'s inbox email', async () => {
   const otto = await mkUser(admin, 'Otto Sales', 'sales', undefined, { coordinator_id: cora.id });
   await assert.rejects(draftEnquiry(otto, (await rowOf(sam, 'e1')).id), (e: any) => e.code === 'NOT_FOUND');
+});
+
+
+test('26 Nov: saving an enquiry made from an email sends "Enquiry received" once, from the person\'s Outlook, with their signature', async () => {
+  const f: any = await one(`select id, enquiry_ref, ack_sent_at from job_files where enquiry_ref is not null and id in (select job_file_id from email_messages where message_id = '<e1@mail>')`);
+  assert.ok(f.ack_sent_at, 'sent when saved');
+  const ack = sends.find((m) => m.subject === `Enquiry Received – ${f.enquiry_ref}`);
+  assert.ok(ack, JSON.stringify(sends.map((m) => m.subject)));
+  assert.deepEqual(ack.toRecipients.map((r: any) => r.emailAddress.address), ['buyer@newco-trading.com']);
+  assert.match(ack.body.content, /Dear Hans Becker,[\s\S]*coordinating with our agents and carriers/);
+  assert.ok(await one(`select 1 from email_messages where job_file_id = $1 and template_key = 'enquiry_ack' and status = 'sent'`, [f.id]));
+  const { sendAck } = await import('../src/server/newenquiry');
+  const n = sends.length;
+  assert.deepEqual(await sendAck(sam, f.id), { sent: true, already: true });
+  assert.equal(sends.length, n, 'never twice');
+  // the signature picture: added once, inside the email
+  const png = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
+  await assert.rejects(ol.saveSignature(sam, { data_url: 'data:image/png;base64,aGVsbG8=', width: 1, height: 1 }), /not a JPG or PNG/);
+  await ol.saveSignature(sam, { data_url: png, width: 240, height: 80 });
+  await ol.sendMail(sam.id, { to: ['buyer@newco-trading.com'], subject: 'Test', body: 'Hello' });
+  const last = sends.at(-1);
+  assert.equal(last.body.contentType, 'HTML');
+  assert.equal((last.body.content.match(/cid:rfs-signature/g) ?? []).length, 1);
+  assert.deepEqual(last.attachments.map((a: any) => [a.isInline, a.contentId, a.contentType]), [[true, 'rfs-signature', 'image/png']]);
+  await ol.saveSignature(sam, { remove: true });
+});
+
+test('26 Nov: a failed acknowledgement is kept with the reason and can be retried; a failed vendor email shows "Failed"', async () => {
+  const { sendAck } = await import('../src/server/newenquiry');
+  const f: any = await one(`select id from job_files where id in (select job_file_id from email_messages where message_id = '<e1@mail>')`);
+  await q('update job_files set ack_sent_at = null where id = $1', [f.id]);
+  failSend = true;
+  const r: any = await sendAck(sam, f.id);
+  assert.equal(r.sent, false);
+  assert.match((await one('select ack_error from job_files where id = $1', [f.id])).ack_error, /Mailbox busy|503|Outlook/i);
+  failSend = false;
+  assert.equal(((await sendAck(sam, f.id)) as any).sent, true);
+  assert.equal((await one('select ack_error from job_files where id = $1', [f.id])).ack_error, null);
+  // a vendor email that fails: "Failed" against that vendor (not "Sent")
+  const v = (await createMaster(admin, 'vendors', { name: 'Line One', vendor_type: 'shipping_line', email: 'rates@line1.com' })).id;
+  const { createVendorRequest } = await import('../src/server/vendorreqs');
+  const vr = await createVendorRequest(sam, { vendor_id: v, service: 'rate', job_file_id: f.id, description: '2x40HC' });
+  const { emailSend } = await import('../src/server/emails');
+  failSend = true;
+  await assert.rejects(emailSend(sam, { kind: 'vendor_request', id: vr.id, to: ['rates@line1.com'] }));
+  failSend = false;
+  let rows = (await getJobFile(sam, f.id) as any).vendor_requests;
+  assert.equal(rows.find((r: any) => r.id === vr.id).email_status, 'failed');
+  await emailSend(sam, { kind: 'vendor_request', id: vr.id, to: ['rates@line1.com'] });
+  rows = (await getJobFile(sam, f.id) as any).vendor_requests;
+  const x = rows.find((r: any) => r.id === vr.id);
+  assert.deepEqual([x.email_status, x.email_to], ['sent', 'rates@line1.com']);
 });

@@ -192,7 +192,7 @@ export function RatesAndQuotes({ d, reload }: { d: any; reload: () => void }) {
             {d.can.ask_vendor && <SendAllRates requests={g} onDone={reload} />}
             {canAsk && <button className="linkish" onClick={() => setAsk({ sameAs: { id: g[0].id, asked: g.filter((r) => r.status !== 'cancelled').map((r) => r.vendor_id) } })}>+ Ask more</button>}</div>
           <div className="table-wrap"><table className="t"><thead><tr><th>Request</th><th>Agent / carrier</th><th>Source</th>{cost && <th className="num">Rate</th>}
-            <th>Transit</th><th>Free days</th><th>ETD</th><th>Routing</th><th>Valid until</th><th>Status</th>{d.can.ask_vendor && <th />}</tr></thead>
+            <th>Transit</th><th>Free days</th><th>ETD</th><th>Routing</th><th>Valid until</th><th>Status</th><th>Email to vendor</th>{d.can.ask_vendor && <th />}</tr></thead>
             <tbody>{g.map((r) => <tr key={r.id} className={r.lowest ? 'is-lowest' : ''}>
               <td><Link href={`/vendor-requests/${r.id}`}>{r.request_no}</Link>{r.rate_version > 1 && <div className="muted small">version {r.rate_version}</div>}</td>
               <td>{r.vendor_name}{r.carrier && <div className="muted small">{r.carrier}</div>}{r.lowest && <span className="lowest">Lowest</span>}</td>
@@ -201,6 +201,7 @@ export function RatesAndQuotes({ d, reload }: { d: any; reload: () => void }) {
               <td>{r.transit_days !== null && r.transit_days !== undefined ? `${r.transit_days} d` : '—'}</td><td>{r.free_days ?? '—'}</td>
               <td>{fmtDate(r.rate_etd)}</td><td className="small">{r.routing ?? '—'}</td><td>{fmtDate(r.rate_valid_until)}</td>
               <td className="small">{rateStatus(r.status)}</td>
+              <td className="small"><VendorEmailStatus r={r} /></td>
               {d.can.ask_vendor && <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>{r.status !== 'cancelled' && <EmailButton kind="vendor_request" id={r.id} className="btn small" label="Email" />}
                 {cost && canAsk && r.status === 'quoted' && (routes.length <= 1 || rates.some((x: any) => x.id !== r.id && x.route_id === r.route_id && x.status !== 'cancelled')) &&
                   <button className="btn small" style={{ marginLeft: 4 }} title="Offer this rate to the customer as its own option, with its own total" onClick={() => ownOption(r)}>Own option</button>}</td>}</tr>)}</tbody></table></div>
@@ -386,4 +387,14 @@ export function LclPanel({ d }: { d: any }) {
           <dt>Departure / arrival</dt><dd>{fmtDate(l.atd ?? l.etd)} → {fmtDate(l.ata ?? l.eta)}</dd></dl>}
     </div>
   );
+}
+
+/** 26 Nov: has the vendor been emailed? The last email to them: Sent (when, to whom), Failed, Opened in email program, or Not sent. */
+function VendorEmailStatus({ r }: { r: any }) {
+  const st = r.email_status;
+  const [txt, color, icon] = st === 'sent' ? ['Sent', '#2F855A', '✓'] : st === 'failed' ? ['Failed', '#C53030', '!'] : st === 'prepared' ? ['Opened in email program', '#B7791F', '…'] : ['Not sent', '#6B7280', '–'];
+  return <span title={r.email_to ? `To ${r.email_to}` : undefined} style={{ display: 'inline-flex', flexDirection: 'column', gap: 1 }}>
+    <span style={{ color, fontWeight: 600, whiteSpace: 'nowrap' }}>{icon} {txt}</span>
+    {st && <span className="muted" style={{ whiteSpace: 'nowrap' }}>{fmtDateTime(r.email_at)}</span>}
+    {st && r.email_to && <span className="muted" style={{ maxWidth: 180, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.email_to}</span>}</span>;
 }

@@ -8,7 +8,7 @@ import { ApiError, q, one } from './db';
  * short-lived copies of the server, so a counter in memory would not be shared.
  */
 export const RATE_LIMIT = { max: 20, minutes: 15 };
-export type AttemptKind = 'login' | 'app_link';
+export type AttemptKind = 'login' | 'app_link' | 'quote_answer';
 
 /** The caller's address as Netlify reports it; never stored, only its hash. */
 export function clientAddress(req: Request): string {

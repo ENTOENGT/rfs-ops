@@ -964,3 +964,12 @@ giving customers to other salesmen is for the Commercials Manager. Up to 1,000 r
 - Customer's answer box: shown as handled at once, saved behind it, put back on failure.
 - Top bar: icons never shrink; badges grow away from their icon. New enquiry form: no Parties (taken at BL level).
 - Emirates air import card renamed "Non-DG" (was "general"); DG answers say "Non-DG (the customer said general cargo)".
+
+### 26 Nov — commit 2 of 3: emails and quotations (migration 046)
+- **Vendor email status**: a failed send is kept (`email_messages.status = 'failed'`); the rates table shows Sent ✓ / Failed ! / Opened in email program / Not sent per vendor.
+- **Email signature**: each user uploads a PNG/JPEG on the Outlook page (`user_signatures`); `outlook.sendMail` adds it inline (cid `rfs-signature`).
+- **Enquiry received**: only when a user creates an enquiry from a received email and presses Save (`newenquiry.sendAck`), once per enquiry (`job_files.ack_sent_at`); a failure shows a Retry banner (`ack_error`).
+- **Option details**: `quotations.optionDetails` — POL, POD, line, transit, free days, ETD, ETA (ETD + transit), validity per option, from the option's freight vendor rate; typed values in `quotations.details` (by option id or `main`) win. Shown on the PDF, print, Excel and email (`lib/jobfileRules.detailText`); gaps flagged on the quotation and in the email warning.
+- **Incoterm check**: `lib/opsRules.scopeConflicts` flags services in the scope that are the other party's side (quotation page, local charges).
+- **Default terms**: already in Settings → Quote terms (no change).
+- **Customer answer buttons**: `quoteanswers.ts` — one random link per option and version (`quote_answers`), public page `/answer/[token]` (no sign-in, rate-limited as `quote_answer`), answered once; Reject needs a reason, Negotiate a target rate. Audit, quotation event, team notification; shown on the quotation with "Handled". Nothing is applied by itself.

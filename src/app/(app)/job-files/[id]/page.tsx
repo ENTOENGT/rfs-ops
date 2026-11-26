@@ -83,6 +83,17 @@ export default function JobFile({ params }: { params: { id: string } }) {
     return () => { window.removeEventListener('resize', fit); document.removeEventListener('mousedown', close); };
   }, []);
   useEffect(() => { const h = window.location.hash.slice(1); if (h) setTabSel(h); }, []);
+  // 26 Nov: the automatic "Enquiry received" email after saving from an email — a short note, once
+  useEffect(() => {
+    const a = new URLSearchParams(window.location.search).get('ack');
+    if (a === 'sent') { setOk('Enquiry saved. Acknowledgement sent to the customer.'); setTimeout(() => setOk((o) => (o.startsWith('Enquiry saved') ? '' : o)), 6000); }
+    if (a) try { window.history.replaceState(null, '', window.location.pathname + window.location.hash); } catch { /* ignore */ }
+  }, []);
+  const retryAck = async () => {
+    setErr(''); setOk('');
+    try { const r = await api(`/api/job-files/${params.id}/ack`, { body: {} }); if (r.sent) setOk('Acknowledgement sent to the customer.'); else setErr(`Acknowledgement not sent: ${r.error}`); load(); }
+    catch (e: any) { setErr(e.message); }
+  };
   const pickTab = (k: string) => { setTabSel(k); try { window.history.replaceState(null, '', `#${k}`); } catch { /* ignore */ } };
   const load = () => api(`/api/job-files/${params.id}`).then(setD).catch((e) => setErr(e.message));
   useEffect(() => { load(); }, [params.id]);
@@ -160,7 +171,9 @@ export default function JobFile({ params }: { params: { id: string } }) {
           const reason = prompt('Cancel this Job File? Give a reason:'); if (reason) act({ action: 'status', status: 'cancelled', reason }, 'Cancelled'); }}>Cancel</button>}
       </div>
       {err && <div className="msg err">{err}</div>}
-      {ok && <div className="msg ok">{ok}</div>}
+      {ok && <div className="msg ok" role="status">{ok}</div>}
+      {d.ack_error && !d.ack_sent_at && d.status === 'enquiry' && <div className="msg warn">The automatic "Enquiry received" email was not sent: {d.ack_error}{' '}
+        <button className="btn small" onClick={retryAck}>Retry</button></div>}
       {d.status === 'cancelled' && <div className="msg warn">Cancelled: {d.cancel_reason}</div>}
       {d.service_instructions && <div className="msg">Customer's standing instructions: {d.service_instructions}</div>}
 

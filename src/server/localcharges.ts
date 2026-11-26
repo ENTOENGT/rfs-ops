@@ -14,6 +14,7 @@
 import { Actor } from './auth';
 import { audit, bad, forbidden, notFound, one, q, tx } from './db';
 import { fxRate } from '../lib/currency';
+import { scopeConflicts } from '../lib/opsRules';
 
 const isUuid = (v: unknown): v is string => typeof v === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v);
 const txt = (v: unknown, max: number) => { const s = String(v ?? '').trim(); return s ? s.slice(0, max) : null; };
@@ -188,6 +189,7 @@ export async function calcLocal(actor: Actor, b: CalcIn) {
   const needC = guess.needs_clearance ?? null, needT = guess.needs_transport ?? null;
   if (f && needC === null) missing.push('Customs clearance: not sure the customer needs it (Incoterm / their request) — check; the clearance charges are added.');
   if (f && needT === null) missing.push('Delivery: not sure the customer needs transport — check; the transport charges are added.');
+  if (f) missing.push(...scopeConflicts(f));
   if (card.dg !== 'any' && p.dg === null) missing.push(`DG not known — the ${card.dg === 'yes' ? 'DG' : 'non-DG'} card is used. Ask the customer.`);
   if (p.mode === 'air' && !p.carrier) missing.push('Airline not known — the card for "any other airline" is used. Emirates shipments have their own card.');
 

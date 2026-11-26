@@ -487,7 +487,11 @@ export async function getJobFile(actor: Actor, id: string) {
   const { markLowest } = await import('./vendorreqs');
   const vendorRequests = seeVendors ? markLowest(await q(`select r.id, r.request_no, r.service, r.status, r.description, r.quoted_cost, r.currency, r.rate_valid_until,
       r.vendor_reference, r.rate_group, r.vendor_id, r.rate_source, r.transit_days, r.free_days, r.routing, r.carrier, r.etd rate_etd, r.rate_version,
-      r.assigned_to, r.received_at, r.route_id, v.name vendor_name from vendor_requests r join vendors v on v.id = r.vendor_id where r.job_file_id = $1
+      r.assigned_to, r.received_at, r.route_id, v.name vendor_name, le.status email_status, le.sent_at email_at, le.to_addrs email_to
+      from vendor_requests r join vendors v on v.id = r.vendor_id
+      left join lateral (select status, coalesce(sent_at, created_at) sent_at, to_addrs from email_messages where vendor_request_id = r.id and direction = 'out'
+        order by coalesce(sent_at, created_at) desc limit 1) le on true
+      where r.job_file_id = $1
       order by coalesce(r.rate_group, r.id), r.quoted_cost nulls last, r.created_at`, [id]), (r) => r.service === 'rate' ? `route:${r.route_id ?? ''}` : r.rate_group)
       .map((r) => (actor.fin.buyingView ? r : { ...r, quoted_cost: undefined, lowest: undefined })) : null;
   // migration 039: cost viewers get each rate's charge lines (New quotation → split-ups) and the AI's pick

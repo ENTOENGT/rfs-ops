@@ -1,6 +1,7 @@
 'use client';
 import Link from 'next/link';
 import { AiQuoteReply } from '@/components/AiQuoteReply';
+import { QuoteAnswers, QuoteDetails } from '@/components/QuoteDetails';
 import { routeLabel } from '@/lib/routingRules';
 import { useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
@@ -121,6 +122,7 @@ export default function Quotation({ params }: { params: { id: string } }) {
       {d.job_file_id && <div className="msg ok">Shipment: <Link href={`/job-files/${d.job_file_id}`}><b>{d.job_no ?? d.shipping_ref ?? d.enquiry_ref}</b></Link>
         {d.enquiry_ref && <span className="muted small"> · Enquiry Ref {d.enquiry_ref}{d.shipping_ref && ` · Shipping Ref ${d.shipping_ref}`}{d.job_no && ` · Job No. ${d.job_no}`}</span>}</div>}
       {sellingView && d.job_file_id && ['sent', 'approved', 'accepted', 'rejected'].includes(d.status) && <AiQuoteReply quotationId={d.id} onChanged={load} />}
+      <QuoteAnswers d={d} onSaved={(r) => { setD(r); setOk('Marked handled'); }} />
       {confirmOpen && <ConfirmModal d={d} onClose={() => setConfirmOpen(false)} act={act} />}
       {d.rate_warnings?.length > 0 && <div className="msg warn"><b>Another vendor gave a lower price for the same request.</b>
         <ul style={{ margin: '4px 0 0', paddingLeft: 18 }}>{d.rate_warnings.map((w: string) => <li key={w}>{w}</li>)}</ul></div>}
@@ -171,6 +173,7 @@ export default function Quotation({ params }: { params: { id: string } }) {
                 {d.totals.margin_pct !== null && Number(d.totals.margin_pct) < d.min_margin_pct && <span className="flag" style={{ marginLeft: 8 }}>Below {d.min_margin_pct}%</span>}</dd></>}
             </dl>
           </div>
+          <QuoteDetails d={d} onSaved={(r) => { setD(r); setOk('Details saved'); }} />
           <div className="panel"><h2>Terms</h2>{d.terms_template_name && <p className="muted small" style={{ marginTop: 0 }}>From template "{d.terms_template_name}"{d.terms_edited ? ', changed for this quotation' : ''}</p>}
             <dl className="kv">{kv('Scope', d.scope)}{kv('Exclusions', d.exclusions)}{kv('Terms', d.terms)}{kv('Payment / commercial', d.payment_terms)}{kv('Additional remarks', d.additional_remarks)}</dl></div>
         </div>

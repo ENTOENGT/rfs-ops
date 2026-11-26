@@ -125,7 +125,7 @@ test('4. Email templates: placeholders checked, Enquiry Ref kept in the subject,
   assert.equal(d.subject, `[${enq}] Shipment Enquiry – Shanghai to Jebel Ali`);
   assert.deepEqual([d.template?.source, d.template?.key], ['saved', 'quotation_submission']);
   assert.match(d.body, /for Desert Retail: AED 1,200\.00/);
-  assert.deepEqual(d.missing, ['VesselName'], 'the vessel is not known yet');
+  assert.deepEqual(d.missing, ['VesselName', 'shipping line / airline, transit time, free days, ETD, ETA'], 'the vessel and the rate details are not known yet');
   assert.ok(d.body.includes('[VesselName]'));
   // the agent rate request uses the built-in text, without the customer name
   const r = (await one('select id from vendor_requests where vendor_id = $1', [agentV])).id;

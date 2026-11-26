@@ -369,5 +369,41 @@ export async function createFromEmail(actor: Actor, id: string, b: any) {
     await c.query(`update outlook_inbox set status = 'filed', job_file_id = $2, matched_by = 'new enquiry', handled_by = $3, handled_at = now()
       where id = $1 or ($4::text is not null and internet_message_id = $4 and status <> 'filed')`, [m.id, jf.id, actor.id, m.internet_message_id]);
     return { id: jf.id, enquiry_ref: jf.enquiry_ref, customer_created: created };
-  });
+  }).then(async (r) => ({ ...r, ack: await sendAck(actor, r.id).catch((err: any) => ({ sent: false, error: String(err?.message ?? err) })) }));
+}
+
+/**
+ * 26 Nov — "Enquiry received": sent by itself, once, from the person's own Outlook, to the address the enquiry email came from,
+ * when they save a new enquiry made from that email (only then — never for other enquiries). Their signature picture is added
+ * by sendMail. Kept on the enquiry's Emails tab and history. If sending fails, the enquiry says so and offers Retry.
+ */
+export async function sendAck(actor: Actor, fileId: string) {
+  if (!isUuid(fileId)) throw notFound('Job File');
+  const f = await one(`select f.id, f.enquiry_ref, f.ack_sent_at, f.status, c.name customer_name from job_files f left join customers c on c.id = f.customer_id where f.id = $1`, [fileId]);
+  if (!f) throw notFound('Job File');
+  const { canEdit, loadFile, event } = await import('./jobfiles');
+  if (!canEdit(actor, await loadFile(actor, fileId))) throw forbidden();
+  if (f.ack_sent_at) return { sent: true, already: true };
+  // the enquiry email it was made from (filed on it when saved)
+  const src = await one(`select from_addr, from_name from email_messages where job_file_id = $1 and direction = 'in' and from_addr is not null order by coalesce(sent_at, created_at) limit 1`, [fileId]);
+  if (!src) return { sent: false, error: 'No customer email on this enquiry' };
+  const name = String(src.from_name ?? '').trim() || f.customer_name || 'Sir / Madam';
+  const subject = `Enquiry Received – ${f.enquiry_ref}`;
+  const text = `Dear ${name},\n\nThank you for your enquiry.\n\nWe have received your request and are currently coordinating with our agents and carriers to obtain the best possible rates.\n\nWe will share our quotation with you at the earliest.\n\nThank you for considering us.\n\nBest Regards,\n${actor.full_name}`;
+  try {
+    const { sendMail } = await import('./outlook');
+    const sent = await sendMail(actor.id, { to: [src.from_addr], subject, body: text });
+    await tx(async (c) => {
+      const won = await c.query('update job_files set ack_sent_at = now(), ack_error = null where id = $1 and ack_sent_at is null', [fileId]);
+      if (!won.rowCount) return;                                          // sent at the same moment by a second click: kept once
+      await c.query(`insert into email_messages (job_file_id, direction, status, template_key, from_addr, from_name, to_addrs, subject, sent_at, body_excerpt, source, created_by, created_by_name)
+        values ($1, 'out', 'sent', 'enquiry_ack', $2, $3, $4, $5, now(), $6, 'button', $7, $3)`, [fileId, sent.from, actor.full_name, sent.to.join(', '), subject, text.slice(0, 2000), actor.id]);
+      await event(c, actor, fileId, { kind: 'note', title: 'Acknowledgement sent to the customer (automatic)', new_value: `To ${sent.to.join(', ')} — "${subject}"` });
+    });
+    return { sent: true, to: src.from_addr };
+  } catch (e: any) {
+    const msg = String(e?.message ?? e).slice(0, 300);
+    await q('update job_files set ack_error = $2 where id = $1 and ack_sent_at is null', [fileId, msg]);
+    return { sent: false, error: msg };
+  }
 }

@@ -69,3 +69,13 @@ export function milestonePlan(direction: string, mode: string, needs: { clearanc
   if (direction === 'import') out.push(finalStep);
   return out;
 }
+
+/** 26 Nov: one line of an option's shipment details for the customer (PDF, print, Excel, email). Empty values are left out. */
+export function detailText(d: any): string {
+  if (!d) return '';
+  const day = (s: string) => (/^\d{4}-\d{2}-\d{2}$/.test(String(s)) ? new Date(`${s}T00:00:00Z`).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' }) : s);
+  const has = (v: unknown) => v !== null && v !== undefined && String(v).trim() !== '';
+  return ([['POL', d.pol], ['POD', d.pod], ['Line', d.line], ['Transit', has(d.transit_days) ? `${d.transit_days} days` : null],
+    ['Free days', d.free_days], ['ETD', has(d.etd) ? day(d.etd) : null], ['ETA', has(d.eta) ? day(d.eta) : null], ['Valid until', has(d.valid_until) ? day(d.valid_until) : null]] as [string, unknown][])
+    .filter(([, v]) => has(v)).map(([k, v]) => `${k}: ${v}`).join(' · ');
+}

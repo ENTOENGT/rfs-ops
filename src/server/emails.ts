@@ -19,7 +19,7 @@ import { getQuotation } from './quotations';
 import { getJobFile, loadFile, event, canEdit } from './jobfiles';
 import { getCase } from './cases';
 import { fileStore } from './storage';
-import { label, MODES, DIRECTIONS } from '../lib/jobfileRules';
+import { label, MODES, DIRECTIONS, detailText } from '../lib/jobfileRules';
 import { EMAIL_TEMPLATES, fillTemplate } from '../lib/templateRules';
 import { pickEmailTemplate } from './templates';
 
@@ -199,10 +199,19 @@ async function quotationDraft(actor: Actor, id: string, key?: string): Promise<D
   const opts: any[] = d.options ?? [];
   const { routeLabel } = await import('../lib/routingRules');
   const multi = opts.length > 1;
+  // 26 Nov: each option's POL, POD, line, transit, free days, ETD, ETA and validity under its heading
+  const det = (o?: any) => detailText(multi ? d.details.find((x: any) => x.key === o.id) : d.details[0]);
+  // 26 Nov: Accept / Reject / Negotiate for each option — a link the customer opens without signing in
+  const { answerLinks } = await import('./quoteanswers');
+  const links = await answerLinks(d.id, d.version_no ?? 1, multi ? opts.map((o) => o.id) : [null]);
+  const linkOf = (o?: any) => links[multi ? o.id : 'main'];
+  const answerText = (o?: any) => `To accept, reject or negotiate${multi ? ` option ${o.option_no}` : ''}: ${linkOf(o)}`;
+  const answerHtml = (o?: any) => `<p style="margin:2px 0 14px">${([['accepted', 'Accept', '#22543d'], ['rejected', 'Reject', '#9b2c2c'], ['negotiate', 'Negotiate', '#1e3a5f']] as const)
+    .map(([k, t, bg]) => `<a href="${esc(`${linkOf(o)}?a=${k}`)}" style="display:inline-block;padding:7px 16px;margin-right:8px;background:${bg};color:#ffffff;text-decoration:none;border-radius:4px;font-family:Arial,sans-serif;font-size:13px;font-weight:600">${t}${multi ? ` option ${o.option_no}` : ''}</a>`).join('')}</p>`;
   const vals = { ...base,
     QuoteNumber: d.quote_no, QuoteVersion: String(d.version_no ?? 1),
-    Charges: multi ? opts.map((o) => { const ls = d.lines.filter((l: any) => l.route_id === o.id); return [`${routeLabel(o)}\n${listOf(ls)}\nOption ${o.option_no} total: ${money(o.sell_total, cur)}`, extraOf(ls)].filter(Boolean).join('\n'); }).join('\n\n')
-      : [listOf(d.lines), extraOf(d.lines)].filter(Boolean).join('\n'),
+    Charges: multi ? opts.map((o) => { const ls = d.lines.filter((l: any) => l.route_id === o.id); return [`${routeLabel(o)}${det(o) ? `\n${det(o)}` : ''}\n${listOf(ls)}\nOption ${o.option_no} total: ${money(o.sell_total, cur)}`, extraOf(ls), answerText(o)].filter(Boolean).join('\n'); }).join('\n\n')
+      : [det(), listOf(d.lines), extraOf(d.lines), answerText()].filter(Boolean).join('\n'),
     Total: multi ? opts.map((o) => `Option ${o.option_no} ${money(o.sell_total, cur)}`).join(' / ') : money(d.totals.sell_total, cur),
     RouteOptions: multi ? opts.map((o) => `${routeLabel(o)}: ${money(o.sell_total, cur)}`).join('\n') : '', ValidUntil: D(d.valid_until), Exclusions: d.exclusions ? `Not included: ${d.exclusions}` : '',
     Greeting: dear(recipients, `${d.customer_name} team`), Signature: await signature(actor) };
@@ -217,8 +226,11 @@ async function quotationDraft(actor: Actor, id: string, key?: string): Promise<D
       return [...fr.map(row), ...(lo.length && fr.length ? [sub('Local charges')] : []), ...lo.map(row)].join(''); })()
     + `<tr><td colspan="4" style="padding:8px 10px;text-align:right;font-weight:700;color:#1e3a5f">${totalLabel}</td><td style="padding:8px 10px;text-align:right;font-weight:700;color:#1e3a5f;white-space:nowrap">${money(total, cur)}</td></tr>`
     + (ls.some((l: any) => l.optional) ? sub('If applicable (not included in the total)') + ls.filter((l: any) => l.optional).map(row).join('') : '') + `</table>`;
-  const html = multi ? opts.map((o) => `<p style="margin:10px 0 2px;font-weight:600">${esc(routeLabel(o))}</p>${table(d.lines.filter((l: any) => l.route_id === o.id), `Option ${o.option_no} total (excluding VAT)`, o.sell_total)}`).join('')
-    : table(d.lines, 'Total (excluding VAT)', d.totals.sell_total);
+  const detHtml = (t: string) => (t ? `<p style="margin:2px 0 4px;color:#4b5563;font-size:12px">${esc(t)}</p>` : '');
+  const html = multi ? opts.map((o) => `<p style="margin:10px 0 2px;font-weight:600">${esc(routeLabel(o))}</p>${detHtml(det(o))}${table(d.lines.filter((l: any) => l.route_id === o.id), `Option ${o.option_no} total (excluding VAT)`, o.sell_total)}${answerHtml(o)}`).join('')
+    : detHtml(det()) + table(d.lines, 'Total (excluding VAT)', d.totals.sell_total) + answerHtml();
+  const gaps = d.details.filter((x: any) => x.missing.length).map((x: any) => `${x.option_no && multi ? `Option ${x.option_no}: ` : ''}${x.missing.join(', ')}`);
+  t.missing = [...(t.missing ?? []), ...gaps];
   const blocks = [{ text: `Charges:\n${vals.Charges}\nTotal: ${vals.Total} (excluding VAT)`, html }, { text: String(vals.Charges), html }];
   return { kind: 'quotation', id, recipients, ...t, options, update: key, blocks, attach: { name: `Quotation ${d.quote_no}.pdf` },
     note: recipients.length ? undefined : 'This customer has no email saved — add one under Customers → contacts.' };
@@ -399,8 +411,16 @@ export async function emailSend(actor: Actor, b: any) {
   const attachments = draft.attach && b.attach_pdf !== false && b.kind === 'quotation'
     ? await (async () => { const { quotationPdf } = await import('./quotepdf'); const p = await quotationPdf(actor, b.id);
       return [{ name: p.filename, contentType: 'application/pdf', contentBytes: Buffer.from(p.bytes).toString('base64') }]; })() : [];
-  const sent = await sendMail(actor.id, { to: Array.isArray(b.to) ? b.to : [], cc: Array.isArray(b.cc) ? b.cc : [],
-    subject: String(b.subject ?? draft.subject), body: text, html: draft.blocks ? toHtml(text, draft.blocks) : undefined, attachments });
+  let sent: Awaited<ReturnType<typeof sendMail>>;
+  try {
+    sent = await sendMail(actor.id, { to: Array.isArray(b.to) ? b.to : [], cc: Array.isArray(b.cc) ? b.cc : [],
+      subject: String(b.subject ?? draft.subject), body: text, html: draft.blocks ? toHtml(text, draft.blocks) : undefined, attachments });
+  } catch (e: any) {
+    // 26 Nov: a failed send is kept too, so the rates table shows "Failed" (not "Sent", not "Not sent")
+    const to = (Array.isArray(b.to) ? b.to : []).map(String), cc = (Array.isArray(b.cc) ? b.cc : []).map(String);
+    await recordEmail(actor, { ...b, body: `Not sent: ${String(e?.message ?? e).slice(0, 300)}` }, draft, to, cc, String(b.subject ?? draft.subject).slice(0, 300), null, 'failed').catch(() => {});
+    throw e;
+  }
   await recordEmail(actor, { ...b, body: text, attached: attachments.map((a) => a.name) }, draft, sent.to, sent.cc, sent.subject, sent.from);
   // 23 Nov: an approved quotation emailed from Outlook is sent — marked so (no extra click); the AI then watches for the answer
   if (b.kind === 'quotation' && (await one('select status from quotations where id = $1', [b.id]))?.status === 'approved') {
@@ -411,10 +431,10 @@ export async function emailSend(actor: Actor, b: any) {
 }
 
 /** One email in the record's own history and on the shipment's Emails tab. `sentFrom` = sent from Outlook; null = only prepared. */
-async function recordEmail(actor: Actor, b: any, draft: Draft, to: string[], cc: string[], subject: string, sentFrom: string | null) {
+async function recordEmail(actor: Actor, b: any, draft: Draft, to: string[], cc: string[], subject: string, sentFrom: string | null, failed?: 'failed') {
   const sent = sentFrom !== null;
   const detail = `To ${to.join(', ') || '(typed in email program)'}${cc.length ? ` · CC ${cc.join(', ')}` : ''} — "${subject}"${sent ? ' — sent from Outlook' : ''}${b.attached?.length ? ` — attached: ${b.attached.join(', ')}` : ''}`;
-  const t = (prepared: string, done: string) => sent ? done : prepared;
+  const t = (prepared: string, done: string) => failed ? `${done.replace('sent', 'NOT sent')} — sending failed` : sent ? done : prepared;
   await tx(async (c) => {
     let fileId: string | null = null, vr: string | null = null, qid: string | null = null;
     if (b.kind === 'vendor_request' || b.kind === 'vendor_missing') {
@@ -446,7 +466,7 @@ async function recordEmail(actor: Actor, b: any, draft: Draft, to: string[], cc:
       await c.query(`insert into email_messages (job_file_id, direction, status, template_key, vendor_request_id, quotation_id, from_addr, from_name, to_addrs, subject,
           sent_at, body_excerpt, source, created_by, created_by_name, cc_addrs) values ($1,'out',$12,$2,$3,$4,$5,$6,$7,$8, now(), $9, 'button', $10, $11, $13)`,
         [fileId, draft.template?.key ?? null, vr, qid, sentFrom || me?.email || null, actor.full_name, to.join(', ') || null, subject,
-          String(b.body ?? draft.body).slice(0, 2000), actor.id, actor.full_name, sent ? 'sent' : 'prepared', cc.join(', ') || null]);
+          String(b.body ?? draft.body).slice(0, 2000), actor.id, actor.full_name, failed ?? (sent ? 'sent' : 'prepared'), cc.join(', ') || null]);
       // migration 033: addresses typed in by hand stay on this shipment's later customer emails
       if (['job_file', 'enquiry_missing', 'quotation'].includes(b.kind))
         await (await import('./emailpeople')).rememberTyped(c, actor, fileId, draft.recipients, to, cc);

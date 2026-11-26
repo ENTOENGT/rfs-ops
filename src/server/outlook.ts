@@ -189,13 +189,49 @@ export async function sendMail(userId: string, m: { to: string[]; cc?: string[];
   const subject = String(m.subject ?? '').trim().slice(0, 300);
   if (!subject) throw new ApiError(400, 'VALIDATION', 'The email needs a subject');
   const addr = (a: string) => ({ emailAddress: { address: a } });
+  // 26 Nov: the sender's signature picture goes under every email, once (as a picture inside the email, not a file)
+  const sig = await one('select mime, data, width, height from user_signatures where user_id = $1', [userId]);
+  let html = m.html;
+  const files: any[] = (m.attachments ?? []).map((a) => ({ '@odata.type': '#microsoft.graph.fileAttachment', name: a.name, contentType: a.contentType, contentBytes: a.contentBytes }));
+  if (sig && !(html ?? '').includes('cid:rfs-signature')) {
+    if (!html) { const { toHtml } = await import('./emails'); html = toHtml(String(m.body ?? '')); }
+    const w = Math.min(sig.width, 600), h = Math.round(sig.height * (w / sig.width));
+    html += `<p style="margin:16px 0 0"><img src="cid:rfs-signature" width="${w}" height="${h}" alt="Signature" style="display:block;border:0"></p>`;
+    files.push({ '@odata.type': '#microsoft.graph.fileAttachment', name: `signature.${sig.mime === 'image/png' ? 'png' : 'jpg'}`, contentType: sig.mime,
+      contentBytes: Buffer.from(sig.data).toString('base64'), isInline: true, contentId: 'rfs-signature' });
+  }
   await graph(userId, '/me/sendMail', { method: 'POST', body: JSON.stringify({
-    message: { subject, body: m.html ? { contentType: 'HTML', content: m.html.slice(0, 300_000) } : { contentType: 'Text', content: String(m.body ?? '').slice(0, 100_000) },
+    message: { subject, body: html ? { contentType: 'HTML', content: html.slice(0, 300_000) } : { contentType: 'Text', content: String(m.body ?? '').slice(0, 100_000) },
       toRecipients: to.map(addr), ccRecipients: cc.map(addr),
       // 23 Nov: files sent with it (the quotation PDF) — Outlook takes up to 3 MB this way
-      ...(m.attachments?.length ? { attachments: m.attachments.map((a) => ({ '@odata.type': '#microsoft.graph.fileAttachment', name: a.name, contentType: a.contentType, contentBytes: a.contentBytes })) } : {}) },
+      ...(files.length ? { attachments: files } : {}) },
     saveToSentItems: true,
   }) });
   const from = await one('select ms_email from outlook_connections where user_id = $1', [userId]);
   return { to, cc, subject, from: from?.ms_email as string | null };
+}
+
+// ------------------------------------------------------------ 26 Nov: the user's own signature picture
+const SIG_MAX = 400_000;
+/** The signature picture as a data URL for the preview (or null). */
+export async function mySignature(actor: Actor) {
+  const r = await one('select mime, data, width, height, updated_at from user_signatures where user_id = $1', [actor.id]);
+  return { signature: r ? { url: `data:${r.mime};base64,${Buffer.from(r.data).toString('base64')}`, width: r.width, height: r.height, updated_at: r.updated_at } : null };
+}
+/** { data_url: 'data:image/png;base64,…', width, height } — PNG or JPEG, up to 400 KB; { remove: true } takes it off. */
+export async function saveSignature(actor: Actor, b: any) {
+  if (b?.remove) { await q('delete from user_signatures where user_id = $1', [actor.id]); return mySignature(actor); }
+  const m = String(b?.data_url ?? '').match(/^data:(image\/(?:png|jpeg|jpg));base64,([A-Za-z0-9+/=]+)$/);
+  if (!m) throw new ApiError(400, 'VALIDATION', 'Choose a JPG or PNG picture');
+  const bytes = Buffer.from(m[2], 'base64');
+  if (bytes.length > SIG_MAX) throw new ApiError(400, 'VALIDATION', 'The picture is too big — up to 400 KB');
+  // the file must really be a PNG / JPEG (its first bytes), whatever its name says
+  const png = bytes.subarray(0, 4).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47])), jpg = bytes[0] === 0xff && bytes[1] === 0xd8;
+  if (!png && !jpg) throw new ApiError(400, 'VALIDATION', 'This is not a JPG or PNG picture');
+  const w = Math.round(Number(b.width)), h = Math.round(Number(b.height));
+  if (!(w >= 1 && w <= 2000 && h >= 1 && h <= 2000)) throw new ApiError(400, 'VALIDATION', 'The picture size could not be read');
+  await q(`insert into user_signatures (user_id, mime, data, width, height) values ($1, $2, $3, $4, $5)
+    on conflict (user_id) do update set mime = excluded.mime, data = excluded.data, width = excluded.width, height = excluded.height, updated_at = now()`,
+    [actor.id, png ? 'image/png' : 'image/jpeg', bytes, w, h]);
+  return mySignature(actor);
 }

@@ -100,7 +100,7 @@ test('5–9. One quotation with three options; default terms; email keeps the En
   assert.deepEqual(copy.options!.map((o: any) => [o.option_no, o.pol, o.lines.length, o.total]), [[1, 'CNSHA', 1, '3300.00'], [2, 'CNNGB', 2, '3200.00'], [3, 'CNSZX', 1, '3100.00']]);
   const mail = await em.emailDraft(coord, { kind: 'quotation', id: quoteId });
   assert.ok(mail.subject.startsWith(`[${enq}]`));
-  assert.match(mail.body, /Option 2 · CNNGB → AEJEA\n• Ocean freight – AED 1,350\.00 per container × 2 = AED 2,700\.00\n• DO and terminal handling – AED 500\.00 per shipment\nOption 2 total: AED 3,200\.00/);
+  assert.match(mail.body, /Option 2 · CNNGB → AEJEA\nPOL: CNNGB · POD: AEJEA · Transit: 18 days · Valid until: [^\n]+\n• Ocean freight – AED 1,350\.00 per container × 2 = AED 2,700\.00\n• DO and terminal handling – AED 500\.00 per shipment\nOption 2 total: AED 3,200\.00/);
   assert.ok(!/1,100|1,400|cost/i.test(mail.body));
   await qt.quotationAction(coord, quoteId, { action: 'send' });
 });

@@ -2,6 +2,7 @@
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { api, fmtDate, fmtMoney } from '@/components/api';
+import { detailText } from '@/lib/jobfileRules';
 
 /**
  * The customer copy of a quotation: selling rates and total only. The server sends nothing else for this view
@@ -48,8 +49,9 @@ export default function QuotePrint({ params }: { params: { id: string } }) {
           {cargo && <><dt>Cargo</dt><dd>{cargo}</dd></>}
         </dl>
         {/* Part G2: one table per route option, each with its own total; the customer picks one */}
-        {(d.options ?? [{ option_no: null, lines: d.lines, total: d.total }]).map((o: any) => <div key={o.option_no ?? 'all'} style={{ marginBottom: 14 }}>
+        {(d.options ?? [{ option_no: null, lines: d.lines, total: d.total, details: d.details }]).map((o: any) => <div key={o.option_no ?? 'all'} style={{ marginBottom: 14 }}>
           {o.option_no && <h3 style={{ margin: '10px 0 4px', fontSize: 14 }}>Option {o.option_no}: {[o.pol, o.pod].filter(Boolean).join(' → ')}{o.label ? ` — ${o.label}` : ''}{o.selected ? ' (chosen)' : ''}</h3>}
+          {detailText(o.details) && <p className="qp-note" style={{ margin: '0 0 6px' }}>{detailText(o.details)}</p>}
           <table className="qp-lines">
             <thead><tr><th>Description</th><th>Charged</th><th className="num">Qty</th><th className="num">Rate ({d.currency})</th><th className="num">Amount ({d.currency})</th></tr></thead>
             {/* migration 044: our local charges under their own heading; "if applicable" lines after the total, not counted */}

@@ -148,3 +148,78 @@ test('26 Nov: vendor replies are read by the AI in the background, once; automat
   const t0 = Date.now(); await inBatches([1, 2, 3, 4, 5, 6], 4, () => new Promise((ok) => setTimeout(ok, 50)));
   assert.ok(Date.now() - t0 < 200);
 });
+
+test('26 Nov: each option shows POL, POD, line, transit, free days, ETD, ETA and validity; typed values win; gaps and Incoterm clashes flagged', async () => {
+  const fileId = (await createJobFile(cora, { customer_id: cust, salesman_id: sam.id, division: 'imports', mode: 'sea_fcl', status: 'enquiry', incoterm: 'CIF',
+    port_of_loading: 'Ningbo', port_of_discharge: 'Jebel Ali', origin: 'Ningbo', destination: 'Dubai' })).id;
+  const v1 = (await createMaster(admin, 'vendors', { name: 'Ning Agents', vendor_type: 'overseas_agent', email: 'n@ning.cn' })).id;
+  const v2 = (await createMaster(admin, 'vendors', { name: 'Sea Hub', vendor_type: 'overseas_agent', email: 's@hub.cn' })).id;
+  const mk = async (v: string, extra: any) => { const r = await vr.createVendorRequest(cora, { vendor_id: v, service: 'rate', job_file_id: fileId, description: 'NGB → JEA' });
+    await vr.vendorRequestAction(admin, r.id, { status: 'quoted', quoted_cost: '1000', currency: 'USD', ...extra }); return r; };
+  const a = await mk(v1, { carrier: 'COSCO', transit_days: 20, free_days: 14, etd: '2026-12-01' }), b = await mk(v2, { carrier: 'ONE' });
+  const L = (rid: string) => ({ description: 'Ocean freight', charge_unit: 'container', quantity: '1', cost_rate: '1000', sell_rate: '1200', vendor_request_id: rid });
+  const id = (await qt.createQuotation(cora, { customer_id: cust, service_type: 'sea_fcl', direction: 'import', job_file_id: fileId, salesman_id: sam.id, valid_until: D(10), lines: [L(a.id), L(b.id)] })).id;
+  let g: any = await qt.getQuotation(cora, id);
+  assert.equal(g.details.length, 2);
+  assert.deepEqual([g.details[0].line, g.details[0].transit_days, g.details[0].free_days, g.details[0].etd, g.details[0].eta, g.details[0].pol], ['COSCO', 20, 14, '2026-12-01', '2026-12-21', 'Ningbo']);
+  assert.deepEqual(g.details[0].missing, []);
+  assert.deepEqual(g.details[1].missing, ['transit time', 'free days', 'ETD', 'ETA']);
+  assert.match(g.scope_flags.join(' '), /Freight is in the scope, but under CIF import it is the seller's side/);
+  // staff type what option 2's vendor did not say; a bad value is refused
+  await assert.rejects(qt.updateQuotation(cora, id, { details: { [g.details[1].key]: { transit_days: 'soon' } } }), /days from 0 to 365/);
+  g = await qt.updateQuotation(cora, id, { details: { [g.details[1].key]: { transit_days: '25', free_days: '7', etd: '2026-12-05', line: 'ONE (via Singapore)' } } });
+  assert.deepEqual([g.details[1].line, g.details[1].eta, g.details[1].missing], ['ONE (via Singapore)', '2026-12-30', []]);
+  await q(`update quotations set status = 'approved', approved_at = now() where id = $1`, [id]);
+  const c: any = await qt.customerCopy(cora, id, 'pdf');
+  assert.equal(c.options[1].details.line, 'ONE (via Singapore)');
+  assert.equal(c.options[0].details.key, undefined);
+  const d: any = await emailDraft(cora, { kind: 'quotation', id });
+  assert.match(d.body, /POL: Ningbo · POD: Jebel Ali · Line: COSCO · Transit: 20 days · Free days: 14 · ETD: 1 Dec 2026 · ETA: 21 Dec 2026/);
+  assert.match(d.blocks[0].html, /Line: ONE \(via Singapore\)/);
+  assert.ok(!d.missing.some((m: string) => /Option/.test(m)), 'nothing missing now');
+  const { quotationPdf } = await import('../src/server/quotepdf');
+  assert.ok((await quotationPdf(cora, id)).bytes.length > 1000);
+});
+
+test('26 Nov: Accept / Reject / Negotiate links in the quotation email — one per option, answered once, team told, nothing applied by itself', async () => {
+  const { answerInfo, answerQuote, markAnswerHandled } = await import('../src/server/quoteanswers');
+  const fileId = (await createJobFile(cora, { customer_id: cust, salesman_id: sam.id, division: 'imports', mode: 'sea_fcl', status: 'enquiry', incoterm: 'FOB',
+    port_of_loading: 'Busan', port_of_discharge: 'Jebel Ali', origin: 'Busan', destination: 'Dubai' })).id;
+  const v1 = (await createMaster(admin, 'vendors', { name: 'Busan One', vendor_type: 'overseas_agent', email: 'a@b1.kr' })).id;
+  const v2 = (await createMaster(admin, 'vendors', { name: 'Busan Two', vendor_type: 'overseas_agent', email: 'a@b2.kr' })).id;
+  const mk = async (v: string) => { const r = await vr.createVendorRequest(cora, { vendor_id: v, service: 'rate', job_file_id: fileId, description: 'PUS → JEA' });
+    await vr.vendorRequestAction(admin, r.id, { status: 'quoted', quoted_cost: '1000', currency: 'USD', carrier: 'HMM' }); return r; };
+  const a = await mk(v1), b = await mk(v2);
+  const L = (rid: string, sell: string) => ({ description: 'Ocean freight', charge_unit: 'container', quantity: '1', cost_rate: '1000', sell_rate: sell, vendor_request_id: rid });
+  const id = (await qt.createQuotation(cora, { customer_id: cust, service_type: 'sea_fcl', direction: 'import', job_file_id: fileId, salesman_id: sam.id, valid_until: D(10), lines: [L(a.id, '1200'), L(b.id, '1300')] })).id;
+  await q(`update quotations set status = 'approved', approved_at = now() where id = $1`, [id]);
+  const d1: any = await emailDraft(cora, { kind: 'quotation', id });
+  const d2: any = await emailDraft(cora, { kind: 'quotation', id });
+  const tokens = [...d1.body.matchAll(/\/answer\/([A-Za-z0-9_-]+)/g)].map((m: any) => m[1]);
+  assert.equal(tokens.length, 2, 'one link per option');
+  assert.equal(new Set(tokens).size, 2);
+  assert.deepEqual([...d2.body.matchAll(/\/answer\/([A-Za-z0-9_-]+)/g)].map((m: any) => m[1]), tokens, 'the same links when prepared again');
+  assert.match(d1.blocks[0].html, /\?a=accepted[^>]*>Accept option 1</);
+  const info: any = await answerInfo(tokens[1]);
+  assert.deepEqual([info.total, info.answer, info.closed], ['1300.00', null, null]);
+  assert.match(info.option, /Option 2/);
+  assert.doesNotMatch(JSON.stringify(info), /Busan Two|1000/, 'no vendor, no cost');
+  await assert.rejects(answerQuote(tokens[0], { answer: 'rejected' }, '1.2.3.4'), /tell us why/);
+  await assert.rejects(answerQuote(tokens[1], { answer: 'negotiate', target_rate: 'cheaper' }, '1.2.3.4'), /target rate/);
+  await assert.rejects(answerInfo('not-a-real-link-0123456789abcdef'), (e: any) => e.code === 'LINK_EXPIRED');
+  await answerQuote(tokens[1], { answer: 'negotiate', target_rate: '1,150', comment: 'Match last month' }, '1.2.3.4');
+  await assert.rejects(answerQuote(tokens[1], { answer: 'accepted' }, '1.2.3.4'), (e: any) => e.code === 'ALREADY_ANSWERED');
+  const g: any = await qt.getQuotation(cora, id);
+  assert.equal(g.status, 'approved', 'nothing applied by itself');
+  assert.deepEqual(g.answers.map((x: any) => [x.answer, x.target_rate, x.target_currency, x.option_no, x.comment]), [['negotiate', '1150.00', 'AED', 2, 'Match last month']]);
+  assert.ok(g.events.some((e: any) => /Customer answered from the email/.test(e.title) && /target AED 1150/.test(e.details)));
+  const n = await one(`select count(*)::int n from notifications where quotation_id = $1 and event = 'customer_response'`, [id]);
+  assert.ok(n.n >= 1, 'the team is told');
+  assert.ok(await one(`select 1 from audit_log where entity_id = $1 and action like 'Customer answer from the email%'`, [id]));
+  const h: any = await markAnswerHandled(cora, id, g.answers[0].id);
+  assert.ok(h.answers[0].handled_at);
+  await assert.rejects(markAnswerHandled(cora, id, g.answers[0].id), /not found/i, 'handled once');
+  // a revised quotation closes the old links
+  await q(`update quotations set version_no = version_no + 1 where id = $1`, [id]);
+  assert.match((await answerInfo(tokens[0])).closed, /revised/);
+});
