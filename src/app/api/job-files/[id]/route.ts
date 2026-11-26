@@ -5,6 +5,7 @@ import { confirmJfUpload, jfDocAction, requestJfUpload } from '@/server/jfdocs';
 import { route, body } from '@/server/http';
 import { confirmBooking, createOperationalJob, markLost, prealertAction, reassignPeople, requestBooking } from '@/server/commercial';
 import { blAction, routeAction, vesselAction } from '@/server/routing';
+import { availabilityAction } from '@/server/availability';
 export const dynamic = 'force-dynamic';
 export const fetchCache = 'force-no-store';
 export const GET = route(async (req, { params }) => getJobFile(await requireActor(req), params.id));
@@ -18,6 +19,7 @@ const ACTIONS: Record<string, (a: any, id: string, b: any) => Promise<unknown>> 
   handover: createOperationalJob, lost: markLost, reassign: reassignPeople,
   // Part G2: route options, vessel legs, BL drafts
   route: routeAction, vessel: vesselAction, bl: blAction,
+  availability: availabilityAction,   // 26 Nov (Point 13)
 };
 export const POST = route(async (req, { params }) => {
   const a = await requireActor(req);

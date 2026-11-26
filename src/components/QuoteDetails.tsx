@@ -61,7 +61,7 @@ export function QuoteAnswers({ d, onSaved }: { d: any; onSaved: (r: any) => void
           {a.comment && <div className="small">Comment: {a.comment}</div>}
           <div className="muted small">{fmtDateTime(a.answered_at)}{a.handled_at && ` · handled by ${a.handled_by_name ?? '—'}`}</div>
         </div>
-        {!a.handled_at && d.can.copy && <button className="btn small" onClick={() => handled(a.id)}>Handled</button>}
+        {!a.handled_at && <button className="btn small" onClick={() => handled(a.id)}>Handled</button>}
       </div>)}
       <p className="muted small" style={{ marginBottom: 0 }}>Nothing changes by itself: confirm the option with "Customer confirmed", or make a revision for a negotiation.</p>
     </div>

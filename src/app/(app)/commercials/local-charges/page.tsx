@@ -27,12 +27,12 @@ export default function LocalCharges() {
     catch (e: any) { setMsg({ t: 'err', m: e.message }); }
   };
   if (!d) return <div className="page">{msg ? <div className="msg err">{msg.m}</div> : <p className="muted">Loading…</p>}</div>;
-  const ro = !d.can_manage;
+  const ro = f?.id ? !d.can_edit : !d.can_add;   // migration 047: adding and changing are separate rights
   const L = (i: number, k: string, v: any) => setF({ ...f, lines: f.lines.map((l: any, j: number) => (j === i ? { ...l, [k]: v } : l)) });
   const move = (i: number, by: number) => { const ls = [...f.lines]; const [x] = ls.splice(i, 1); ls.splice(i + by, 0, x); setF({ ...f, lines: ls }); };
   return (
     <div className="page">
-      <div className="page-head"><h1>Local charges</h1><span className="spacer" />{d.can_manage && !f && <button className="btn primary" onClick={() => { setF({ ...blankCard, lines: [{ ...blankLine }] }); setHist([]); }}>Add card</button>}</div>
+      <div className="page-head"><h1>Local charges</h1><span className="spacer" />{d.can_add && !f && <button className="btn primary" onClick={() => { setF({ ...blankCard, lines: [{ ...blankLine }] }); setHist([]); }}>Add card</button>}</div>
       <p className="muted" style={{ marginTop: 0 }}>Our cost for clearance, transport and handling. On a quotation, "Local charges" picks the card that fits the enquiry (mode, import / export, port or airport, airline, DG)
         and works out each charge from the containers (20 / 40 ft), BLs, documents and weight. {ro && 'You can read the cards; the admin and team leaders change them.'}</p>
       {msg && <div className={`msg ${msg.t}`}>{msg.m}</div>}
@@ -51,18 +51,18 @@ export default function LocalCharges() {
           <label className="f span2"><span>Notes (shown when used)</span><input value={f.notes ?? ''} onChange={(e) => setF({ ...f, notes: e.target.value })} /></label>
           <label className="f" style={{ alignSelf: 'end' }}><span><input type="checkbox" style={{ width: 'auto' }} checked={f.is_active} onChange={(e) => setF({ ...f, is_active: e.target.checked })} /> In use</span></label>
         </div>
-        <div className="table-wrap" style={{ marginTop: 10 }}><table className="t compact">
-          <thead><tr><th>Charge</th><th>Kind</th><th>Charged</th><th className="num">Amount</th><th className="num">20 ft</th><th className="num">40 ft</th><th className="num">Minimum</th><th className="num">DG extra</th><th>Tag</th><th>Our selling charge</th><th>Note</th>{!ro && <th />}</tr></thead>
+        <div className="table-wrap" style={{ marginTop: 10 }}><table className="t compact edit-grid" style={{ minWidth: 1220 }}>
+          <thead><tr><th>Charge</th><th>Kind</th><th>Charged</th><th className="num">Amount</th><th className="num">20 ft</th><th className="num">40 ft</th><th className="num">Minimum</th><th className="num">DG extra</th><th>Tag</th><th style={{ textAlign: 'center' }}>Our charge</th><th>Note</th>{!ro && <th />}</tr></thead>
           <tbody>{f.lines.map((l: any, i: number) => <tr key={i}>
-            <td><input value={l.description} onChange={(e) => L(i, 'description', e.target.value)} aria-label="Charge" /></td>
-            <td><select value={l.service} onChange={(e) => L(i, 'service', e.target.value)}>{d.services.map(([k, n]: string[]) => <option key={k} value={k}>{n}</option>)}</select></td>
-            <td><select value={l.unit} onChange={(e) => L(i, 'unit', e.target.value)}>{d.units.map(([k, n]: string[]) => <option key={k} value={k}>{n}</option>)}</select></td>
+            <td style={{ minWidth: 200 }}><input value={l.description} onChange={(e) => L(i, 'description', e.target.value)} aria-label="Charge" title={l.description} /></td>
+            <td style={{ minWidth: 135 }}><select aria-label="Kind" value={l.service} onChange={(e) => L(i, 'service', e.target.value)}>{d.services.map(([k, n]: string[]) => <option key={k} value={k}>{n}</option>)}</select></td>
+            <td style={{ minWidth: 155 }}><select aria-label="Charged" value={l.unit} onChange={(e) => L(i, 'unit', e.target.value)}>{d.units.map(([k, n]: string[]) => <option key={k} value={k}>{n}</option>)}</select></td>
             {['cost', 'cost_20', 'cost_40', 'min_amount', 'dg_extra'].map((k) => <td key={k} className="num">
-              <input style={{ width: 76, textAlign: 'right' }} inputMode="decimal" value={l[k] ?? ''} disabled={(k === 'cost_20' || k === 'cost_40') && l.unit !== 'container'}
+              <input style={{ width: 84, minWidth: 84, textAlign: 'right' }} inputMode="decimal" value={l[k] ?? ''} disabled={(k === 'cost_20' || k === 'cost_40') && l.unit !== 'container'}
                 onChange={(e) => L(i, k, e.target.value)} aria-label={k} /></td>)}
-            <td><select value={l.tag} onChange={(e) => L(i, 'tag', e.target.value)}>{d.tags.map(([k, n]: string[]) => <option key={k} value={k}>{n}</option>)}</select></td>
+            <td style={{ minWidth: 130 }}><select aria-label="Tag" value={l.tag} onChange={(e) => L(i, 'tag', e.target.value)}>{d.tags.map(([k, n]: string[]) => <option key={k} value={k}>{n}</option>)}</select></td>
             <td style={{ textAlign: 'center' }}><input type="checkbox" style={{ width: 'auto' }} checked={!!l.sell_only} onChange={(e) => L(i, 'sell_only', e.target.checked)} aria-label="Our selling charge" /></td>
-            <td><input value={l.note ?? ''} onChange={(e) => L(i, 'note', e.target.value)} aria-label="Note" /></td>
+            <td style={{ minWidth: 150 }}><input value={l.note ?? ''} onChange={(e) => L(i, 'note', e.target.value)} aria-label="Note" /></td>
             {!ro && <td style={{ whiteSpace: 'nowrap' }}><button type="button" className="btn small" disabled={!i} onClick={() => move(i, -1)} aria-label="Up">↑</button>
               <button type="button" className="btn small" disabled={i === f.lines.length - 1} onClick={() => move(i, 1)} aria-label="Down">↓</button>
               <button type="button" className="btn small" disabled={f.lines.length === 1} onClick={() => setF({ ...f, lines: f.lines.filter((_: any, j: number) => j !== i) })} aria-label="Remove">✕</button></td>}
@@ -81,11 +81,11 @@ export default function LocalCharges() {
       <div className="panel flush"><div className="table-wrap"><table className="t">
         <thead><tr><th>Card</th><th>Mode</th><th>Port / airport</th><th>Line / airline</th><th>DG</th><th className="num">Charges</th><th>Last changed</th><th /></tr></thead>
         <tbody>{d.cards.map((c: any) => <tr key={c.id} style={{ opacity: c.is_active ? 1 : 0.55 }}>
-          <td><b>{c.name}</b>{!c.is_active && <span className="muted small"> · not in use</span>}</td>
-          <td>{MODE_NAME[c.mode] ?? c.mode} {c.direction}</td><td className="small">{c.places || 'any'}</td><td className="small">{c.carriers || 'any other'}</td>
-          <td>{c.dg === 'yes' ? 'DG' : c.dg === 'any' ? 'Both' : 'Non-DG'}</td><td className="num">{c.line_count}</td>
-          <td className="small">v{c.version} · {c.updated_by_name ?? '—'} · {fmtDateTime(c.updated_at)}</td>
-          <td><button className="btn small" onClick={() => open(c.id)}>{d.can_manage ? 'Change' : 'View'}</button></td></tr>)}
+          <td style={{ minWidth: 170 }}><b>{c.name}</b>{!c.is_active && <span className="muted small"> · not in use</span>}</td>
+          <td className="nowrap">{MODE_NAME[c.mode] ?? c.mode} {c.direction}</td><td className="small">{c.places || 'any'}</td><td className="small">{c.carriers || 'any other'}</td>
+          <td className="nowrap">{c.dg === 'yes' ? 'DG' : c.dg === 'any' ? 'Both' : 'Non-DG'}</td><td className="num">{c.line_count}</td>
+          <td className="small">v{c.version}{c.updated_by_name ? ` · ${c.updated_by_name}` : ''}<div className="muted">{fmtDateTime(c.updated_at)}</div></td>
+          <td><button className="btn small" onClick={() => open(c.id)}>{d.can_edit ? 'Change' : 'View'}</button></td></tr>)}
           {!d.cards.length && <tr><td colSpan={8} className="muted">No cards yet.</td></tr>}</tbody></table></div></div>
     </div>
   );

@@ -89,7 +89,7 @@ test('Sales builds a quotation; totals are exact; margin below the minimum needs
 });
 
 test('Someone without cost view sees no cost or margin — and can edit lines without wiping the cost', async () => {
-  await updateUser(admin, opsSub.id, { overrides: [{ code: 'quotes.view', granted: true }, { code: 'quotes.create', granted: true },
+  await updateUser(admin, opsSub.id, { overrides: [{ code: 'quotes.view', granted: true }, { code: 'quotes.create', granted: true }, { code: 'quotes.edit', granted: true },
     { code: 'finance.selling.view', granted: true }, { code: 'finance.buying.view', granted: false }] });
   const s = (await loadActor(opsSub.id))!;
   const g = await qt.getQuotation(s, qid);
@@ -175,7 +175,7 @@ test('Margin per line: % gives selling = cost ÷ (1 − %); amount adds to cost;
   g = await qt.updateQuotation(sales, x.id, { lines: g.lines.map((l: any, i: number) => i === 0 ? { ...l, cost_rate: '1200' } : l) });
   assert.equal(g.lines[0].sell_rate, '1500.00');
   // someone who sees selling but not cost can't see the margin, and typing a new rate ends the margin on that line
-  await updateUser(admin, opsSub.id, { overrides: [{ code: 'quotes.view', granted: true }, { code: 'quotes.create', granted: true },
+  await updateUser(admin, opsSub.id, { overrides: [{ code: 'quotes.view', granted: true }, { code: 'quotes.create', granted: true }, { code: 'quotes.edit', granted: true },
     { code: 'finance.selling.view', granted: true }, { code: 'finance.buying.view', granted: false }] });
   const s = (await loadActor(opsSub.id))!;
   const gs = await qt.getQuotation(s, x.id);

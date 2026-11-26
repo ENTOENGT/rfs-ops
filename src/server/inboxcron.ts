@@ -49,9 +49,14 @@ export async function runBackgroundReads(n = 3) {
       where e.direction = 'in' and e.created_at > now() - interval '3 days' and e.ai_bg_tries < 2 and r.status <> 'cancelled'
         and ((r.service = 'rate' and r.status in ('requested', 'quoted')) or (r.service = 'booking' and f.booking_vendor_request_id = r.id))
         and not exists (select 1 from ai_suggestions s where s.email_id = e.id and s.kind in ('quote', 'booking'))
+        and not exists (select 1 from availability_checks a where a.vendor_request_id = r.id and a.status = 'sent')   -- read as an availability answer
       order by e.created_at desc limit $1`, [n]);
   const drafts = await q(`select id, user_id from outlook_inbox where status = 'unmatched' and ai_kind = 'new_enquiry' and ai_draft is null and ai_bg_tries < 2
       and received_at > now() - interval '3 days' order by received_at desc limit $1`, [Math.max(0, n - mails.length)]);
+  // 26 Nov (Point 13): vendor replies to the availability email
+  const { availabilityReplies, readAvailability } = await import('./availability');
+  const avail = await availabilityReplies(Math.max(1, n - mails.length));
+  if (avail.length) await q('update email_messages set ai_bg_tries = ai_bg_tries + 1 where id = any($1)', [avail.map((m: any) => m.id)]);
   if (mails.length) await q('update email_messages set ai_bg_tries = ai_bg_tries + 1 where id = any($1)', [mails.map((m: any) => m.id)]);
   if (drafts.length) await q('update outlook_inbox set ai_bg_tries = ai_bg_tries + 1 where id = any($1)', [drafts.map((m: any) => m.id)]);
   const { readQuote } = await import('./quotereader');
@@ -64,6 +69,7 @@ export async function runBackgroundReads(n = 3) {
       if (m.service === 'rate') await readQuote(actor, m.id); else await readBooking(actor, m.job_file_id, m.id);
       return m.service;
     }),
+    ...avail.map((m: any) => async () => { const actor = m.uid ? await loadActor(m.uid) : null; if (!actor) return 'skipped'; await readAvailability(actor, m.id); return 'availability'; }),
     ...drafts.map((m: any) => async () => { const actor = await loadActor(m.user_id); if (!actor) return 'skipped'; await draftEnquiry(actor, m.id); return 'enquiry'; }),
   ];
   const res = await Promise.all(jobs.map((j) => j().catch((e: any) => `failed: ${String(e?.message ?? e).slice(0, 80)}`)));

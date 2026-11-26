@@ -7,6 +7,7 @@ import { useEffect, useState } from 'react';
 import { api, fmtDate } from './api';
 import { useMe } from './Shell';
 import { MASTERS, MasterField } from '@/lib/masters';
+import { canDo } from '@/lib/permissions';
 
 const STATUS_LABEL: Record<string, string> = {
   available: 'Available', on_leave: 'On leave', off_duty: 'Off duty', inactive: 'Inactive', maintenance: 'In maintenance', assigned: 'Assigned',
@@ -88,7 +89,9 @@ export default function MasterPage({ entity, embedded }: { entity: string; embed
   const [data, setData] = useState<any>(null);
   const [edit, setEdit] = useState<any>(null);
   const [msg, setMsg] = useState<{ t: string; m: string } | null>(null);
-  const canEdit = can(d.perm);
+  // migration 047: one action each, or everything with "Manage"
+  const canAdd = canDo(can, d.perm, 'create'), canChange = canDo(can, d.perm, 'edit'), canRemove = canDo(can, d.perm, 'delete');
+  const canEdit = canChange || canRemove;
   // Drivers get the phone app from the Transport Manager or Super Admin
   const canSendApp = entity === 'drivers' && (can('users.manage') || (can('users.manage_department') && me.department_side === 'transport'));
   const [appFor, setAppFor] = useState<any>(null);
@@ -121,7 +124,7 @@ export default function MasterPage({ entity, embedded }: { entity: string; embed
         <Head style={embedded ? { margin: 0 } : undefined}>{d.title}</Head>
         <span className="spacer" />
         <input style={{ width: 240 }} placeholder={`Search ${d.title.toLowerCase()}…`} value={q} onChange={(e) => setQ(e.target.value)} aria-label="Search" />
-        {canEdit && <button className="btn primary" onClick={() => setEdit({})}>Add {d.singular}</button>}
+        {canAdd && <button className="btn primary" onClick={() => setEdit({})}>Add {d.singular}</button>}
       </div>
       <p className="muted small" style={{ marginTop: -6 }}>{d.blurb}</p>
       {msg && <div className={`msg ${msg.t}`}>{msg.m}</div>}
@@ -137,11 +140,11 @@ export default function MasterPage({ entity, embedded }: { entity: string; embed
                 {hasContacts && <><button className="btn small" onClick={() => setContactsFor(r.id)}>Contacts &amp; Salesmen</button>{' '}</>}
                 {hasCoverage && <><button className="btn small" onClick={() => setCoverageFor(r.id)}>Coverage</button>{' '}</>}
                 {hasCoverage && <><button className="btn small" onClick={() => setTeamsFor(r.id)}>Teams</button>{' '}</>}
-                {canEdit && <><button className="btn small" onClick={() => setEdit(r)}>Edit</button>{' '}
-                <button className="btn small danger" onClick={() => remove(r)}>Remove</button></>}</td>}
+                {canChange && <><button className="btn small" onClick={() => setEdit(r)}>Edit</button>{' '}</>}
+                {canRemove && <button className="btn small danger" onClick={() => remove(r)}>Remove</button>}</td>}
             </tr>))}
           {data && data.rows.length === 0 && <tr><td colSpan={cols.length + 1} className="muted" style={{ padding: 24, textAlign: 'center' }}>
-            {q ? 'Nothing matches that search.' : `No ${d.title.toLowerCase()} yet.`}{canEdit && !q && <> <a href="#" onClick={(e) => { e.preventDefault(); setEdit({}); }}>Add the first {d.singular}</a>.</>}
+            {q ? 'Nothing matches that search.' : `No ${d.title.toLowerCase()} yet.`}{canAdd && !q && <> <a href="#" onClick={(e) => { e.preventDefault(); setEdit({}); }}>Add the first {d.singular}</a>.</>}
           </td></tr>}
         </tbody>
       </table></div>

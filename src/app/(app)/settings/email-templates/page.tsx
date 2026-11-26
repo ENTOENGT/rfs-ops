@@ -71,9 +71,9 @@ export default function EmailTemplates() {
         <tbody>{d.built_in.map((b: any) => { const mine = d.rows.filter((t: any) => t.template_key === b.key); return <tr key={b.key}>
           <td><b>{b.name}</b></td><td className="small">{WHO[b.ctx]}</td>
           <td className="small">{mine.length === 0 ? <span className="muted">Standard text</span> : mine.map((t: any) => <div key={t.id}>
-            <button className="linkish" onClick={() => start(b.key, t)}>{[t.division && divisionName(t.division), t.mode && TEMPLATE_MODES.find(([k]) => k === t.mode)?.[1], t.customer_name].filter(Boolean).join(' · ') || 'All shipments'}</button>
+            <button className="linkish" disabled={!d.can_manage} onClick={() => start(b.key, t)}>{[t.division && divisionName(t.division), t.mode && TEMPLATE_MODES.find(([k]) => k === t.mode)?.[1], t.customer_name].filter(Boolean).join(' · ') || 'All shipments'}</button>
             {!t.is_active && <span className="muted"> (switched off)</span>} <span className="muted">· {fmtDateTime(t.updated_at)}</span></div>)}</td>
-          <td><button className="btn small" onClick={() => start(b.key)}>{mine.length ? 'Add another' : 'Customise'}</button></td></tr>; })}</tbody></table></div>
+          <td>{d.can_manage && <button className="btn small" onClick={() => start(b.key)}>{mine.length ? 'Add another' : 'Customise'}</button>}</td></tr>; })}</tbody></table></div>
       {d.history.length > 0 && <details style={{ marginTop: 14 }}><summary className="small">Change history ({d.history.length})</summary>
         {d.history.map((h: any, i: number) => <div key={i} className="small" style={{ padding: '3px 0' }}>{fmtDateTime(h.at)} — {h.action} · {h.user_name}</div>)}</details>}
     </div>

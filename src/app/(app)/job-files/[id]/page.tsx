@@ -177,7 +177,7 @@ export default function JobFile({ params }: { params: { id: string } }) {
       {d.status === 'cancelled' && <div className="msg warn">Cancelled: {d.cancel_reason}</div>}
       {d.service_instructions && <div className="msg">Customer's standing instructions: {d.service_instructions}</div>}
 
-      {!edit && <StageHeader d={d} act={act} reload={load} />}
+      {!edit && <StageHeader d={d} act={act} reload={load} go={(t) => { pickTab(t); setTimeout(() => document.querySelector('.rec-tabs')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 50); }} />}
       {!edit && <HandlersPanel d={d} reload={load} />}
       {(d.enquiry_gaps ?? []).length > 0 && <div className="gap-box" role="status">
             <b>Missing details ({d.enquiry_gaps.length})</b> <span className="muted small">— needed for an accurate quotation</span>
@@ -272,7 +272,7 @@ export default function JobFile({ params }: { params: { id: string } }) {
         {tab === 'rates' && <div className="tab-panel"><RatesAndQuotes d={d} reload={load} /></div>}
         {tab === 'emails' && <div className="tab-panel"><EmailsPanel key={emailsKey} d={d} onSaved={load} /></div>}
         {tab === 'chat' && <div className="tab-panel"><TeamChat d={d} /></div>}
-        {tab === 'booking' && <div className="tab-panel">{d.booking && <AiBooking fileId={d.id} onChanged={load} />}<BookingPanel d={d} act={act} />
+        {tab === 'booking' && <div className="tab-panel">{d.booking && <AiBooking fileId={d.id} onChanged={load} />}<BookingPanel d={d} act={act} reload={load} />
           {(d.booking_reference || d.vessel_flight) && !noVessel(d.mode) && <TrackBox fileId={d.id} stamp={d.updated_at} />}</div>}
         {tab === 'vessel' && <div className="tab-panel"><VesselPanel d={d} act={act} /></div>}
         {tab === 'bl' && <div className="tab-panel"><BlPanel d={d} act={act} /></div>}

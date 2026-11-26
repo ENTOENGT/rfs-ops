@@ -221,5 +221,66 @@ test('26 Nov: Accept / Reject / Negotiate links in the quotation email — one p
   await assert.rejects(markAnswerHandled(cora, id, g.answers[0].id), /not found/i, 'handled once');
   // a revised quotation closes the old links
   await q(`update quotations set version_no = version_no + 1 where id = $1`, [id]);
-  assert.match((await answerInfo(tokens[0])).closed, /revised/);
+  assert.match((await answerInfo(tokens[0])).closed ?? '', /revised/);
+});
+
+test('26 Nov: after the customer approves, the vendor of that rate is asked for space; AI reads "not available"; follow-up and customer emails; nothing changed by itself', async () => {
+  const av = await import('../src/server/availability');
+  const { getJobFile } = await import('../src/server/jobfiles');
+  const { emailPrepared } = await import('../src/server/emails');
+  const { runBackgroundReads } = await import('../src/server/inboxcron');
+  const fileId = (await createJobFile(cora, { customer_id: cust, salesman_id: sam.id, division: 'imports', mode: 'sea_fcl', status: 'enquiry', incoterm: 'FOB',
+    port_of_loading: 'Port Klang', port_of_discharge: 'Jebel Ali', origin: 'Port Klang', destination: 'Dubai' })).id;
+  const v1 = (await createMaster(admin, 'vendors', { name: 'Klang One', vendor_type: 'overseas_agent', email: 'k1@klang.my' })).id;
+  const v2 = (await createMaster(admin, 'vendors', { name: 'Klang Two', vendor_type: 'overseas_agent', email: 'k2@klang.my' })).id;
+  const mk = async (v: string, carrier: string) => { const r = await vr.createVendorRequest(cora, { vendor_id: v, service: 'rate', job_file_id: fileId, description: 'PKG → JEA' });
+    await vr.vendorRequestAction(admin, r.id, { status: 'quoted', quoted_cost: '900', currency: 'USD', carrier, routing: carrier === 'MSC' ? 'via Singapore' : 'Direct', vendor_reference: `Q-${carrier}` }); return r; };
+  const a = await mk(v1, 'ONE'), b = await mk(v2, 'MSC');
+  const L = (rid: string) => ({ description: 'Ocean freight', charge_unit: 'container', quantity: '1', cost_rate: '900', sell_rate: '1100', vendor_request_id: rid });
+  const qid = (await qt.createQuotation(cora, { customer_id: cust, service_type: 'sea_fcl', direction: 'import', job_file_id: fileId, salesman_id: sam.id, valid_until: D(10), lines: [L(a.id), L(b.id)] })).id;
+  await q(`update quotations set status = 'sent', approved_at = now() where id = $1`, [qid]);
+  const routes = await q('select id, option_no from enquiry_routes where job_file_id = $1 order by option_no', [fileId]);
+  await qt.quotationAction(cora, qid, { action: 'accept', evidence_note: 'Customer email: go with option 2', route_id: routes[1].id });
+  const n = await one(`select title from notifications where job_file_id = $1 and event = 'customer_confirmed' order by created_at desc limit 1`, [fileId]);
+  assert.match(n.title, /Customer approved Option 2/);
+  let g: any = await getJobFile(cora, fileId);
+  assert.equal(g.approved_rate.id, b.id, 'the vendor of the approved option');
+  assert.equal(g.availability, null);
+  // the draft to that same vendor: their quote reference, routing and the agreed rate
+  const d: any = await emailDraft(cora, { kind: 'vendor_request', id: b.id, update: 'availability_check' });
+  assert.deepEqual(d.recipients.map((x: any) => x.email), ['k2@klang.my']);
+  assert.match(d.body, /confirm that space and your rate are still available/);
+  assert.match(d.body, /ref\. Q-MSC · our request .* · MSC · via Singapore · USD 900\.00/);
+  await emailPrepared(cora, { kind: 'vendor_request', id: b.id, update: 'availability_check', to: ['k2@klang.my'], subject: d.subject, body: d.body });
+  g = await getJobFile(cora, fileId);
+  assert.equal(g.availability.status, 'sent');
+  // the vendor answers; the AI reads it in the background
+  const m = { internet_message_id: `<${Math.random()}@klang>`, conversation_id: null, from_addr: 'k2@klang.my', from_name: 'Klang Two', to_addrs: 'cora@x.ae', cc_addrs: null,
+    subject: `RE: ${d.subject}`, received_at: new Date(Date.now() + 60000).toISOString(), has_attachments: false, web_link: null, body_excerpt: 'Sorry, MV Alpha is full. Next vessel MV Beta ETD 12 Dec, same rate.' };
+  await tx((c) => fileOnShipment(c, cora, fileId, m, 'tag'));
+  await q(`update email_messages set vendor_request_id = $2, created_at = now() + interval '1 second' where message_id = $1`, [m.internet_message_id, b.id]);
+  setAiNetwork((async () => new Response(JSON.stringify({ content: [{ type: 'tool_use', name: 'availability_answer',
+    input: { answer: 'not_available', reason: 'MV Alpha is full', alternative: 'MV Beta ETD 12 Dec, same rate' } }] }), { status: 200 })) as typeof fetch);
+  try { await runBackgroundReads(3); } finally {
+    setAiNetwork((async () => new Response(JSON.stringify({ content: [{ type: 'tool_use', name: 'record_rate', input: answer }] }), { status: 200 })) as typeof fetch);
+  }
+  g = await getJobFile(cora, fileId);
+  assert.deepEqual([g.availability.status, g.availability.reason, g.availability.alternative, g.availability.answer_source], ['unavailable', 'MV Alpha is full', 'MV Beta ETD 12 Dec, same rate', 'ai']);
+  assert.deepEqual([g.stage, g.selected_route_id], ['customer_confirmed', routes[1].id], 'the approved option is not changed');
+  assert.ok(await one(`select 1 from notifications where job_file_id = $1 and title like '%Not available%MV Alpha%'`, [fileId]), 'the team is told');
+  const f2: any = await emailDraft(cora, { kind: 'vendor_request', id: b.id, update: 'availability_followup' });
+  assert.match(f2.body, /next available sailing or an alternative routing/);
+  const c2: any = await emailDraft(cora, { kind: 'job_file', id: fileId, update: 'shipment_update:space_unavailable' });
+  assert.match(c2.body, /the originally quoted sailing is currently unavailable/);
+  // ask again → confirmed by the person
+  await emailPrepared(cora, { kind: 'vendor_request', id: b.id, update: 'availability_check', to: ['k2@klang.my'], subject: d.subject, body: d.body });
+  await assert.rejects(av.availabilityAction(cora, fileId, { result: 'unavailable' }), /what the vendor said/);
+  g = await av.availabilityAction(cora, fileId, { result: 'confirmed' });
+  assert.equal(g.availability.status, 'confirmed');
+  assert.equal((await q('select count(*)::int n from availability_checks where job_file_id = $1', [fileId]))[0].n, 2, 'the first check kept as history');
+  // the AI's live status in the top bar shows what it read for the Coordinator
+  const { aiActivity } = await import('../src/server/aiactivity');
+  const act: any = await aiActivity(cora);
+  assert.ok(act.recent.some((r: any) => r.kind === 'availability' && /Not available: MV Alpha/.test(r.summary)));
+  assert.equal(typeof act.working, 'number');
 });

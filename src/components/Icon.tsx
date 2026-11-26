@@ -33,6 +33,7 @@ const P: Record<string, string[]> = {
   filter: ['M3 5h18l-7 8v6l-4 2v-8z'],
   clock: ['M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18z', 'M12 7v5l3 2'],
   ship: ['M3 17l2 4h14l2-4', 'M5 17V9h14v8', 'M12 9V3', 'M9 5h6'],
+  spark: ['M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z', 'M19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8z'],
   alert: ['M12 9v4', 'M12 17h.01', 'M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z'],
 };
 export function Icon({ name, size = 18, className, title }: { name: string; size?: number; className?: string; title?: string }) {

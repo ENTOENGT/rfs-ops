@@ -517,7 +517,14 @@ export async function getJobFile(actor: Actor, id: string) {
   // Part G2: route options, vessel legs, BL drafts
   const rt = await import('./routing');
   const [routes, legs, blDrafts, cargoLines] = await Promise.all([rt.routesFor(id), rt.legsFor(id), rt.blDraftsFor(id), liveCargo(id)]);
+  // 26 Nov (Point 13): the vendor availability check between the customer's approval and the booking
+  const av = commercial && STAGE_ORDER.indexOf(f.stage ?? 'enquiry') >= STAGE_ORDER.indexOf('customer_confirmed') ? await import('./availability') : null;
+  const [availability, approvedRate] = av ? await Promise.all([av.availabilityOf(id), av.approvedRate(id)]) : [null, null];
+  // 26 Nov (Point 16): what is still open, for the progress section
+  const open = commercial ? await one(`select (select count(*)::int from scope_issues where job_file_id = $1 and status in ('open', 'asked_customer', 'asked_vendor')) clarifications,
+      (select count(*)::int from quote_answers a join quotations x on x.id = a.quotation_id where x.job_file_id = $1 and a.answer is not null and a.handled_at is null) answers`, [id]) : null;
   return {
+    availability, approved_rate: approvedRate, open_items: open,
     ...shape({ ...f, ...extra }), search_text: undefined, quotation_id: quotation ? f.quotation_id : undefined, quotation,
     prealert, booking, lcl, old_cases: oldCases, cargo_lines: cargoLines, routes, legs, bl_drafts: blDrafts, email_subject: (await import('./emails')).threadSubject({ ...f, ...extra }), containers, milestones, events, ...work, checklist: docList, documents, docs_required_to_close: docsRequired,
     quotations: quotations?.map((x) => ({ ...x, status_name: qStatusName(x.status), status_color: qStatusColor(x.status) })) ?? null, vendor_requests: vendorRequests,

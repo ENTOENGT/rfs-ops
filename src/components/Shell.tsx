@@ -186,11 +186,48 @@ function OutlookIcon() {
     <Icon name="mail" />{(n > 0 || !s.connected || s.last_error) && <span className="dot">{!s.connected || s.last_error ? '!' : n > 99 ? '99+' : n}</span>}</Link>;
 }
 
+const AI_KIND: Record<string, string> = { quote: 'Vendor rate read', booking: 'Booking reply read', quote_reply: 'Customer reply read', enquiry: 'Enquiry email read', availability: 'Availability answer read' };
+/** 26 Nov (commit 3): the AI's live status on every page — what it is working on for me and what it did lately. */
+function AiActivity() {
+  const [s, setS] = useState<any>(null);
+  const [open, setOpen] = useState(false);
+  const ref = useOutside(open, () => setOpen(false));
+  useEffect(() => {
+    const load = () => { if (document.visibilityState === 'visible') api('/api/ai/activity').then(setS).catch(() => {}); };
+    load(); const t = setInterval(load, 30_000); document.addEventListener('visibilitychange', load);
+    return () => { clearInterval(t); document.removeEventListener('visibilitychange', load); };
+  }, []);
+  if (!s || (!s.working && !s.recent.length)) return null;
+  const busy = [s.reading && `reading ${s.reading} vendor email${s.reading > 1 ? 's' : ''}`, s.drafting && `filling ${s.drafting} new enquir${s.drafting > 1 ? 'ies' : 'y'}`,
+    s.sorting && `sorting ${s.sorting} email${s.sorting > 1 ? 's' : ''}`].filter(Boolean).join(', ');
+  const label = s.working ? `AI is working: ${busy}` : 'AI — recent work';
+  return (
+    <div className="profile" ref={ref}>
+      <button className={`icon-btn bell ai-btn${s.working ? ' busy' : ''}`} aria-label={label} title={label} aria-expanded={open} onClick={() => setOpen(!open)}>
+        <Icon name="spark" />{s.working > 0 && <span className="dot">{s.working > 99 ? '99+' : s.working}</span>}</button>
+      {open && <div className="dropdown pop-right menu ai-pop" role="menu">
+        <div className="pop-head col"><b>AI assistant</b><small>{s.working ? `Working now: ${busy}.` : 'Nothing waiting.'}</small></div>
+        {s.recent.map((r: any, i: number) => <Link key={i} role="menuitem" href={`/job-files/${r.file_id}`} onClick={() => setOpen(false)}>
+          <span><b>{AI_KIND[r.kind] ?? 'Email read'}</b> · {r.ref}{r.vendor_name ? ` · ${r.vendor_name}` : ''}
+            {r.summary && <small className="muted" style={{ display: 'block' }}>{String(r.summary).slice(0, 90)}</small>}</span></Link>)}
+        {!s.recent.length && <div className="muted small" style={{ padding: 8 }}>No AI results in the last 2 days.</div>}
+      </div>}
+    </div>
+  );
+}
+
 function Profile({ me, logout }: { me: Me; logout: () => void }) {
   const [open, setOpen] = useState(false);
   const ref = useOutside(open, () => setOpen(false));
   const [st, setSt] = usePresence();
   const [leave, setLeave] = useState<{ until: string; note: string } | null>(null);
+  // 26 Nov (commit 3): Chrome / Edge on Windows and Mac offer to install the CRM in its own window, with its own icon
+  const [install, setInstall] = useState<any>(null);
+  useEffect(() => {
+    const h = (e: any) => { e.preventDefault(); setInstall(e); };
+    window.addEventListener('beforeinstallprompt', h);
+    return () => window.removeEventListener('beforeinstallprompt', h);
+  }, []);
   const set = async (b: any) => { try { setSt(await api('/api/presence', { method: 'PUT', body: b })); setLeave(null); setOpen(false); } catch (e: any) { alert(e.message); } };
   return (
     <div className="profile" ref={ref}>
@@ -214,6 +251,8 @@ function Profile({ me, logout }: { me: Me; logout: () => void }) {
         <Link href="/notifications" role="menuitem" onClick={() => setOpen(false)}><Icon name="bell" size={16} /> Notifications</Link>
         <Link href="/outlook" role="menuitem" onClick={() => setOpen(false)}><Icon name="mail" size={16} /> My Outlook</Link>
         <Link href="/change-password" role="menuitem" onClick={() => setOpen(false)}><Icon name="key" size={16} /> Change password</Link>
+        {install && <button role="menuitem" onClick={async () => { setOpen(false); install.prompt(); await install.userChoice.catch(() => null); setInstall(null); }}>
+          <Icon name="arrowRight" size={16} /> Install RFS CRM as an app</button>}
         <button role="menuitem" onClick={logout}><Icon name="logout" size={16} /> Sign out</button>
       </div>}
     </div>
@@ -306,6 +345,7 @@ function Frame({ me, lk, can, children }: { me: Me; lk: any; can: (p: string) =>
           </nav>
           <GlobalSearch />
           <div className="top-actions">
+            <AiActivity />
             <OutlookIcon />
             <QuickCreate can={can} />
             {['jobfiles.view_all', 'jobfiles.view_department', 'jobfiles.view_assigned', 'jobfiles.view_handed_over', 'jobfiles.create', 'jobfiles.edit'].some((p) => can(p as any)) && <ChatIcon />}

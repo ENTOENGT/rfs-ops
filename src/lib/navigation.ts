@@ -18,12 +18,12 @@ export const MODULES: NavModule[] = [
     { href: '/commercials?division=imports', label: 'Imports', section: 'Divisions', perm: COMMERCIAL },
     { href: '/commercials?division=exports', label: 'Exports', section: 'Divisions', perm: COMMERCIAL },
     { href: '/commercials?division=cross_trade', label: 'Cross Trade', section: 'Divisions', perm: COMMERCIAL },
-    { href: '/settings/quote-terms', label: 'Quotation terms', section: 'Templates', perm: 'templates.manage' },
-    { href: '/settings/email-templates', label: 'Email templates', section: 'Templates', perm: 'templates.manage' },
+    { href: '/settings/quote-terms', label: 'Quotation terms', section: 'Templates', perm: ['templates.manage', 'templates.view', 'templates.edit'] },
+    { href: '/settings/email-templates', label: 'Email templates', section: 'Templates', perm: ['templates.manage', 'templates.view', 'templates.edit'] },
     { href: '/commercials/checklists', label: 'Checklists', section: 'Templates', perm: ['commercial.manage', 'settings.manage'] },   // migration 028
     { href: '/commercials/places', label: 'Ports & regions', section: 'Templates', perm: ['commercial.manage', 'settings.manage'] },
     { href: '/commercials/hs-codes', label: 'HS codes', section: 'Templates', perm: ['commercial.manage', 'settings.manage'] },   // migration 034
-    { href: '/commercials/local-charges', label: 'Local charges', section: 'Templates', perm: ['local_charges.manage', 'finance.buying.view'] }] },   // migration 044
+    { href: '/commercials/local-charges', label: 'Local charges', section: 'Templates', perm: ['local_charges.manage', 'local_charges.view', 'local_charges.create', 'local_charges.edit', 'finance.buying.view'] }] },   // migration 044
   { key: 'enquiries', label: 'Enquiries', icon: 'inbox', perm: COMMERCIAL, items: [
     { href: '/commercials/enquiries', label: 'All enquiries' },
     { href: '/commercials/enquiries?mine=1', label: 'My enquiries' },
@@ -99,8 +99,8 @@ export const MODULES: NavModule[] = [
     { href: '/users', label: 'People', perm: ['users.manage', 'users.manage_department', 'users.manage_team'] },
     { href: '/roles', label: 'Roles & permissions', perm: ['roles.manage', 'roles.manage_department'] },
     { href: '/settings', label: 'Settings', perm: 'settings.manage' },
-    { href: '/customers', label: 'Customers', perm: ['jobs.view', 'customers.manage'], section: 'Master data' },
-    { href: '/vendors', label: 'Vendors', perm: 'vendors.manage', section: 'Master data' },
+    { href: '/customers', label: 'Customers', perm: ['jobs.view', 'customers.manage', 'customers.create', 'customers.edit', 'customers.delete'], section: 'Master data' },
+    { href: '/vendors', label: 'Vendors', perm: ['vendors.manage', 'vendors.view', 'vendors.create', 'vendors.edit', 'vendors.delete'], section: 'Master data' },
     { href: '/bulk-upload', label: 'Bulk upload', perm: ['customers.manage', 'vendors.manage'], section: 'Master data' }], paths: ['/users', '/roles', '/settings', '/customers', '/vendors', '/bulk-upload'] },
 ];
 // shipment records opened from these modules stay under the module they were opened from

@@ -5,6 +5,7 @@
  * Every save writes a full copy to the history table, which can't be changed or deleted.
  */
 import { Actor } from './auth';
+import { canDo } from '../lib/permissions';
 import { ApiError, bad, Db, forbidden, one, q, tx } from './db';
 import { DIVISIONS } from '../lib/commercialRules';
 import { EMAIL_TEMPLATES, TERM_FIELDS, TEMPLATE_MODES, SHIPMENT_TYPES, badPlaceholders, modeParts } from '../lib/templateRules';
@@ -12,7 +13,9 @@ import { EMAIL_TEMPLATES, TERM_FIELDS, TEMPLATE_MODES, SHIPMENT_TYPES, badPlaceh
 const UUID = /^[0-9a-f-]{36}$/i;
 const isUuid = (v: unknown): v is string => typeof v === 'string' && UUID.test(v);
 const txt = (v: unknown, max: number) => { const s = String(v ?? '').trim(); return s ? s.slice(0, max) : null; };
-const canManage = (a: Actor) => a.isSuperAdmin || a.has('templates.manage');
+// migration 047: View and Change separately, or both with "Manage templates"
+const canManage = (a: Actor) => a.isSuperAdmin || canDo(a.has, 'templates.manage', 'edit');
+const canView = (a: Actor) => a.isSuperAdmin || canDo(a.has, 'templates.manage', 'view');
 const oneOf = (v: unknown, list: [string, string][], label: string) => {
   if (v === undefined || v === null || v === '') return null;
   if (!list.some(([k]) => k === v)) throw bad(`Choose the ${label}`);
@@ -29,7 +32,7 @@ const best = <T,>(rows: T[], k: any) => rows.map((t) => ({ t, s: score(t, k) }))
 
 // ------------------------------------------------------------ quotation terms
 export async function listTermTemplates(actor: Actor) {
-  if (!canManage(actor) && !actor.has('quotes.create')) throw forbidden();
+  if (!canView(actor) && !actor.has('quotes.create')) throw forbidden();
   const rows = await q(`select t.*, c.name customer_name, u.full_name updated_by_name from quote_term_templates t
     left join customers c on c.id = t.customer_id left join users u on u.id = t.updated_by order by t.is_active desc, t.name`);
   const hist = await q(`select h.template_id, h.action, h.user_name, h.at from quote_term_template_history h order by h.at desc limit 200`);
@@ -79,11 +82,11 @@ export async function pickTermsFor(actor: Actor, p: Record<string, string>) {
 
 // ------------------------------------------------------------ email templates
 export async function listEmailTemplates(actor: Actor) {
-  if (!canManage(actor)) throw forbidden();
+  if (!canView(actor)) throw forbidden();
   const rows = await q(`select t.*, c.name customer_name, u.full_name updated_by_name from email_templates t
     left join customers c on c.id = t.customer_id left join users u on u.id = t.updated_by order by t.template_key, t.is_active desc, t.updated_at desc`);
   const hist = await q('select template_id, action, user_name, at from email_template_history order by at desc limit 200');
-  return { rows, history: hist, built_in: EMAIL_TEMPLATES.map(([key, name, ctx, subject, body]) => ({ key, name, ctx, subject, body })) };
+  return { rows, history: hist, can_manage: canManage(actor), built_in: EMAIL_TEMPLATES.map(([key, name, ctx, subject, body]) => ({ key, name, ctx, subject, body })) };
 }
 export async function saveEmailTemplate(actor: Actor, b: any) {
   if (!canManage(actor)) throw forbidden('Only the Commercials Manager can change templates');

@@ -93,7 +93,7 @@ export async function answersFor(quotationId: string) {
     where a.quotation_id = $1 and a.answer is not null order by a.answered_at desc`, [quotationId]);
 }
 export async function markAnswerHandled(actor: Actor, quotationId: string, answerId: string) {
-  if (!actor.has('quotes.create')) throw forbidden();
+  if (!actor.has('quotes.edit')) throw forbidden();
   if (!/^[0-9a-f-]{36}$/i.test(answerId)) throw notFound('Answer');
   const { getQuotation } = await import('./quotations');
   await getQuotation(actor, quotationId);                              // can this person see the quotation?

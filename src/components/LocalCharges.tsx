@@ -75,7 +75,7 @@ export function LocalChargesBox({ f, setF, routes, cur }: { f: any; setF: (v: an
       {!d && !err && <p className="small muted">Working out…</p>}
       {d && <>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'end', margin: '6px 0' }}>
-          <label className="f" style={{ minWidth: 240 }}><span>Rate card</span><select value={p.card_id ?? ''} onChange={(e) => calc({ card_id: e.target.value || undefined })}>
+          <label className="f" style={{ flex: '1 1 240px', maxWidth: 380 }}><span>Rate card</span><select value={p.card_id ?? ''} onChange={(e) => calc({ card_id: e.target.value || undefined })}>
             <option value="">{d.choices.length ? 'Choose a card' : 'No card for this mode'}</option>
             {d.choices.map((c: any) => <option key={c.id} value={c.id}>{c.name}{c.fits ? '' : ' (does not match)'}</option>)}</select></label>
           {f.service_type !== 'air' && d.params.mode !== 'air' ? <>{num('n20', '20 ft')}{num('n40', '40 ft')}</> : num('kg', 'Weight (kg)', 90)}

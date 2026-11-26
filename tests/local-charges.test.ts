@@ -84,7 +84,7 @@ test('air: the airline picks the card (Emirates or DNATA); per kg with a minimum
 });
 
 test('the cards: team leaders change them (old version kept); others only read; cost needed to see them', async () => {
-  await assert.rejects(saveCard(cora, null, { name: 'X', mode: 'air', direction: 'import', lines: [{ description: 'DO', unit: 'bl', cost: 1 }] }), /Only the admin, team leaders/);
+  await assert.rejects(saveCard(cora, null, { name: 'X', mode: 'air', direction: 'import', lines: [{ description: 'DO', unit: 'bl', cost: 1 }] }), /cannot add local charges/);
   assert.equal((await listCards(cora) as any).can_manage, false, 'a coordinator reads the cards, does not change them');
   const list: any = await listCards(boss);
   assert.ok(list.can_manage && list.cards.length >= 6);

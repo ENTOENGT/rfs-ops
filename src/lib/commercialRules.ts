@@ -39,3 +39,63 @@ export const PREALERT_CHECKS: [string, string][] = [['check_vessel', 'Vessel / f
   ['check_bl', 'BL / AWB'], ['check_etd', 'ETD'], ['check_eta', 'ETA']];
 export const RESPONSES: [string, string][] = [['accepted', 'Accepted'], ['revision_requested', 'Asked for changes'], ['declined', 'Declined'],
   ['no_reply', 'No reply yet'], ['note', 'Note']];
+
+/**
+ * 26 Nov (Point 16): where the enquiry stands — the steps from enquiry to handover, the one next action (with where to do it)
+ * and what is still open. Worked out from the record the enquiry page already has; nothing is stored.
+ */
+export type Progress = { steps: { name: string; state: 'done' | 'now' | 'todo'; sub?: string }[];
+  next: { text: string; label?: string; tab?: string; href?: string }; pending: string[] };
+export const PROGRESS_STEPS = ['Enquiry created', 'Vendor rates', 'Compare rates', 'Prepare quotation', 'Send quotation', 'Customer approval',
+  'Confirm availability', 'Create booking', 'Operations handover'];
+export function progressOf(d: any): Progress {
+  const st: string = d.stage ?? 'enquiry';
+  const at = (s: string) => STAGE_ORDER.indexOf(s);
+  const rates = (d.vendor_requests ?? []).filter((r: any) => r.service === 'rate' && r.status !== 'cancelled');
+  const got = rates.filter((r: any) => r.quoted_cost !== null && r.quoted_cost !== undefined).length;
+  const quotes = (d.quotations ?? []).filter((x: any) => !['cancelled', 'rejected', 'expired'].includes(x.status));
+  const q = quotes[quotes.length - 1];                                    // the latest one
+  const av = d.availability;
+  const sel = (d.routes ?? []).find((x: any) => x.id === d.selected_route_id);
+  const option = sel ? `Option ${sel.option_no}${sel.label ? ` – ${sel.label}` : ''}` : 'the quotation';
+  // which step we are on (index into PROGRESS_STEPS)
+  const now = st === 'handed_over' ? 9
+    : at(st) >= at('booking_confirmed') ? 8
+    : st === 'booking_requested' || av?.status === 'confirmed' ? 7
+    : st === 'customer_confirmed' ? 6
+    : st === 'sent_to_customer' ? 5
+    : q && ['approved'].includes(q.status) ? 4
+    : q || ['quotation_draft', 'pending_approval'].includes(st) ? 3
+    : got > 0 && (st === 'rates_received' || got === rates.length) ? 2 : 1;
+  const steps = PROGRESS_STEPS.map((name, i) => ({ name, state: (i < now ? 'done' : i === now ? 'now' : 'todo') as 'done' | 'now' | 'todo',
+    sub: i === 1 && rates.length ? `${got} of ${rates.length} received` : i === 8 && now === 8 ? stageName(st) : undefined }));
+  const quote = q ? `/quotations/${q.id}` : undefined;
+  let next: Progress['next'];
+  if (['lost', 'cancelled'].includes(st)) next = { text: st === 'lost' ? 'Lost' : 'Cancelled' };
+  else if (now === 9) next = { text: 'Handed over to Operations.' };
+  else if (now === 8) next = st === 'prealert_verified' ? { text: 'Pre-alert verified. Hand over to Operations.', label: 'Hand over', tab: 'overview' }
+    : st === 'prealert_received' ? { text: 'Pre-alert received. Check it against the booking.', label: 'Check pre-alert', tab: 'overview' }
+    : { text: 'Booking confirmed. Waiting for the vessel details and pre-alert.', label: 'Open vessel details', tab: 'vessel' };
+  else if (now === 7) next = st === 'booking_requested' ? { text: `Booking sent${d.booking ? ` to ${d.booking.vendor_name}` : ''}. Waiting for the confirmation.`, label: 'Open booking', tab: 'booking' }
+    : { text: 'Vendor confirmed availability.', label: 'Proceed to booking', tab: 'booking' };
+  else if (now === 6) next = av?.status === 'sent' ? { text: `Customer approved ${option}. Waiting for ${av.vendor_name ?? 'the vendor'} to confirm availability.`, label: 'Open booking', tab: 'booking' }
+    : av?.status === 'unavailable' ? { text: `The quoted space is not available${av.reason ? ` (${av.reason})` : ''}. Ask for the next sailing and tell the customer.`, label: 'Open booking', tab: 'booking' }
+    : d.approved_rate ? { text: `Customer approved ${option}. Vendor availability confirmation is pending.`, label: 'Prepare availability email', tab: 'booking' }
+    : { text: `Customer approved ${option}. Send the booking to the agent or carrier.`, label: 'Open booking', tab: 'booking' };
+  else if (now === 5) next = d.open_items?.answers ? { text: 'The customer answered from the quotation email.', label: 'See the answer', href: quote }
+    : { text: 'Quotation sent. Waiting for the customer.', label: 'Open quotation', href: quote };
+  else if (now === 4) next = { text: `Quotation ${q.quote_no} approved. Send it to the customer.`, label: 'Send quotation', href: quote };
+  else if (now === 3) next = q?.status === 'pending_approval' ? { text: `Quotation ${q.quote_no} is waiting for approval.`, label: 'Open quotation', href: quote }
+    : q ? { text: `Finish quotation ${q.quote_no} and send it for approval.`, label: 'Open quotation', href: quote }
+    : { text: 'Make the quotation.', label: 'Prepare quotation', tab: 'rates' };
+  else if (now === 2) next = { text: 'Vendor rates received. Ready to compare.', label: 'Compare vendor rates', tab: 'rates' };
+  else next = rates.length ? { text: `Waiting for vendor rates (${got} of ${rates.length} received).`, label: 'Open vendor rates', tab: 'rates' }
+    : { text: 'Ask agents or carriers for rates.', label: 'Request vendor rates', tab: d.routes?.length || !d.can?.edit ? 'rates' : 'routing' };
+  const pending = [
+    (d.enquiry_gaps ?? []).length ? `${d.enquiry_gaps.length} missing detail${d.enquiry_gaps.length > 1 ? 's' : ''} from the customer` : null,
+    d.open_items?.clarifications ? `${d.open_items.clarifications} clarification${d.open_items.clarifications > 1 ? 's' : ''} open` : null,
+    now === 1 && rates.length > got ? `${rates.length - got} vendor rate${rates.length - got > 1 ? 's' : ''} awaited` : null,
+    d.open_items?.answers ? `${d.open_items.answers} customer answer${d.open_items.answers > 1 ? 's' : ''} to handle` : null,
+  ].filter((x): x is string => !!x);
+  return { steps, next, pending };
+}

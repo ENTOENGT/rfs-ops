@@ -1,12 +1,15 @@
-RFS CRM — update 26 Nov, commit 2 of 3 (emails and quotations)
+RFS CRM — update 26 Nov, commit 3 of 3 (permissions, availability check, enquiry progress, UI)
 
-1. In Supabase → SQL Editor, run the file  db/migrations/046_emails_and_answers.sql  (safe to run twice; nothing is removed).
+1. In Supabase → SQL Editor, run  db/migrations/047_permissions_and_booking.sql  (safe to run twice; nothing is removed).
+   Everyone keeps the access they have today.
 2. Upload all the files in this zip to GitHub in ONE commit (same folders as in the zip).
-   Commit message: "Emails and quotations: signature, enquiry received, option details, answer buttons"
-3. Netlify: check APP_URL is set to your site address (e.g. https://rfsops.netlify.app). The answer buttons in the email use it.
-4. After it deploys, test:
-   a. Outlook page → Email signature → upload your signature picture → send a test email to yourself.
-   b. Outlook → open a customer enquiry email → New enquiry → Save → the customer gets "Enquiry Received – <ref>" (only once).
-   c. Send a vendor rate request → the rates table shows "Sent ✓" (or "Failed !" with the reason).
-   d. Open an approved quotation → "Shipment details for the customer" → fill ETD / anything missing → Save.
-   e. Send the quotation email to yourself → click Accept / Reject / Negotiate → the quotation shows "Customer answered from the email".
+   Commit message: "Permissions by action, vendor availability check, enquiry progress, UI review, desktop app"
+3. After it deploys, test:
+   a. Administration → Roles & permissions: make a role with only "Local charges & rate cards → View + Edit". Give it to a test user.
+      That user sees Local charges, can change rates, cannot add a card, and sees no other module.
+   b. Open an enquiry: the progress line at the top shows the step and one "Next step" button.
+   c. Confirm a quotation option → the team gets "Customer approved Option N …". Booking tab → "Prepare availability email" → send.
+      When the vendor replies, the AI marks it confirmed or not available (or press "Vendor confirmed" / "Not available").
+      Not available → "Ask the vendor for the next sailing" and "Tell the customer".
+   d. Desktop: in Chrome or Edge, your name (top right) → "Install RFS CRM as an app".
+   e. The sparkle icon next to Outlook shows what the AI is working on.

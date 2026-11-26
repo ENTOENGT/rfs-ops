@@ -109,6 +109,12 @@ h3 { font-weight: 650; }
 .ol-btn .dot { white-space: nowrap; pointer-events: none; }
 /* 26 Nov: a badge grows to the right, away from its icon, so "99+" never covers it */
 .top-actions .bell .dot { left: 22px; right: auto; top: -5px; }
+/* 26 Nov: the AI's live status in the top bar */
+.ai-btn.busy svg { color: var(--navy-700, #2b6cb0); animation: ai-pulse 1.6s ease-in-out infinite; }
+@keyframes ai-pulse { 50% { opacity: .45; } }
+@media (prefers-reduced-motion: reduce) { .ai-btn.busy svg { animation: none; } }
+.ai-pop { width: 320px; max-width: calc(100vw - 32px); }
+.ai-pop a span { display: block; min-width: 0; white-space: normal; line-height: 1.35; }
 .top-actions .bell { margin-right: 14px; }
 .icon-btn { all: unset; box-sizing: border-box; display: inline-grid; place-items: center; width: 38px; height: 38px; border-radius: 10px; color: var(--ink-2); cursor: pointer; position: relative; }
 .icon-btn:hover { background: var(--surface-3); color: var(--ink); text-decoration: none; }
@@ -647,30 +653,34 @@ table.t, .kpi b, .stat-n, .num, .bar b, .funnel-n, .pager { font-variant-numeric
   .rail { z-index: 21; }
 }
 
-/* Record header (UI redesign): people and numbers in one row, 5-step progress line, next-step box */
+/* Record header: people and numbers in one row, the steps from enquiry to handover, the next-step bar (26 Nov: Point 16) */
 .rec-head { padding: 18px 22px; }
 .rec-info { display: flex; flex-wrap: wrap; gap: 10px 34px; }
 .rec-info > div span { display: block; font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); font-weight: 600; margin-bottom: 2px; }
 .rec-info > div b { font-size: 14px; font-weight: 600; }
 .rec-info > div b.muted { color: var(--muted); }
-.rec-progress { display: flex; align-items: center; gap: 24px; margin-top: 18px; padding-top: 18px; border-top: 1px solid var(--line-soft, #eef1f5); }
-.steps { list-style: none; margin: 0; padding: 0; display: flex; flex: 1; min-width: 0; cursor: default; }
-.steps li { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 6px; position: relative; text-align: center; }
+.rec-progress { display: flex; flex-direction: column; gap: 16px; margin-top: 18px; padding-top: 18px; border-top: 1px solid var(--line-soft, #eef1f5); }
+.steps { list-style: none; margin: 0; padding: 0 0 2px; display: flex; flex: 1; min-width: 0; cursor: default; overflow-x: auto; }
+.steps li { flex: 1 0 84px; display: flex; flex-direction: column; align-items: center; gap: 6px; position: relative; text-align: center; }
 .steps li + li::before { content: ''; position: absolute; top: 12px; right: calc(50% + 20px); left: calc(-50% + 20px); height: 3px; border-radius: 3px; background: var(--line); }
 .steps li.done::before, .steps li.now::before { background: var(--ok); }
 .step-dot { width: 26px; height: 26px; border-radius: 50%; display: grid; place-items: center; font-size: 13px; font-weight: 700; background: var(--surface-3); color: var(--faint); position: relative; z-index: 1; }
 .steps .done .step-dot { background: var(--ok); color: #fff; }
 .steps .now .step-dot { background: var(--navy-800); color: #fff; box-shadow: 0 0 0 5px var(--navy-50); }
-.step-name { font-size: 12.5px; font-weight: 600; color: var(--ink); }
+.step-name { font-size: 12px; font-weight: 600; color: var(--ink); line-height: 1.25; }
 .steps .todo .step-name { color: var(--faint); }
 .steps .now .step-name { color: var(--navy-800); }
 .step-sub { font-size: 11px; font-weight: 600; color: var(--warn); margin-top: -3px; }
-.next-box { background: var(--warn-bg); border: 1px solid #f4d9a8; border-radius: 12px; padding: 10px 14px; flex: 0 1 300px; }
+.next-box { background: var(--warn-bg); border: 1px solid #f4d9a8; border-radius: 12px; padding: 10px 14px; display: flex; align-items: center; gap: 14px; }
+.next-box > div { flex: 1; min-width: 0; }
+.next-box > .btn { flex: none; }
+.next-pending { font-size: 12.5px; color: var(--muted); margin-top: 2px; }
 .next-box span { display: block; font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--warn); font-weight: 700; }
 .next-box b { font-size: 14px; font-weight: 600; }
 .next-box.ok { background: var(--ok-bg); border-color: #bfe3cd; }
 .next-box.ok span { color: var(--ok); }
-@media (max-width: 1100px) { .rec-progress { flex-direction: column; align-items: stretch; } .next-box { flex: none; } .rec-info { gap: 10px 24px; } }
+@media (max-width: 1100px) { .rec-info { gap: 10px 24px; } }
+@media (max-width: 700px) { .next-box { flex-direction: column; align-items: stretch; } }
 @media (max-width: 600px) { .step-name { font-size: 11px; } .step-sub { display: none; } }
 
 /* one row of record tabs; the rest under More */
@@ -966,3 +976,32 @@ html[data-theme="dark"] .qp-sheet { background: #fff; color: #18212d; }
 html[data-theme="dark"] :is(.subnav nav a.on, .tabs button.on, .tabs a.on, .tabs .on .count, .link-tabs a.on, .steps .now .step-name, .tab-more > button.on,
   .tab-more .menu-pop button:hover, .tab-more .menu-pop button.on, .terms-info b) { color: #a9c6f2; }
 html[data-theme="dark"] .btn.primary, html[data-theme="dark"] .app-tabs button.on { background: #3b6fb6; border-color: #3b6fb6; color: #fff; }
+
+/* 26 Nov (Point 17): one consistent pass over spacing and alignment across the CRM */
+/* tables: numbers, amounts, references, headers and status badges stay on one line; long text wraps */
+.t th { white-space: nowrap; }
+.t td.num, .t th.num { white-space: nowrap; font-variant-numeric: tabular-nums; }
+.t .badge, .t td > a:first-child:not(.btn) { white-space: nowrap; }
+.t td .btn, .t td button { white-space: nowrap; }
+.t td { vertical-align: middle; }
+.t td.nowrap, .t th.nowrap { white-space: nowrap; }
+/* with the module menu open, the two-column record layouts and the breadcrumb need more room before they fit */
+@media (max-width: 1360px) { .shell:has(.subnav) .cols { grid-template-columns: minmax(0, 1fr); } }
+@media (max-width: 1280px) { .shell:has(.subnav) .crumbs { display: none; } }
+/* record header: the status dot sits on the line with the name */
+.rec-info > div b { display: inline-flex; align-items: center; gap: 6px; }
+/* forms: labels the same height, so inputs in one row line up */
+label.f > span:first-child { min-height: 18px; display: flex; align-items: flex-end; gap: 4px; }
+.grid > label.f { align-self: end; }
+/* buttons in a row wrap neatly with equal gaps */
+.page-head { flex-wrap: wrap; row-gap: 8px; }
+.actions, .form-actions { flex-wrap: wrap; gap: 8px; }
+/* a fieldset grows to its widest table by default, pushing the page sideways — keep it inside its panel */
+fieldset { min-width: 0; }
+.table-wrap { max-width: 100%; }
+/* tables of inputs (rate cards, charge lines): each input keeps a usable width; the table scrolls inside its panel */
+.t.edit-grid td { padding: 6px 4px; }
+.t.edit-grid input, .t.edit-grid select { min-width: 0; width: 100%; }
+/* on tablets a wide list scrolls sideways inside its panel instead of squeezing every column to one or two words */
+.table-wrap > .t:has(thead th:nth-child(6)) { min-width: 860px; }   /* only real lists (6+ columns); small tables stay as they are */
+.table-wrap > .t:has(thead th:nth-child(6)) td:first-child { min-width: 150px; }

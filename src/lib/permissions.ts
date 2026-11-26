@@ -22,7 +22,20 @@ export type Perm =
   | 'commercial.manage' | 'jobfiles.view_assigned' | 'jobfiles.view_handed_over' | 'jobfiles.handover' | 'quotes.salesman_approve'
   | 'rates.agent_coordination' | 'customers.view_all'
   | 'lcl.view' | 'lcl.manage' | 'lcl.receive' | 'lcl.stuff'
-  | 'templates.manage' | 'emails.view' | 'local_charges.manage';
+  | 'templates.manage' | 'emails.view' | 'local_charges.manage'
+  // migration 047: one action only; the "manage" right still means all of them (see canDo)
+  | 'local_charges.view' | 'local_charges.create' | 'local_charges.edit'
+  | 'vendors.view' | 'vendors.create' | 'vendors.edit' | 'vendors.delete'
+  | 'customers.create' | 'customers.edit' | 'customers.delete'
+  | 'templates.view' | 'templates.edit' | 'quotes.edit' | 'quotes.cancel';
+
+/** Migration 047: may this person do one action in a module? "x.manage" gives every action; "x.create" etc. just that one. */
+export function canDo(has: (p: Perm) => boolean, manage: Perm, action: 'view' | 'create' | 'edit' | 'delete'): boolean {
+  if (has(manage)) return true;
+  if (!manage.endsWith('.manage')) return false;
+  const one = (a: string) => has(manage.replace(/manage$/, a) as Perm);
+  return one(action) || (action === 'view' && ['create', 'edit', 'delete'].some(one));   // whoever may change it may see it
+}
 
 export type Side = 'admin' | 'operations' | 'transport' | 'messenger' | 'finance' | 'pro' | 'warehouse';
 /** Sides that can never see selling price, revenue, profit or quotations (database rule user_has_perm). */

@@ -14,7 +14,7 @@ import { AiRecommend } from './AiRecommend';
 import { StatusDot, statusText } from './Presence';
 import { EmailButton } from './EmailButton';
 import { NewVendorRequest } from './NewVendorRequest';
-import { STAGES, PRE_CONFIRM, PREALERT_CHECKS, divisionName, rateSourceName, stageName } from '@/lib/commercialRules';
+import { STAGES, PRE_CONFIRM, PREALERT_CHECKS, divisionName, rateSourceName, stageName, progressOf } from '@/lib/commercialRules';
 import { routeLabel, BL_BEFORE_HANDOVER } from '@/lib/routingRules';
 
 /** Upload a file to this shipment's documents; returns the new document's id. */
@@ -28,13 +28,6 @@ export async function uploadToShipment(fileId: string, file: File, docType: stri
 }
 
 /** The 13 stages grouped into 5 steps for the progress line (UI redesign); the exact stage shows under the current step. */
-const PHASES: [string, string[]][] = [
-  ['Enquiry', ['enquiry', 'rates_requested', 'rates_received']],
-  ['Quotation', ['quotation_draft', 'pending_approval', 'sent_to_customer']],
-  ['Booking', ['customer_confirmed', 'booking_requested', 'booking_confirmed']],
-  ['Pre-alert', ['prealert_awaited', 'prealert_received', 'prealert_verified']],
-  ['Handover', ['handed_over']],
-];
 const PART: Record<string, string> = { cs: 'Customer Service', ops: 'Operations', docs: 'Documentation' };
 const HCOL: Record<string, string> = { cs: 'cs_handler_id', ops: 'ops_handler_id', docs: 'docs_handler_id' };
 /** Migration 026: choose or change a job's handler for one part (Customer Service, Operations, Documentation). */
@@ -100,16 +93,16 @@ export function HandlersPanel({ d, reload }: { d: any; reload: () => void }) {
 }
 
 /** The numbers, the people, and where the shipment stands. */
-export function StageHeader({ d, act, reload }: { d: any; act?: (b: any, done?: string) => Promise<any>; reload?: () => void }) {
+export function StageHeader({ d, act, reload, go }: { d: any; act?: (b: any, done?: string) => Promise<any>; reload?: () => void; go?: (tab: string) => void }) {
   const { can, lk } = useMe();
   const [re, setRe] = useState<any>(null);
   const [cs, setCs] = useState(false);
   if (!d.enquiry_ref) return null;
   const done = d.stage === 'handed_over';
-  const at = PHASES.findIndex(([, st]) => st.includes(d.stage));
   const canReassign = act && can('commercial.manage') && !['handed_over', 'lost', 'cancelled'].includes(d.stage);
   const stopped = ['lost', 'cancelled'].includes(d.stage);
   const full = STAGES.filter(([c]) => !['lost', 'cancelled'].includes(c)).map(([c, n]) => n).join(' → ');
+  const prog = progressOf(d);
   return (
     <div className="panel rec-head">
       <div className="rec-info">
@@ -135,17 +128,20 @@ export function StageHeader({ d, act, reload }: { d: any; act?: (b: any, done?: 
       </div>}
       {stopped ? <div className="msg warn" style={{ margin: '14px 0 0' }}>{d.stage === 'lost' ? 'Lost' : 'Cancelled'}: {d.cancel_reason}</div>
         : <div className="rec-progress">
+          {/* 26 Nov (Point 16): every step from enquiry to handover, the one next action, and what is still open */}
           <ol className="steps" aria-label={`Progress: ${stageName(d.stage)}`} title={full}>
-            {PHASES.map(([name], i) => {
-              const cls = done || i < at ? 'done' : i === at ? 'now' : 'todo';
-              return <li key={name} className={cls}>
-                <span className="step-dot">{cls === 'done' ? '✓' : i + 1}</span>
-                <span className="step-name">{name}</span>
-                {cls === 'now' && <span className="step-sub">{stageName(d.stage)}</span>}
-              </li>;
-            })}
+            {prog.steps.map((s, i) => <li key={s.name} className={s.state}>
+              <span className="step-dot">{s.state === 'done' ? '✓' : i + 1}</span>
+              <span className="step-name">{s.name}</span>
+              {s.sub && <span className="step-sub">{s.sub}</span>}
+            </li>)}
           </ol>
-          <div className={`next-box${done ? ' ok' : ''}`}><span>{done ? 'Done' : 'Next step'}</span><b>{done ? 'Handed over to Operations' : d.next_action}</b></div>
+          <div className={`next-box${done ? ' ok' : ''}`}>
+            <div><span>{done ? 'Done' : 'Next step'}</span><b>{prog.next.text}</b>
+              {prog.pending.length > 0 && <div className="next-pending">Open: {prog.pending.join(' · ')}</div>}</div>
+            {prog.next.label && (prog.next.href ? <Link className="btn primary small" href={prog.next.href}>{prog.next.label}</Link>
+              : go && prog.next.tab && <button className="btn primary small" onClick={() => go(prog.next.tab!)}>{prog.next.label}</button>)}
+          </div>
         </div>}
     </div>
   );
@@ -225,12 +221,12 @@ export function RatesAndQuotes({ d, reload }: { d: any; reload: () => void }) {
 }
 
 /** After the customer confirms: book with the chosen agent / carrier, then record the confirmation. */
-export function BookingPanel({ d, act }: { d: any; act: (b: any, done?: string) => Promise<unknown> }) {
+export function BookingPanel({ d, act, reload }: { d: any; act: (b: any, done?: string) => Promise<unknown>; reload?: () => void }) {
   const { me } = useMe();
   // Part G2: only the option the customer chose can be booked
   const rates = (d.vendor_requests ?? []).filter((r: any) => r.service === 'rate' && r.status !== 'cancelled' && r.quoted_cost !== null
     && (!d.selected_route_id || !r.route_id || r.route_id === d.selected_route_id));
-  const preferred = rates.find((r: any) => r.status === 'confirmed') ?? rates.find((r: any) => r.lowest) ?? rates[0];
+  const preferred = rates.find((r: any) => r.id === d.approved_rate?.id) ?? rates.find((r: any) => r.status === 'confirmed') ?? rates.find((r: any) => r.lowest) ?? rates[0];
   const [b, setB] = useState<any>({ rate_request_id: preferred?.id ?? '', needed_by: '', description: '' });
   const [c, setC] = useState<any>({ booking_reference: '', carrier: d.carrier ?? '', vessel_flight: d.vessel_flight ?? '', voyage: d.voyage ?? '', etd: d.etd ?? '', eta: d.eta ?? '', prealert_expected: '',
     booking_confirmed_on: new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Dubai' }), port_of_loading: d.port_of_loading ?? '', port_of_discharge: d.port_of_discharge ?? '', booked_equipment: '', routing_type: 'direct' });
@@ -239,6 +235,7 @@ export function BookingPanel({ d, act }: { d: any; act: (b: any, done?: string) 
   if (!d.can.book && !d.can.confirm_booking && !d.booking) return null;
   return (
     <div className="panel"><h2>Booking</h2>
+      {d.can.book && <Availability d={d} act={act} reload={reload} />}
       {d.booking && <p className="small" style={{ marginTop: 0 }}>Booking request <Link href={`/vendor-requests/${d.booking.id}`}><b>{d.booking.request_no}</b></Link> with {d.booking.vendor_name}
         {' '}— {d.booking.status === 'confirmed' ? <>confirmed{d.booking.vendor_reference && <>, ref. <b>{d.booking.vendor_reference}</b></>}</> : d.booking.status}
         {' '}<EmailButton kind="vendor_request" id={d.booking.id} className="btn small" label="Email booking" /></p>}
@@ -279,6 +276,42 @@ export function BookingPanel({ d, act }: { d: any; act: (b: any, done?: string) 
             await act({ action: 'confirm-booking', ...c, document_id }, 'Booking confirmed — now waiting for the vessel details, BL draft and pre-alert'); }
           catch (e: any) { alert(e.message); } finally { setBusy(false); } }}>Save booking confirmation</button>
       </>}
+    </div>
+  );
+}
+
+/**
+ * 26 Nov (Point 13): before booking, the vendor who gave the approved rate confirms space and rate. Their reply is read by the
+ * AI; the person can always record or correct it. Nothing changes the customer's approved option by itself.
+ */
+function Availability({ d, act, reload }: { d: any; act: (b: any, done?: string) => Promise<unknown>; reload?: () => void }) {
+  const [no, setNo] = useState<{ reason: string; alternative: string } | null>(null);
+  const a = d.availability, r = d.approved_rate;
+  if (!r) return null;
+  const sel = (d.routes ?? []).find((x: any) => x.id === d.selected_route_id);
+  const approved = `Customer approved ${sel ? `Option ${sel.option_no}${sel.label ? ` – ${sel.label}` : ''}` : 'the quotation'}`;
+  const ask = (label: string, cls = 'btn small primary') => <EmailButton kind="vendor_request" id={r.id} update="availability_check" className={cls} label={label} onLogged={reload} />;
+  const box = (tone: string, children: React.ReactNode) => <div className={`msg ${tone}`} style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>{children}</div>;
+  return (
+    <div style={{ marginBottom: 12 }} role="region" aria-label="Vendor availability">
+      {!a && box('', <><span><b>{approved}.</b> Confirm space and rate with {r.vendor_name} ({r.request_no}) before booking.</span><span className="spacer" />{ask('Prepare availability email')}</>)}
+      {a?.status === 'sent' && !no && box('warn', <><span>Waiting for {a.vendor_name} to confirm availability — asked {fmtDateTime(a.sent_at)}. Their reply is read automatically.</span><span className="spacer" />
+        <button className="btn small" onClick={() => act({ action: 'availability', result: 'confirmed' }, 'Availability confirmed — go ahead with the booking')}>Vendor confirmed</button>
+        <button className="btn small" onClick={() => setNo({ reason: '', alternative: '' })}>Not available</button></>)}
+      {no && <div className="grid g3" style={{ marginBottom: 8 }}>
+        <label className="f"><span>What the vendor said <em>*</em></span><input value={no.reason} placeholder="e.g. vessel full, rate no longer valid" onChange={(e) => setNo({ ...no, reason: e.target.value })} /></label>
+        <label className="f"><span>What they offer instead (optional)</span><input value={no.alternative} placeholder="e.g. next vessel 12 Dec, USD 50 more" onChange={(e) => setNo({ ...no, alternative: e.target.value })} /></label>
+        <div style={{ display: 'flex', gap: 6, alignItems: 'end' }}><button className="btn small" onClick={() => setNo(null)}>Cancel</button>
+          <button className="btn small primary" disabled={!no.reason.trim()} onClick={async () => { if (await act({ action: 'availability', result: 'unavailable', ...no }, 'Recorded — ask for the next sailing and tell the customer')) setNo(null); }}>Save</button></div>
+      </div>}
+      {a?.status === 'confirmed' && box('ok', <span>{a.vendor_name} confirmed availability{a.answer_source === 'ai' ? ' (read from their reply)' : a.answered_by_name ? ` (recorded by ${a.answered_by_name})` : ''}. Book at the agreed rate below.</span>)}
+      {a?.status === 'unavailable' && <>
+        {box('warn', <span><b>Not available:</b> {a.reason}{a.alternative && <> · <b>Offered:</b> {a.alternative}</>}{a.answer_source === 'ai' && ' (read from their reply)'}. The customer's approved option is not changed.</span>)}
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          <EmailButton kind="vendor_request" id={r.id} update="availability_followup" className="btn small primary" label="Ask the vendor for the next sailing" />
+          <EmailButton kind="job_file" id={d.id} update="shipment_update:space_unavailable" className="btn small" label="Tell the customer" />
+          {ask('Ask availability again', 'btn small')}
+        </div></>}
     </div>
   );
 }

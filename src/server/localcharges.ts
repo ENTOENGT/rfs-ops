@@ -15,6 +15,7 @@ import { Actor } from './auth';
 import { audit, bad, forbidden, notFound, one, q, tx } from './db';
 import { fxRate } from '../lib/currency';
 import { scopeConflicts } from '../lib/opsRules';
+import { canDo } from '../lib/permissions';
 
 const isUuid = (v: unknown): v is string => typeof v === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v);
 const txt = (v: unknown, max: number) => { const s = String(v ?? '').trim(); return s ? s.slice(0, max) : null; };
@@ -28,15 +29,17 @@ export const UNITS: [string, string][] = [['container', 'per container'], ['bl',
 export const TAGS: [string, string][] = [['always', 'Always'], ['receipt', 'As per receipt'], ['if_applicable', 'If applicable (not in total)']];
 export const SERVICES: [string, string][] = [['clearance', 'Clearance'], ['transport', 'Transport'], ['handling', 'Our handling'], ['other', 'Other']];
 
-const canSee = (a: Actor) => a.isSuperAdmin || a.has('local_charges.manage') || a.fin.buyingView;
-const canManage = (a: Actor) => a.isSuperAdmin || a.has('local_charges.manage');
+// migration 047: View / Add / Change one by one, or everything with "Manage local charges"
+const can = (a: Actor, act: 'view' | 'create' | 'edit') => a.isSuperAdmin || canDo(a.has, 'local_charges.manage', act);
+const canSee = (a: Actor) => can(a, 'view') || a.fin.buyingView;
+const canManage = (a: Actor) => can(a, 'create') || can(a, 'edit');
 
 // ------------------------------------------------------------------ the cards
 export async function listCards(actor: Actor) {
   if (!canSee(actor)) throw forbidden();
   const cards = await q(`select c.*, u.full_name updated_by_name, (select count(*)::int from local_charge_lines l where l.card_id = c.id) line_count
     from local_charge_cards c left join users u on u.id = c.updated_by order by c.is_active desc, c.mode, c.direction, c.name`);
-  return { cards, can_manage: canManage(actor), units: UNITS, tags: TAGS, services: SERVICES, modes: MODES };
+  return { cards, can_manage: canManage(actor), can_add: can(actor, 'create'), can_edit: can(actor, 'edit'), units: UNITS, tags: TAGS, services: SERVICES, modes: MODES };
 }
 
 export async function getCard(actor: Actor, id: string) {
@@ -46,12 +49,12 @@ export async function getCard(actor: Actor, id: string) {
   if (!card) throw notFound('Rate card');
   const lines = await q('select * from local_charge_lines where card_id = $1 order by sort_order', [id]);
   const history = await q('select version, user_name, at from local_charge_history where card_id = $1 order by version desc limit 30', [id]);
-  return { card, lines, history, can_manage: canManage(actor) };
+  return { card, lines, history, can_manage: can(actor, 'edit') };
 }
 
 /** Create (id null) or save a card with all its lines. The old version is kept in the history. */
 export async function saveCard(actor: Actor, id: string | null, b: any) {
-  if (!canManage(actor)) throw forbidden('Only the admin, team leaders and people given "Manage local charges" can change the rate cards');
+  if (!can(actor, id ? 'edit' : 'create')) throw forbidden(id ? 'You cannot change the local charges rate cards' : 'You cannot add local charges rate cards');
   const name = txt(b?.name, 120);
   if (!name) throw bad('Name the card, e.g. "Sea import FCL – Jebel Ali clearance"');
   if (!MODES.includes(b?.mode)) throw bad('Choose the mode');

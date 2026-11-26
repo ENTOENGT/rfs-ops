@@ -220,7 +220,7 @@ export async function getQuotation(actor: Actor, id: string) {
   });
   const minMargin = Number(await getSetting('quote_min_margin_pct', 10));
   const vendorRates = x.job_file_id && actor.fin.buyingView ? await vendorRatesFor(x.job_file_id) : [];
-  const editable = ['draft', 'pending_approval', 'approved'].includes(x.status) && actor.has('quotes.create');
+  const editable = ['draft', 'pending_approval', 'approved'].includes(x.status) && actor.has('quotes.edit');
   const rateWarnings = actor.fin.buyingView ? await cheaperWarnings(lines) : [];
   const versions = await q('select version_no, reason, made_by_name, at from quotation_versions where quotation_id = $1 order by version_no desc, id desc', [id]);
   const responses = await q('select version_no, response, note, document_id, user_name, at from quotation_responses where quotation_id = $1 order by at desc, id desc', [id]);
@@ -232,16 +232,16 @@ export async function getQuotation(actor: Actor, id: string) {
   return { ...v, events, versions, responses, min_margin_pct: minMargin, vendor_rates: vendorRates, rate_warnings: rateWarnings, routes, options, details, details_saved: x.details ?? {}, scope_flags: scopeFlags, answers,
     approvals: { salesman: x.salesman_id ? (x.salesman_decision ?? (pending ? 'waiting' : null)) : null,
       manager: x.needs_manager ? (x.approved_by && pending ? 'approved' : pending ? 'waiting' : null) : null },
-    can: { edit: editable, submit: x.status === 'draft' && actor.has('quotes.create'),
+    can: { edit: editable, submit: x.status === 'draft' && actor.has('quotes.edit'),
       salesman_approve: salesmanTurn && ((actor.has('quotes.salesman_approve') && (x.salesman_id === actor.id || actor.has('commercial.manage') || actor.isSuperAdmin))
         || (x.salesman_id === actor.id && actor.role_is_manager)),   // a team manager who owns the enquiry approves as its Salesman
       approve: pending && actor.has('quotes.approve') && (x.needs_manager || !x.salesman_id) && !(x.needs_manager && x.approved_by),
-      revise: ['approved', 'sent'].includes(x.status) && actor.has('quotes.create'),
-      respond: ['sent', 'approved'].includes(x.status) && actor.has('quotes.create'),
-      send: x.status === 'approved' && v.status !== 'expired' && actor.has('quotes.create'),
-      accept: ['approved', 'sent'].includes(x.status) && v.status !== 'expired' && actor.has('quotes.create') && (!!x.job_file_id || actor.has('jobfiles.create')),
-      decline: ['approved', 'sent'].includes(x.status) && actor.has('quotes.create'),
-      cancel: ['draft', 'pending_approval', 'approved', 'sent'].includes(x.status) && actor.has('quotes.create'),
+      revise: ['approved', 'sent'].includes(x.status) && actor.has('quotes.edit'),
+      respond: ['sent', 'approved'].includes(x.status) && actor.has('quotes.edit'),
+      send: x.status === 'approved' && v.status !== 'expired' && actor.has('quotes.edit'),
+      accept: ['approved', 'sent'].includes(x.status) && v.status !== 'expired' && actor.has('quotes.edit') && (!!x.job_file_id || actor.has('jobfiles.create')),
+      decline: ['approved', 'sent'].includes(x.status) && actor.has('quotes.edit'),
+      cancel: ['draft', 'pending_approval', 'approved', 'sent'].includes(x.status) && actor.has('quotes.cancel'),
       copy: actor.has('quotes.create'),
       customer_copy: ['approved', 'sent', 'accepted'].includes(x.status) && (x.status === 'accepted' || v.status !== 'expired') && actor.fin.sellingView } };
 }
@@ -522,7 +522,7 @@ export async function createQuotation(actor: Actor, b: any) {
 }
 
 export async function updateQuotation(actor: Actor, id: string, b: any) {
-  if (!actor.has('quotes.create')) throw forbidden();
+  if (!actor.has('quotes.edit')) throw forbidden();
   await tx(async (c) => {
     const x = await load(actor, id, c, true);
     if (!['draft', 'pending_approval', 'approved'].includes(x.status))
@@ -590,13 +590,13 @@ export async function quotationAction(actor: Actor, id: string, b: any) {
     const x = await load(actor, id, c, true);
     const lines = await q('select * from quotation_lines where quotation_id = $1 order by sort_order', [id], c);
     const expired = ['approved', 'sent'].includes(x.status) && x.valid_until < today();
-    const need = (p: 'quotes.create' | 'quotes.approve') => { if (!actor.has(p)) throw forbidden(); };
+    const need = (p: 'quotes.edit' | 'quotes.cancel' | 'quotes.approve') => { if (!actor.has(p)) throw forbidden(); };
     const from = (...s: string[]) => { if (!s.includes(x.status)) throw new ApiError(409, 'QUOTE_STATE', `Not possible while the quotation is "${qStatusName(expired ? 'expired' : x.status)}"`); };
     const set = (status: string, extra = '', params: unknown[] = []) =>
       c.query(`update quotations set status = $2${extra}, updated_at = now() where id = $1`, [id, status, ...params]);
     switch (action) {
       case 'submit': {
-        need('quotes.create'); from('draft');
+        need('quotes.edit'); from('draft');
         if (!lines.length) throw bad('Add at least one charge line');
         const t = quoteTotals(lines);
         if (Number(t.sell_total) <= 0) throw bad('Enter the selling rates first');
@@ -682,14 +682,14 @@ export async function quotationAction(actor: Actor, id: string, b: any) {
         await c.query('insert into notifications (user_id, type, title, quotation_id) values ($1,$2,$3,$4)', [x.created_by, 'quote.rejected', `Quotation ${x.quote_no} was not approved`, id]);
         break;
       }
-      case 'send': need('quotes.create'); from('approved');
+      case 'send': need('quotes.edit'); from('approved');
         if (expired) throw new ApiError(409, 'QUOTE_EXPIRED', 'The rates have expired. Change the validity date and approve again.');
         await set('sent', ', sent_at = now()'); await evt(c, actor, id, 'Marked as sent to the customer', txt(b.note, 300));
         if (x.job_file_id) { const { setStage } = await import('./commercial'); await setStage(c, actor, x.job_file_id, 'sent_to_customer', { back: true }); }
         break;
       case 'revise': {
         // the customer asked for changes (or rates moved): keep this version, open the next one as a draft
-        need('quotes.create'); from('approved', 'sent');
+        need('quotes.edit'); from('approved', 'sent');
         const reason = txt(b.reason, 500); if (!reason) throw bad('Say why the quotation is revised');
         await snapshot(c, actor, x, 'revised');
         if (b.customer_asked) await c.query(`insert into quotation_responses (quotation_id, version_no, response, note, user_id, user_name) values ($1,$2,'revision_requested',$3,$4,$5)`,
@@ -702,7 +702,7 @@ export async function quotationAction(actor: Actor, id: string, b: any) {
       }
       case 'response': {
         // what the customer said (no change of status): a note, no reply yet, asked for changes
-        need('quotes.create'); from('approved', 'sent');
+        need('quotes.edit'); from('approved', 'sent');
         const response = String(b.response ?? '');
         if (!['note', 'no_reply', 'revision_requested'].includes(response)) throw bad('Choose what the customer said');
         const note = txt(b.note, 1000); if (!note && response !== 'no_reply') throw bad('Write what the customer said');
@@ -715,7 +715,7 @@ export async function quotationAction(actor: Actor, id: string, b: any) {
         break;
       }
       case 'accept': {
-        need('quotes.create'); from('approved', 'sent');
+        need('quotes.edit'); from('approved', 'sent');
         if (expired) throw new ApiError(409, 'QUOTE_EXPIRED', 'The rates have expired. Change the validity date and approve again.');
         if (x.job_file_id) {
           // Part E: the customer confirms → Shipping Ref is made, the approved version is kept, the shipment moves to booking.
@@ -742,7 +742,8 @@ export async function quotationAction(actor: Actor, id: string, b: any) {
           // Part G2: several route options → the customer's choice goes onto the shipment and is locked
           const chosen = await (await import('./routing')).chooseRoute(c, actor, f.id, id, b.route_id);
           if (chosen) await evt(c, actor, id, 'Route option chosen by the customer', chosen);
-          if (commercial) await setStage(c, actor, f.id, 'customer_confirmed');
+          // 26 Nov (Point 13): "Customer approved Option 2 · … · MSC via Singapore" to the team
+          if (commercial) await setStage(c, actor, f.id, 'customer_confirmed', { note: `Customer approved ${chosen ?? x.quote_no}` });
           // any other open quotation on the same Job No. is no longer needed
           const others = await q(`update quotations set status = 'cancelled', decline_reason = $3, updated_at = now()
             where job_file_id = $1 and id <> $2 and status in ('draft','pending_approval','approved','sent') returning id`,
@@ -770,12 +771,12 @@ export async function quotationAction(actor: Actor, id: string, b: any) {
         break;
       }
       case 'decline': {
-        need('quotes.create'); from('approved', 'sent');
+        need('quotes.edit'); from('approved', 'sent');
         const reason = txt(b.reason, 500); if (!reason) throw bad('Say why the customer did not accept');
         await set('rejected', ', decline_reason = $3', [reason]); await evt(c, actor, id, 'Not accepted by the customer', reason); break;
       }
       case 'cancel': {
-        need('quotes.create'); from('draft', 'pending_approval', 'approved', 'sent');
+        need('quotes.cancel'); from('draft', 'pending_approval', 'approved', 'sent');
         const reason = txt(b.reason, 500); if (!reason) throw bad('Give a reason');
         await set('cancelled', ', decline_reason = $3', [reason]); await evt(c, actor, id, 'Cancelled', reason); break;
       }

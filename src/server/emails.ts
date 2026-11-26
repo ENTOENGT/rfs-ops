@@ -157,6 +157,9 @@ async function vendorDraft(actor: Actor, id: string, key?: string): Promise<Draf
       RequestDetails: [many && optText ? `Please quote for this option only:\n${optText}` : null, r.description, `Our request no. ${r.request_no}`].filter(Boolean).join('\n\n'),
       RouteOption: opt ? routeLabel(opt) : null, CorrectionNotes: bl?.correction_notes ?? null, BLNumber: bl?.bl_no ?? f.mbl_mawb ?? f.hbl_hawb,
       NeededBy: r.needed_by ? `We need your ${r.service === 'rate' ? 'rate' : 'reply'} by ${D(r.needed_by)}.` : '',
+      // 26 Nov: the rate we are booking on, as the vendor quoted it (their own figure; only people who see cost get the amount)
+      AgreedRate: `Your quotation: ${[r.vendor_reference && `ref. ${r.vendor_reference}`, `our request ${r.request_no}`, r.carrier, r.routing,
+        actor.fin.buyingView && r.quoted_cost ? `${money(r.quoted_cost, r.currency || 'USD')}` : null, r.rate_valid_until && `valid until ${D(r.rate_valid_until)}`].filter(Boolean).join(' · ')}`,
       Greeting: `Dear ${r.vendor_contact ? r.vendor_contact.split(' ')[0] : `${r.vendor_name} team`},`, Signature: await signature(actor) };
     const t = await fromTemplate(key!, f, vals);
     return { kind: 'vendor_request', id, recipients, ...t, note, options, update: key };
@@ -237,7 +240,7 @@ async function quotationDraft(actor: Actor, id: string, key?: string): Promise<D
 }
 
 // ------------------------------------------------------------ shipment emails to the customer
-const UPDATES: [string, string][] = [['booking_confirmed', 'Booking confirmed'], ['departed', 'Departed'], ['arrived', 'Arrived'],
+const UPDATES: [string, string][] = [['space_unavailable', 'Quoted sailing not available'], ['booking_confirmed', 'Booking confirmed'], ['departed', 'Departed'], ['arrived', 'Arrived'],
   ['customs_cleared', 'Customs cleared'], ['delivered', 'Delivered'], ['documents_needed', 'Documents needed from customer'], ['general', 'General update']];
 async function jobFileDraft(actor: Actor, id: string, choice: string): Promise<Draft> {
   const g = await getJobFile(actor, id);
@@ -261,6 +264,8 @@ async function jobFileDraft(actor: Actor, id: string, choice: string): Promise<D
     delivered: 'Your shipment has been delivered. Thank you for choosing us. If anything is not in order, please let us know.',
     documents_needed: missing.length ? `To avoid delays, please send us the following documents for your shipment:\n${missing.join('\n')}` : 'Please send us the documents for your shipment.',
     general: 'Please see the latest update on your shipment below.',
+    // 26 Nov (Point 13): polite note when the approved sailing is gone; the approved option is not changed
+    space_unavailable: 'Thank you for confirming the quotation. Unfortunately, the originally quoted sailing is currently unavailable. We are checking the next available option and will share an updated schedule and quotation shortly.',
   };
   const bl = await one('select bl_no from bl_drafts where job_file_id = $1 order by version desc limit 1', [id]);
   const vals = { ...(await shipmentVals(f, false)), UpdateText: upd ? opening[upd] : null, Greeting: dear(recipients, `${f.customer_name} team`), Signature: await signature(actor),
@@ -437,6 +442,7 @@ async function recordEmail(actor: Actor, b: any, draft: Draft, to: string[], cc:
   const t = (prepared: string, done: string) => failed ? `${done.replace('sent', 'NOT sent')} — sending failed` : sent ? done : prepared;
   await tx(async (c) => {
     let fileId: string | null = null, vr: string | null = null, qid: string | null = null;
+    if (b.kind === 'vendor_request' && b.update === 'availability_check' && !failed) await (await import('./availability')).markAvailabilityAsked(c, actor, b.id);
     if (b.kind === 'vendor_request' || b.kind === 'vendor_missing') {
       await c.query('insert into vendor_request_events (request_id, title, details, user_id, user_name) values ($1,$2,$3,$4,$5)',
         [b.id, b.kind === 'vendor_missing' ? 'Missing quote details asked from the agent' : t('Email prepared', 'Email sent'), detail, actor.id, actor.full_name]);

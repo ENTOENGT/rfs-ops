@@ -18,7 +18,7 @@ import { isBounce } from './quotereader';
 import { ownWords } from '../lib/opsRules';
 
 const isUuid = (v: unknown): v is string => typeof v === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v);
-const canUse = (a: Actor) => a.fin.sellingView && (a.isSuperAdmin || a.has('quotes.create'));
+const canUse = (a: Actor) => a.fin.sellingView && (a.isSuperAdmin || a.has('quotes.edit'));
 export const REASONS: [string, string][] = [['price', 'Price too high'], ['transit', 'Transit time'], ['service', 'Service / scope did not fit'],
   ['other_forwarder', 'Went with another forwarder'], ['postponed', 'Shipment postponed / cancelled'], ['not_needed', 'No longer needed'], ['other', 'Other']];
 const reasonName = (k: unknown) => REASONS.find(([x]) => x === k)?.[1] ?? 'Other';

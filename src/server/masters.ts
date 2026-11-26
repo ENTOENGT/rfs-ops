@@ -1,4 +1,5 @@
-import { Actor, requirePerm } from './auth';
+import { Actor } from './auth';
+import { canDo } from '../lib/permissions';
 import { ApiError, audit, bad, forbidden, notFound, one, q, tx } from './db';
 import { MASTERS, MasterDef, MasterField } from '../lib/masters';
 
@@ -55,10 +56,13 @@ async function checkRefs(d: MasterDef, values: Record<string, unknown>) {
   }
 }
 
+// migration 047: "x.manage" = everything; "x.create" / "x.edit" / "x.delete" / "x.view" = that action only
+const may = (a: Actor, d: MasterDef, act: 'view' | 'create' | 'edit' | 'delete') => a.isSuperAdmin || canDo(a.has, d.perm, act);
+
 export async function listMaster(actor: Actor, key: string, p: Record<string, string>) {
   const d = def(key);
-  if (!actor.has('jobs.view') && !actor.has(d.perm)) throw forbidden();
-  if (d.costly && !actor.has(d.perm) && !actor.fin.buyingView) throw forbidden();
+  if (!actor.has('jobs.view') && !may(actor, d, 'view')) throw forbidden();
+  if (d.costly && !may(actor, d, 'view') && !actor.fin.buyingView) throw forbidden();
   const params: unknown[] = [];
   let where = d.softDelete ? 'where e.deleted_at is null' : 'where true';
   if (p.q?.trim()) {
@@ -118,7 +122,7 @@ async function refreshSearch(c: any, key: string, id: string) {
 
 export async function createMaster(actor: Actor, key: string, b: any) {
   const d = def(key);
-  requirePerm(actor, d.perm);
+  if (!may(actor, d, 'create')) throw forbidden();
   const values: Record<string, unknown> = {};
   for (const f of d.fields) {
     let raw = b[f.key];
@@ -143,7 +147,7 @@ const cap = (s: string) => s[0].toUpperCase() + s.slice(1);
 
 export async function updateMaster(actor: Actor, key: string, id: string, b: any) {
   const d = def(key);
-  requirePerm(actor, d.perm);
+  if (!may(actor, d, 'edit')) throw forbidden();
   if (!UUID.test(id)) throw notFound(cap(d.singular));
   const cur = await one(`select * from ${d.table} where id = $1 ${d.softDelete ? 'and deleted_at is null' : ''}`, [id]);
   if (!cur) throw notFound(cap(d.singular));
@@ -172,7 +176,7 @@ export async function updateMaster(actor: Actor, key: string, id: string, b: any
 
 export async function deleteMaster(actor: Actor, key: string, id: string) {
   const d = def(key);
-  requirePerm(actor, d.perm);
+  if (!may(actor, d, 'delete')) throw forbidden();
   if (!UUID.test(id)) throw notFound(cap(d.singular));
   const openJobs: Record<string, string> = {
     drivers: `select t.job_number from transport_assignments a join transport_requests t on t.id = a.job_id join job_statuses s on s.code = t.status_code

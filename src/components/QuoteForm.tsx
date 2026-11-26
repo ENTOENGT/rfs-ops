@@ -184,8 +184,8 @@ export function QuoteFields({ f, setF, fe = {}, minMargin, vendorRates = [], job
         {CURRENCIES.map(([c]) => <option key={c} value={c}>{c}</option>)}</select></label></div>
       {conv?.where === 'charges' && <div style={{ marginBottom: 10 }}>{convBox}</div>}
       {cur !== 'AED' && <p className="muted small" style={{ margin: '-4px 0 8px' }}>Quoted in {cur}. Reports show it in AED with today's rate (kept with the quotation) and in {cur}.</p>}
-      <div className="table-wrap"><table className="t">
-        <thead><tr><th style={{ width: '32%' }}>Charge</th>{multi && <th>Route option</th>}<th>Charged</th><th className="num">Qty</th>
+      <div className="table-wrap"><table className="t" style={{ minWidth: 1000 }}>
+        <thead><tr><th style={{ width: '30%', minWidth: 220 }}>Charge</th>{multi && <th>Route option</th>}<th>Charged</th><th className="num">Qty</th>
           {buyingView && <th className="num">Cost rate</th>}{canMargin && <th>Margin</th>}{sellingView && <th className="num">Selling rate</th>}
           {sellingView && <th className="num">Amount</th>}<th /></tr></thead>
         <tbody>{lines.map((l, i) => <tr key={i}>
@@ -203,14 +203,14 @@ export function QuoteFields({ f, setF, fe = {}, minMargin, vendorRates = [], job
               <input style={{ flex: 1, minWidth: 120, fontSize: 12, padding: '2px 6px' }} value={l.note ?? ''} placeholder="Note the customer sees, e.g. as per receipt"
                 onChange={(e) => setLine(i, 'note', e.target.value)} aria-label="Note for the customer" /></div>
             {buyingView && l.internal_note && <details className="muted small" style={{ marginTop: 3 }}><summary>Staff note</summary><div style={{ whiteSpace: 'pre-wrap' }}>{l.internal_note}</div></details>}</td>
-          {multi && <td><select value={l.route_id ?? ''} disabled={!!l.vendor_request_id && !!rates.find((x) => x.id === l.vendor_request_id)?.route_id} onChange={(e) => setLine(i, 'route_id', e.target.value)} aria-label="Option">
+          {multi && <td><select style={{ minWidth: 120 }} value={l.route_id ?? ''} disabled={!!l.vendor_request_id && !!rates.find((x) => x.id === l.vendor_request_id)?.route_id} onChange={(e) => setLine(i, 'route_id', e.target.value)} aria-label="Option">
             <option value="">Option?</option>{routes.map((r: any) => <option key={r.id} value={r.id}>{routeLabel(r)}</option>)}</select></td>}
-          <td><select value={l.charge_unit} onChange={(e) => setLine(i, 'charge_unit', e.target.value)}>
+          <td><select style={{ minWidth: 130 }} aria-label="Charged" value={l.charge_unit} onChange={(e) => setLine(i, 'charge_unit', e.target.value)}>
             {CHARGE_UNITS.map(([c, n]) => <option key={c} value={c}>{n}</option>)}</select></td>
           <td className="num"><input style={{ width: 80, textAlign: 'right' }} value={l.quantity} onChange={(e) => setLine(i, 'quantity', e.target.value)} inputMode="decimal" /></td>
           {buyingView && <td className="num"><input style={{ width: 110, textAlign: 'right' }} value={l.cost_rate ?? ''} onChange={(e) => setLine(i, 'cost_rate', e.target.value)} inputMode="decimal" /></td>}
           {canMargin && <td style={{ whiteSpace: 'nowrap' }}>
-            <select style={{ width: 92 }} value={l.margin_type ?? ''} onChange={(e) => setLine(i, 'margin_type', e.target.value)} aria-label="Margin type">
+            <select style={{ width: 118 }} value={l.margin_type ?? ''} onChange={(e) => setLine(i, 'margin_type', e.target.value)} aria-label="Margin type">
               <option value="">Type rate</option><option value="percent">Margin %</option><option value="amount">Margin {cur}</option></select>
             {l.margin_type && <input style={{ width: 80, textAlign: 'right', marginLeft: 4 }} value={l.margin_value ?? ''}
               onChange={(e) => setLine(i, 'margin_value', e.target.value)} inputMode="decimal" placeholder={l.margin_type === 'percent' ? '%' : cur} aria-label="Margin" />}</td>}
