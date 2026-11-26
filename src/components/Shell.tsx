@@ -182,7 +182,7 @@ function OutlookIcon() {
   if (!s?.configured || !s?.pilot) return null;
   const n = s.waiting ?? 0, label = !s.connected ? 'My Outlook — not connected' : s.last_error ? 'My Outlook — needs attention'
     : `My Outlook${n ? `, ${n} email${n === 1 ? '' : 's'} to file${s.new_enquiries ? ` (${s.new_enquiries} new enquir${s.new_enquiries === 1 ? 'y' : 'ies'})` : ''}` : ''}`;
-  return <Link className="icon-btn chat-btn bell" href="/outlook" aria-label={label} title={label}>
+  return <Link className="icon-btn chat-btn bell ol-btn" href="/outlook" aria-label={label} title={label}>
     <Icon name="mail" />{(n > 0 || !s.connected || s.last_error) && <span className="dot">{!s.connected || s.last_error ? '!' : n > 99 ? '99+' : n}</span>}</Link>;
 }
 

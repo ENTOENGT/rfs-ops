@@ -104,6 +104,12 @@ h3 { font-weight: 650; }
 .crumbs [aria-current] { color: var(--ink); font-weight: 650; overflow: hidden; text-overflow: ellipsis; }
 .crumbs svg { color: var(--faint); flex: 0 0 auto; }
 .top-actions { display: flex; align-items: center; gap: 6px; margin-left: auto; }
+.top-actions > * { flex: none; }          /* 26 Nov: a crowded bar never squeezes an icon away */
+.icon-btn svg { flex: none; }
+.ol-btn .dot { white-space: nowrap; pointer-events: none; }
+/* 26 Nov: a badge grows to the right, away from its icon, so "99+" never covers it */
+.top-actions .bell .dot { left: 22px; right: auto; top: -5px; }
+.top-actions .bell { margin-right: 14px; }
 .icon-btn { all: unset; box-sizing: border-box; display: inline-grid; place-items: center; width: 38px; height: 38px; border-radius: 10px; color: var(--ink-2); cursor: pointer; position: relative; }
 .icon-btn:hover { background: var(--surface-3); color: var(--ink); text-decoration: none; }
 .icon-btn:focus-visible { outline: 2px solid var(--navy-600); }

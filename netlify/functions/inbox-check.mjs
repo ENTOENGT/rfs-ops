@@ -15,6 +15,9 @@ export default async () => {
     if (!res.ok || !more) break;
   }
   console.log('Inbox check', status, last.slice(0, 300));
+  // then the AI's background reading (vendor / booking replies, new-enquiry forms), a separate call so each stays short
+  const rd = await fetch(`${process.env.URL}/api/cron/inbox-check?phase=read`, { method: 'POST', headers: { 'x-cron-key': key } }).catch(() => null);
+  if (rd) console.log('Background reading', rd.status, (await rd.text()).slice(0, 300));
   return new Response(last, { status });
 };
 

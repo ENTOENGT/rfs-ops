@@ -326,11 +326,63 @@ function parseLines(actor: Actor, raw: unknown, old: any[]) {
   });
 }
 
+// vendors whose rate is the freight itself (a transporter's or customs broker's rate may sit beside it in an option)
+const NOT_FREIGHT = ['customs_broker', 'transporter', 'warehouse'];
+
+/**
+ * 26 Nov — one option = ONE vendor's freight quote. When a quotation uses two vendors' freight rates under the same option
+ * (e.g. Patent / CMA-CGM and Sanco / Maersk, both on option 1), the second rate is made its own option before saving:
+ * a new route option (copy of the route, label = its line, routing and transit), the rate moved to it, its lines moved
+ * with it, and the option's other lines (local charges, trucking, our own lines) copied to it so it is complete.
+ * Nothing is mixed, and an accepted option points to exactly one vendor quote.
+ */
+async function splitVendors(c: Db, actor: Actor, jobFileId: string, lines: any[], quoteId: string | null) {
+  const ids = [...new Set(lines.map((l) => l.vendor_request_id).filter((x): x is string => !!x))];
+  if (ids.length < 2) return;
+  const rates = await q(`select r.id, r.request_no, r.route_id, r.carrier, r.routing, r.transit_days, v.name vendor_name from vendor_requests r join vendors v on v.id = r.vendor_id
+    where r.id = any($1) and r.job_file_id = $2 and r.service = 'rate' and coalesce(v.vendor_type, '') <> all($3)`, [ids, jobFileId, NOT_FREIGHT], c);
+  // the freight rates in the order the quotation first uses them, per option
+  const order = ids.filter((id) => rates.some((r) => r.id === id));
+  const byRoute = new Map<string, any[]>();
+  for (const id of order) { const r = rates.find((x) => x.id === id)!; const k = r.route_id ?? ''; byRoute.set(k, [...(byRoute.get(k) ?? []), r]); }
+  const extra = [...byRoute.values()].flatMap((rs) => rs.slice(1));
+  if (!extra.length) return;
+  const { addOption } = await import('./routing');
+  for (const r of extra) {
+    const other = await one(`select x.quote_no from quotation_lines l join quotations x on x.id = l.quotation_id
+        where l.vendor_request_id = $1 and x.id <> coalesce($2, gen_random_uuid()) and x.deleted_at is null and x.status in ('draft', 'pending_approval', 'approved', 'sent') limit 1`, [r.id, quoteId], c);
+    if (other) throw bad(`${r.vendor_name}'s rate (${r.request_no}) shares an option with another vendor, and is also on quotation ${other.quote_no}. Offer it as its own option first (rates table → Own option).`);
+    const f = await one('select * from job_files where id = $1', [jobFileId], c);
+    const fresh = await one('select route_id from vendor_requests where id = $1', [r.id], c);        // option 1 may have just been made
+    const from = fresh.route_id ? await one('select * from enquiry_routes where id = $1', [fresh.route_id], c) : null;
+    const label = [r.carrier, r.routing, r.transit_days ? `${r.transit_days} days` : null].filter(Boolean).join(', ') || null;   // the customer sees it: never the vendor
+    const v: Record<string, unknown> = { label };
+    for (const k of ['origin_country', 'origin_city', 'pol', 'destination_country', 'destination_city', 'pod', 'final_delivery', 'mode', 'cargo_description']) if (from?.[k]) v[k] = from[k];
+    if (!from) Object.assign(v, { origin_city: f.origin ?? undefined, pol: f.port_of_loading ?? undefined, destination_city: f.destination ?? undefined, pod: f.port_of_discharge ?? undefined, mode: f.mode ?? undefined });
+    const nr = await addOption(c, actor, f, v);
+    await c.query('update vendor_requests set route_id = $2, rate_group = null, updated_at = now() where id = $1', [r.id, nr.id]);
+    await c.query(`insert into vendor_request_events (request_id, title, details, user_id, user_name) values ($1, $2, $3, $4, $5)`,
+      [r.id, `Made its own option ${nr.option_no} on the quotation`, 'One option holds one vendor\'s freight quote', actor.id, actor.full_name]);
+    // its lines go with it; the option's lines that are not another vendor's freight are copied so the new option is complete
+    // before any option existed the lines had none: they belong to option 1, just made
+    const oldRoute = fresh.route_id ?? (await one('select id from enquiry_routes where job_file_id = $1 and option_no = 1', [jobFileId], c))?.id ?? null;
+    for (const l of lines) if (!l.route_id && l.vendor_request_id !== r.id) l.route_id = oldRoute;
+    const freightIds = new Set(rates.map((x) => x.id));
+    const shared = lines.filter((l) => (l.route_id ?? null) === oldRoute && !(l.vendor_request_id && freightIds.has(l.vendor_request_id)));
+    for (const l of lines) if (l.vendor_request_id === r.id) l.route_id = nr.id;
+    for (const l of shared) lines.push({ ...l, route_id: nr.id });
+  }
+  // lines left without an option when option 1 was just made: on option 1
+  const first = await one('select id from enquiry_routes where job_file_id = $1 and option_no = 1', [jobFileId], c);
+  for (const l of lines) if (!l.route_id && !l.vendor_request_id && first) l.route_id = first.id;
+}
+
 /** A cost line taken from a vendor rate must come from a vendor request on the same Job File. */
 async function validateVendorLines(c: Db, jobFileId: string | null, lines: { vendor_request_id: string | null; route_id?: string | null }[]) {
   const ids = [...new Set(lines.map((l) => l.vendor_request_id).filter((x): x is string => !!x))];
   if (ids.length && !jobFileId) throw bad('Vendor rates can only be used on a quotation for their own Job No.');
-  const ok = ids.length ? await q('select id, route_id from vendor_requests where id = any($1) and job_file_id = $2', [ids, jobFileId], c) : [];
+  const ok = ids.length ? await q(`select r.id, r.route_id, coalesce(v.vendor_type, '') = any($3) not_freight from vendor_requests r join vendors v on v.id = r.vendor_id
+    where r.id = any($1) and r.job_file_id = $2`, [ids, jobFileId, NOT_FREIGHT], c) : [];
   if (ok.length !== ids.length) throw bad('A vendor rate on this quotation belongs to another Job No.');
   // Part G2: route options — a line takes its rate's option; with several options every line must say which one, and
   // a rate is never used under another option (rates for different loading ports are not mixed)
@@ -338,7 +390,8 @@ async function validateVendorLines(c: Db, jobFileId: string | null, lines: { ven
   for (const [i, l] of lines.entries()) {
     const rate = ok.find((r) => r.id === l.vendor_request_id);
     if (rate?.route_id && !l.route_id) l.route_id = rate.route_id;
-    if (rate?.route_id && l.route_id !== rate.route_id) throw bad(`Line ${i + 1}: this rate is for another route option`);
+    // a transporter's / customs broker's rate may be used on every option (26 Nov); a freight rate only on its own
+    if (rate?.route_id && l.route_id !== rate.route_id && !rate.not_freight) throw bad(`Line ${i + 1}: this rate is for another route option`);
     if (l.route_id && !routes.some((r) => r.id === l.route_id)) throw bad(`Line ${i + 1}: choose a route option of this shipment`);
     if (!l.route_id && routes.length > 1) throw bad(`Line ${i + 1}: choose which route option the charge is for`);
     if (!l.route_id && routes.length === 1) l.route_id = routes[0].id;
@@ -381,6 +434,7 @@ export async function createQuotation(actor: Actor, b: any) {
       vals.job_file_id = f.id;
       vals.salesman_id = f.salesman_id ?? vals.salesman_id;
       dept = f.department_id ?? dept;
+      await splitVendors(c, actor, f.id, lines, null);
       await validateVendorLines(c, f.id, lines);
     } else if (lines.some((l) => l.vendor_request_id)) throw bad('Vendor rates can only be used on a quotation for their own Job No.');
     else for (const l of lines) l.route_id = null;
@@ -428,7 +482,7 @@ export async function updateQuotation(actor: Actor, id: string, b: any) {
     for (const [k, parse] of Object.entries(HEAD)) if (b[k] !== undefined) sets.push([k, parse(b[k])]);
     const old = await q('select * from quotation_lines where quotation_id = $1 order by sort_order', [id], c);
     const lines = parseLines(actor, b.lines, old);
-    if (lines) { await validateVendorLines(c, x.job_file_id, lines); if (!x.job_file_id) for (const l of lines) l.route_id = null; }
+    if (lines) { if (x.job_file_id) await splitVendors(c, actor, x.job_file_id, lines, x.id); await validateVendorLines(c, x.job_file_id, lines); if (!x.job_file_id) for (const l of lines) l.route_id = null; }
     if (sets.length && x.job_file_id && sets.some(([k, v]) => k === 'customer_id' && v !== x.customer_id))
       throw bad('This quotation is on a Job File; its customer is the Job File\'s customer');
     if (x.terms_template_id && sets.some(([k]) => TERM_KEYS.includes(k))) {

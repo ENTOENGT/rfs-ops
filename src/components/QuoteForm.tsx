@@ -221,6 +221,8 @@ export function QuoteFields({ f, setF, fe = {}, minMargin, vendorRates = [], job
           <td><button className="btn small" type="button" disabled={lines.length === 1} onClick={() => setF({ ...f, lines: lines.filter((_, j) => j !== i) })}>✕</button></td>
         </tr>)}</tbody>
       </table></div>
+      {(() => { const seen = new Map<string, Set<string>>(); for (const l of lines) if (l.vendor_request_id) seen.set(l.route_id ?? '', new Set([...(seen.get(l.route_id ?? '') ?? []), l.vendor_request_id]));
+        return [...seen.values()].some((v) => v.size > 1) && <div className="msg small" style={{ marginTop: 8 }}>One option holds one vendor's freight quote. On save, a second vendor's freight rate here becomes its own option (with the same local charges), so rates from different vendors are never mixed. A transporter's or customs broker's rate can stay beside it.</div>; })()}
       <div style={{ display: 'flex', gap: 6, marginTop: 8, flexWrap: 'wrap' }}><button className="btn small" type="button" onClick={() => setF({ ...f, lines: [...lines, emptyLine()] })}>+ Add charge</button></div>
       {buyingView && <div style={{ marginTop: 8 }}><LocalChargesBox f={f} setF={setF} routes={routes} cur={cur} /></div>}
       {canMargin && <p className="muted small" style={{ margin: '8px 0 0' }}>Margin %: the margin is that share of the selling price (cost 1,000 at 20% → selling 1,250). Margin {cur}: added to the cost per unit. The customer copy never shows cost or margin.</p>}

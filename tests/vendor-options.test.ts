@@ -100,3 +100,51 @@ test('options cannot be added once the customer has confirmed; a single offer ha
   answer = { ...TWO, options: [TWO.options[0]] };
   assert.equal(((await readQuote(cora, two.emailId)).suggestion as any).answers.options, undefined);
 });
+
+test('26 Nov: two vendors\' freight on one option → each vendor its own option on save; local lines copied; a transporter may stay beside', async () => {
+  const fileId = (await createJobFile(cora, { customer_id: cust, salesman_id: sam.id, division: 'imports', mode: 'sea_fcl', status: 'enquiry', incoterm: 'FOB',
+    port_of_loading: 'Ho Chi Minh City', port_of_discharge: 'Jebel Ali', origin: 'Ho Chi Minh City', destination: 'Dubai', cargo_description: 'Shoes 1x20, 1x40' })).id;
+  const patent = (await createMaster(admin, 'vendors', { name: 'Patent International', vendor_type: 'overseas_agent', email: 'p@patent.vn' })).id;
+  const sanco = (await createMaster(admin, 'vendors', { name: 'Sanco International', vendor_type: 'overseas_agent', email: 's@sanco.vn' })).id;
+  const truck = (await createMaster(admin, 'vendors', { name: 'Gulf Trucks', vendor_type: 'transporter', email: 't@trucks.ae' })).id;
+  const mk = async (v: string, cost: string, carrier: string, days: number) => { const r = await vr.createVendorRequest(cora, { vendor_id: v, service: 'rate', job_file_id: fileId, description: 'HCM → JEA' });
+    await vr.vendorRequestAction(admin, r.id, { status: 'quoted', quoted_cost: cost, currency: 'USD', carrier, routing: 'Direct', transit_days: days }); return r; };
+  const a = await mk(patent, '4150', 'CMA-CGM', 22), b = await mk(sanco, '4500', 'Maersk', 25), t = await mk(truck, '300', '', 0);
+  const L = (d: string, rid: string | null, cost: string, sell: string) => ({ description: d, charge_unit: 'container', quantity: '1', cost_rate: cost, sell_rate: sell, vendor_request_id: rid });
+  const x = await qt.createQuotation(cora, { customer_id: cust, service_type: 'sea_fcl', job_file_id: fileId, salesman_id: sam.id, valid_until: D(10), lines: [
+    L('Ocean freight 20\'', a.id, '1500', '1600'), L('Ocean freight 40\'', a.id, '2650', '3055.56'),
+    L('Ocean freight 20\'', b.id, '1600', '1700'), L('Ocean freight 40\'', b.id, '2900', '3333.33'),
+    L('Delivery to warehouse', t.id, '300', '400'), L('DO fee', null, '580', '580')] });
+  const routes = await q('select id, option_no, label from enquiry_routes where job_file_id = $1 order by option_no', [fileId]);
+  assert.deepEqual(routes.map((r: any) => [r.option_no, r.label]), [[1, null], [2, 'Maersk, Direct, 25 days']]);
+  const g: any = await qt.getQuotation(cora, x.id);
+  const on = (n: number) => g.lines.filter((l: any) => l.route_id === routes[n - 1].id).map((l: any) => `${l.description}|${l.vendor_request_id === a.id ? 'A' : l.vendor_request_id === b.id ? 'B' : l.vendor_request_id === t.id ? 'T' : '-'}`);
+  assert.deepEqual(on(1), ['Ocean freight 20\'|A', 'Ocean freight 40\'|A', 'Delivery to warehouse|T', 'DO fee|-']);
+  assert.deepEqual(on(2).sort(), ['DO fee|-', 'Delivery to warehouse|T', 'Ocean freight 20\'|B', 'Ocean freight 40\'|B'].sort(), 'Sanco\'s freight alone + the same local lines');
+  assert.deepEqual(g.options.map((o: any) => o.sell_total), ['5635.56', '6013.33']);
+  assert.equal((await one('select route_id from vendor_requests where id = $1', [b.id])).route_id, routes[1].id);
+  // saving again changes nothing more
+  await qt.updateQuotation(cora, x.id, { lines: g.lines });
+  assert.equal((await one('select count(*)::int n from enquiry_routes where job_file_id = $1', [fileId])).n, 2);
+});
+
+test('26 Nov: vendor replies are read by the AI in the background, once; automatic emails are sorted without the AI', async () => {
+  const { runBackgroundReads } = await import('../src/server/inboxcron');
+  const { plainlyOther, inBatches } = await import('../src/server/newenquiry');
+  const { emailId } = await setup();
+  answer = TWO;
+  let calls = 0;
+  setAiNetwork((async () => { calls++; return new Response(JSON.stringify({ content: [{ type: 'tool_use', name: 'record_rate', input: answer }] }), { status: 200 }); }) as typeof fetch);
+  const r: any = await runBackgroundReads(5);
+  assert.ok(r.read >= 1, JSON.stringify(r));
+  assert.equal((await one(`select status from ai_suggestions where email_id = $1 and kind = 'quote'`, [emailId])).status, 'open', 'ready when the enquiry is opened');
+  const before = calls;
+  await runBackgroundReads(5);
+  assert.equal(calls, before, 'never read twice');
+  assert.equal(plainlyOther({ from_addr: 'noreply@msc.com', subject: 'Schedule' }), 'Automatic email');
+  assert.equal(plainlyOther({ from_addr: 'ravi@agent.in', subject: 'Automatic reply: Rate request' }), 'Automatic reply');
+  assert.equal(plainlyOther({ from_addr: 'ravi@agent.in', subject: 'RE: VR-1012 rates' }), null);
+  // side by side: 6 jobs of 50 ms, 4 at a time → about 100 ms, not 300
+  const t0 = Date.now(); await inBatches([1, 2, 3, 4, 5, 6], 4, () => new Promise((ok) => setTimeout(ok, 50)));
+  assert.ok(Date.now() - t0 < 200);
+});

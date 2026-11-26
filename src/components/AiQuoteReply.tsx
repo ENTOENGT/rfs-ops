@@ -23,9 +23,16 @@ export function AiQuoteReply({ quotationId, onChanged }: { quotationId: string; 
   };
   useEffect(() => { const m = d?.unread?.find((x: any) => !tried.current.has(x.id)); if (d?.configured && d.watching && m && !reading) read(m); }, [d, reading]);
   if (!d?.allowed || !d.watching && !(d.done ?? []).length || (!d.open?.length && !d.unread?.length && !reading && !err && !(d.done ?? []).length)) return null;
+  // 26 Nov: the answer shows as handled at once; the saving runs behind it, and if it fails the box goes back as it was
+  const [okMsg, setOkMsg] = useState('');
   const act = async (s: any, b: any) => {
-    setErr('');
-    try { setD(await api(`/api/ai/quote-replies/${s.id}`, { body: b })); onChanged(); } catch (e: any) { setErr(e.message); }
+    setErr(''); const before = d;
+    const opt = d.routes.find((r: any) => r.id === b.route_id);
+    const said = b.action === 'accepted' ? `Customer accepted${opt ? ` Option ${opt.option_no}` : ''}` : b.action === 'declined' ? 'Customer declined' : b.action === 'changes' ? 'Customer asked for changes' : b.action === 'dismiss' ? 'Dismissed' : 'Saved';
+    setD({ ...d, open: d.open.filter((x: any) => x.id !== s.id), done: [{ ...s, status: b.action === 'dismiss' ? 'dismissed' : 'applied', decided_by_name: 'you', saving: true }, ...(d.done ?? [])] });
+    setOkMsg(`${said} — saving…`);
+    try { setD(await api(`/api/ai/quote-replies/${s.id}`, { body: b })); setOkMsg(`${said} — saved.`); onChanged(); }
+    catch (e: any) { setD(before); setOkMsg(''); setErr(`Not saved: ${e.message}`); }
   };
   const p = (s: any) => pick[s.id] ?? { action: s.answers.decision, reason: s.answers.reason ?? 'price', mark_lost: true,
     route_id: d.routes.find((r: any) => r.option_no === s.answers.chosen_option)?.id ?? '', note: '' };
@@ -35,6 +42,7 @@ export function AiQuoteReply({ quotationId, onChanged }: { quotationId: string; 
       <div className="ai-head"><span className="ai-tag">AI</span><b>Customer's answer</b><span className="muted small">— emails since the quotation was sent, read by AI. Check, then confirm.</span></div>
       {reading && <p className="small">Reading the email from {reading.from_name || reading.from_addr}…</p>}
       {err && <div className="msg err small">{err}</div>}
+      {okMsg && <div className="msg ok small" role="status">{okMsg}</div>}
       {d.open.map((s: any) => { const v = p(s), a = s.answers; return <div key={s.id} className="ai-item">
         <p className="small" style={{ margin: '2px 0' }}><span className={`rec-tag ${LABEL[a.decision]?.[1]}`}>{LABEL[a.decision]?.[0]}</span>{' '}
           <b>{s.from_name || s.from_addr}</b> · {fmtDateTime(s.sent_at)} — {s.summary}</p>

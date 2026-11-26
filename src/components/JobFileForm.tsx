@@ -122,11 +122,12 @@ export function JobFileFields({ f, setF, fe = {}, isNew }: { f: any; setF: (v: a
       {isNew && <p className="muted small" style={{ marginBottom: 0 }}>These decide the milestone plan and what must be finished before the Job File can close.</p>}
     </div>
     <TermsPanel f={f} setF={setF} fe={fe} />
-    <div className="panel"><h2>Parties</h2><div className="grid g3">
+    {/* 26 Nov: not asked on a new enquiry — the parties are taken at BL level by Documentation */}
+    {!(isNew && enq) && <div className="panel"><h2>Parties</h2><div className="grid g3">
       <label className="f"><span>Shipper</span><textarea rows={2} value={f.shipper ?? ''} onChange={set('shipper')} /></label>
       <label className="f"><span>Consignee</span><textarea rows={2} value={f.consignee ?? ''} onChange={set('consignee')} /></label>
       <label className="f"><span>Notify party</span><textarea rows={2} value={f.notify_party ?? ''} onChange={set('notify_party')} /></label>
-    </div></div>
+    </div></div>}
     <div className="panel"><h2>{enq ? 'Route' : 'Route and carrier'}</h2><div className="grid g3">
       <label className="f"><span>Origin (city / country)</span><input value={f.origin ?? ''} onChange={set('origin')} /></label>
       <label className="f"><span>Origin country</span><CountryPicker value={f.origin_country} onChange={(v) => setF({ ...f, origin_country: v })} /></label>

@@ -952,3 +952,15 @@ giving customers to other salesmen is for the Commercials Manager. Up to 1,000 r
   Quotation form: `LocalChargesBox` adds lines (on every option), or puts them inside the all-in line (margin kept as an amount; breakup in the staff note).
 - `routeAction` step `own_option`: any quoted rate becomes its own option (label = what the customer sees); refused while it is on an open quotation.
 - AI rate box: one "Offer" tick per vendor option (first ticked is saved on the request, the others become options).
+
+### 26 Nov — commit 1 of 3: options per vendor, speed, fixes (migration 045)
+- `quotations.splitVendors`: one option = one vendor's freight quote. When a quotation saves two freight vendors' rates under one
+  option, the later one gets its own route option (label = line, routing, transit; never the vendor name), its lines move with it,
+  and the option's other lines (local charges, a transporter's / customs broker's rate, our own lines) are copied to it.
+  `NOT_FREIGHT` vendor types (customs_broker, transporter, warehouse) may sit on any option.
+- AI speed: `newenquiry.plainlyOther` sorts automatic emails without the AI; `screenInbox` looks at up to 4 at a time (`inBatches`);
+  `inboxcron.runBackgroundReads` (`POST /api/cron/inbox-check?phase=read`, after each 2-minute check) reads vendor rate / booking
+  replies and fills new-enquiry forms ahead; `email_messages.ai_bg_tries` / `outlook_inbox.ai_bg_tries` = at most 2 tries there.
+- Customer's answer box: shown as handled at once, saved behind it, put back on failure.
+- Top bar: icons never shrink; badges grow away from their icon. New enquiry form: no Parties (taken at BL level).
+- Emirates air import card renamed "Non-DG" (was "general"); DG answers say "Non-DG (the customer said general cargo)".

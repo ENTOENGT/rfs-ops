@@ -27,11 +27,45 @@ export async function runInboxChecks(budgetMs = 7000) {
     try {
       const r: any = await syncInbox(actor, Math.min(4000, left - 2000));
       let screened = 0;
-      if (!r.busy && r.to_screen > 0 && budgetMs - (Date.now() - started) > 2500) screened = (await screenInbox(actor, 4)).screened ?? 0;
+      if (!r.busy && r.to_screen > 0 && budgetMs - (Date.now() - started) > 2500) screened = (await screenInbox(actor, 6)).screened ?? 0;
       done.push({ user: user_id, filed: r.filed ?? 0, screened });
     } catch (e: any) {
       done.push({ user: user_id, error: String(e?.message ?? e).slice(0, 200) });   // kept on My Outlook by syncInbox; carry on with the next person
     }
   }
   return { checked: done.length, due: due.length, more: done.length < due.length, done };
+}
+
+/**
+ * 26 Nov — the AI reads in the background (same 2-minute schedule, its own call): replies to our rate and booking requests
+ * (read once, kept as suggestions, so the box on the enquiry is ready when opened) and the emails sorted as new enquiries
+ * (the enquiry form is filled in advance, so "Create enquiry" opens at once). A few at the same time; each tried at most
+ * twice here — if it still fails, it is read when someone opens it, as before. Nothing is saved on the shipment: a person
+ * still checks and presses Save.
+ */
+export async function runBackgroundReads(n = 3) {
+  const mails = await q(`select e.id, e.job_file_id, coalesce(e.created_by, f.coordinator_id) uid, r.service from email_messages e
+      join vendor_requests r on r.id = e.vendor_request_id join job_files f on f.id = e.job_file_id
+      where e.direction = 'in' and e.created_at > now() - interval '3 days' and e.ai_bg_tries < 2 and r.status <> 'cancelled'
+        and ((r.service = 'rate' and r.status in ('requested', 'quoted')) or (r.service = 'booking' and f.booking_vendor_request_id = r.id))
+        and not exists (select 1 from ai_suggestions s where s.email_id = e.id and s.kind in ('quote', 'booking'))
+      order by e.created_at desc limit $1`, [n]);
+  const drafts = await q(`select id, user_id from outlook_inbox where status = 'unmatched' and ai_kind = 'new_enquiry' and ai_draft is null and ai_bg_tries < 2
+      and received_at > now() - interval '3 days' order by received_at desc limit $1`, [Math.max(0, n - mails.length)]);
+  if (mails.length) await q('update email_messages set ai_bg_tries = ai_bg_tries + 1 where id = any($1)', [mails.map((m: any) => m.id)]);
+  if (drafts.length) await q('update outlook_inbox set ai_bg_tries = ai_bg_tries + 1 where id = any($1)', [drafts.map((m: any) => m.id)]);
+  const { readQuote } = await import('./quotereader');
+  const { readBooking } = await import('./bookingreader');
+  const { draftEnquiry } = await import('./newenquiry');
+  const jobs: (() => Promise<string>)[] = [
+    ...mails.map((m: any) => async () => {
+      const actor = m.uid ? await loadActor(m.uid) : null;
+      if (!actor) return 'skipped';
+      if (m.service === 'rate') await readQuote(actor, m.id); else await readBooking(actor, m.job_file_id, m.id);
+      return m.service;
+    }),
+    ...drafts.map((m: any) => async () => { const actor = await loadActor(m.user_id); if (!actor) return 'skipped'; await draftEnquiry(actor, m.id); return 'enquiry'; }),
+  ];
+  const res = await Promise.all(jobs.map((j) => j().catch((e: any) => `failed: ${String(e?.message ?? e).slice(0, 80)}`)));
+  return { read: res.filter((r) => !r.startsWith('failed') && r !== 'skipped').length, results: res };
 }

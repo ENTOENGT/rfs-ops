@@ -126,8 +126,8 @@ begin
       (c, 8, 'Storage (48 hours free)', 'clearance', 'kg', 0.45, 90, 'if_applicable', null),
       (c, 9, 'Customs duty 5% of invoice value', 'clearance', 'percent', 5, null, 'if_applicable', 'FTA / VAT approval required');
   end if;
-  if not exists (select 1 from local_charge_cards where lower(name) = lower('Air import – Emirates (general)')) then
-    insert into local_charge_cards (name, mode, direction, places, carriers, dg) values ('Air import – Emirates (general)', 'air', 'import', 'Dubai, DXB', 'Emirates, SkyCargo, EK, 176-', 'no') returning id into c;
+  if not exists (select 1 from local_charge_cards where lower(name) in (lower('Air import – Emirates (general)'), lower('Air import – Emirates (Non-DG)'))) then
+    insert into local_charge_cards (name, mode, direction, places, carriers, dg) values ('Air import – Emirates (Non-DG)', 'air', 'import', 'Dubai, DXB', 'Emirates, SkyCargo, EK, 176-', 'no') returning id into c;
     insert into local_charge_lines (card_id, sort_order, description, service, unit, cost, min_amount, tag, note) values
       (c, 1, 'Delivery order', 'clearance', 'bl', 113, null, 'always', null),
       (c, 2, 'Handling (H/D)', 'clearance', 'kg', 0.15, 30, 'always', null),

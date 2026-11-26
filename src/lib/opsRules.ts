@@ -120,7 +120,7 @@ export function ownWords(text: unknown): string {
 /** A checklist question the rules answer or make unnecessary for this enquiry (with the reason). */
 export function notNeeded(label: string, f: Record<string, any>): string | null {
   if (/stack/i.test(label) && f.mode === 'sea_fcl') return 'FCL: stackable is not asked';
-  if (/hazard|\bdg\b/i.test(label) && dgFromText(f.cargo_description).dg === 'no') return 'General cargo = Non-DG';
+  if (/hazard|\bdg\b/i.test(label) && dgFromText(f.cargo_description).dg === 'no') return 'Non-DG (the customer said general cargo)';
   if (/insur/i.test(label) && f.direction === 'import' && SELLER_INSURES.includes(String(f.incoterm ?? '').toUpperCase())) return `${String(f.incoterm).toUpperCase()}: the seller insures`;
   if (/ready/i.test(label) && f.cargo_ready_confirmed) return 'Cargo ready for collection';
   return null;

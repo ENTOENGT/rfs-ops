@@ -44,24 +44,45 @@ const CLASSIFY = {
 };
 
 /** Look at up to `max` emails of this person not looked at yet. Safe to call often; stops at the first AI problem. */
-export async function screenInbox(actor: Actor, max = 4) {
+/** 26 Nov: an automatic email (out of office, bounce, newsletter, no-reply) is sorted without asking the AI. */
+export function plainlyOther(m: { from_addr?: string | null; subject?: string | null; body_excerpt?: string | null }) {
+  const from = String(m.from_addr ?? '').toLowerCase(), subj = String(m.subject ?? '').toLowerCase();
+  if (/^(no-?reply|do-?not-?reply|mailer-daemon|postmaster|notifications?|newsletter|marketing|bounce)[@+.-]/.test(from)) return 'Automatic email';
+  if (/^(automatic reply|auto(matic)?[- ]reply|out of (the )?office|undeliverable|delivery status notification|read:|accepted:|declined:|tentative:)/i.test(subj)) return 'Automatic reply';
+  if (/unsubscribe|view (this|it) in your browser/i.test(String(m.body_excerpt ?? '')) && !/rate|quot|freight|shipment|container|cargo/i.test(subj)) return 'Newsletter';
+  return null;
+}
+
+/** Run at most `n` at a time (the AI calls of one check go side by side instead of one after another). */
+export async function inBatches<T, R>(items: T[], n: number, fn: (x: T) => Promise<R>): Promise<R[]> {
+  const out: R[] = [];
+  for (let i = 0; i < items.length; i += n) out.push(...await Promise.all(items.slice(i, i + n).map(fn)));
+  return out;
+}
+
+export async function screenInbox(actor: Actor, max = 6) {
   if (!aiConfig().ready) return { screened: 0, off: true };
   const rows = await q(`select * from outlook_inbox where user_id = $1 and ai_checked_at is null and status in ('screen', 'unmatched')
-    order by received_at desc nulls last limit $2`, [actor.id, Math.min(10, Math.max(1, max))]);
-  let screened = 0, found = 0;
-  for (const m of rows) {
-    // the same email in another inbox (Salesman and Coordinator): use that look
-    let res = m.internet_message_id ? await one(`select ai_kind kind, ai_summary summary from outlook_inbox
+    order by received_at desc nulls last limit $2`, [actor.id, Math.min(12, Math.max(1, max))]);
+  let failed: unknown = null;
+  // 26 Nov: up to 4 looks at the same time; automatic emails and emails already looked at in another inbox need no AI
+  const looks = await inBatches(rows, 4, async (m: any) => {
+    const same = m.internet_message_id ? await one(`select ai_kind kind, ai_summary summary from outlook_inbox
       where internet_message_id = $1 and id <> $2 and ai_checked_at is not null and ai_kind is not null limit 1`, [m.internet_message_id, m.id]) : null;
-    if (!res) {
-      try {
-        const { input } = await askWithTool(
-          'You sort the inbox of a salesman at Reliance Freight Systems, a freight forwarder in Dubai. Decide what kind of email this is. Judge only from what is shown.',
-          `From: ${m.from_name ? `${m.from_name} <${m.from_addr}>` : m.from_addr}${m.known_as ? ` (${m.known_as})` : ' (not a known customer yet)'}\nSubject: ${m.subject ?? ''}${m.has_attachments ? '\nHas attachments: yes' : ''}\n\n${String(m.body_excerpt ?? '').slice(0, 1000)}`,
-          CLASSIFY, 300);
-        res = { kind: ['new_enquiry', 'reply', 'other'].includes(input?.kind) ? input.kind : 'other', summary: String(input?.summary ?? '').slice(0, 200) };
-      } catch (e) { if (screened) break; throw e; }
-    }
+    if (same) return { m, res: same };
+    const rule = plainlyOther(m);
+    if (rule) return { m, res: { kind: 'other', summary: rule } };
+    try {
+      const { input } = await askWithTool(
+        'You sort the inbox of a salesman at Reliance Freight Systems, a freight forwarder in Dubai. Decide what kind of email this is. Judge only from what is shown.',
+        `From: ${m.from_name ? `${m.from_name} <${m.from_addr}>` : m.from_addr}${m.known_as ? ` (${m.known_as})` : ' (not a known customer yet)'}\nSubject: ${m.subject ?? ''}${m.has_attachments ? '\nHas attachments: yes' : ''}\n\n${String(m.body_excerpt ?? '').slice(0, 1000)}`,
+        CLASSIFY, 300);
+      return { m, res: { kind: ['new_enquiry', 'reply', 'other'].includes(input?.kind) ? input.kind : 'other', summary: String(input?.summary ?? '').slice(0, 200) } };
+    } catch (e) { failed ??= e; return { m, res: null }; }      // left for the next check
+  });
+  let screened = 0, found = 0;
+  for (const { m, res } of looks) {
+    if (!res) continue;
     if (res.kind === 'new_enquiry') found++;
     if (m.status === 'screen' && res.kind !== 'new_enquiry')
       // an unknown sender and not an enquiry: not kept
@@ -71,6 +92,7 @@ export async function screenInbox(actor: Actor, max = 4) {
       await q(`update outlook_inbox set status = 'unmatched', ai_kind = $2, ai_summary = $3, ai_checked_at = now() where id = $1`, [m.id, res.kind, res.summary || null]);
     screened++;
   }
+  if (!screened && failed) throw failed;
   const left = Number((await one(`select count(*) n from outlook_inbox where user_id = $1 and ai_checked_at is null and status in ('screen', 'unmatched')`, [actor.id]))!.n);
   return { screened, new_enquiries: found, left };
 }

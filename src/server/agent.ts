@@ -146,7 +146,7 @@ ${text || '(the email has no text)'}`;
   if (readyNow && readyGap && !has(readyGap.key) && !unclear.some((u) => u.key === readyGap.key))
     answers.push({ key: readyGap.key, label: readyGap.label, value: today(), quote: 'Cargo ready for collection — no date given, so today', by_hand: false });
   const dgRule = dgFromText(mine);
-  if (dgGap && !has(dgGap.key) && dgRule.dg === 'no') answers.push({ key: dgGap.key, label: dgGap.label, value: 'no', quote: 'General cargo = Non-DG', by_hand: false });
+  if (dgGap && !has(dgGap.key) && dgRule.dg === 'no') answers.push({ key: dgGap.key, label: dgGap.label, value: 'no', quote: 'Non-DG (the customer said general cargo)', by_hand: false });
   if (dgGap && dgRule.dg === 'check') { const i = answers.findIndex((a) => a.key === dgGap.key && a.value === 'no'); if (i >= 0) answers.splice(i, 1);
     unclear.push({ key: 'flag', label: 'Check', note: `DG words in the email (${dgRule.words.slice(0, 4).join(', ')}) — confirm DG with the MSDS / UN number` }); }
   if (readyNow && !d.cargo_ready_confirmed) answers.push({ key: 'cargo_ready_confirmed', label: 'Cargo ready for collection', value: 'yes', quote: READY_REMARK, by_hand: false, extra: true });
