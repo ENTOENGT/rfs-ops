@@ -13,6 +13,7 @@ export function AiQuoteReply({ quotationId, onChanged }: { quotationId: string; 
   const [reading, setReading] = useState<any>(null);
   const [err, setErr] = useState('');
   const [pick, setPick] = useState<Record<string, any>>({});
+  const [okMsg, setOkMsg] = useState('');   // every hook before the "return null" below (React error #310 otherwise)
   const tried = useRef<Set<string>>(new Set());
   const load = () => api(`/api/quotations/${quotationId}/ai-reply`).then(setD).catch(() => setD(null));
   useEffect(() => { load(); }, [quotationId]);
@@ -24,7 +25,6 @@ export function AiQuoteReply({ quotationId, onChanged }: { quotationId: string; 
   useEffect(() => { const m = d?.unread?.find((x: any) => !tried.current.has(x.id)); if (d?.configured && d.watching && m && !reading) read(m); }, [d, reading]);
   if (!d?.allowed || !d.watching && !(d.done ?? []).length || (!d.open?.length && !d.unread?.length && !reading && !err && !(d.done ?? []).length)) return null;
   // 26 Nov: the answer shows as handled at once; the saving runs behind it, and if it fails the box goes back as it was
-  const [okMsg, setOkMsg] = useState('');
   const act = async (s: any, b: any) => {
     setErr(''); const before = d;
     const opt = d.routes.find((r: any) => r.id === b.route_id);

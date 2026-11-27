@@ -1,4 +1,4 @@
-RFS CRM — fix 27 Nov: "Application error" screen
+RFS CRM — fix 27 Nov: quotation page "This page hit a problem" (React error #310)
 
-No database change. Upload these 3 files to GitHub in one commit (same folders).
-Commit message: "Clear error screen and automatic reload after an update"
+No database change. Upload this 1 file to GitHub (src/components/AiQuoteReply.tsx).
+Commit message: "Fix quotation page error"
