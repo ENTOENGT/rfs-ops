@@ -1,15 +1,4 @@
-RFS CRM — update 26 Nov, commit 3 of 3 (permissions, availability check, enquiry progress, UI)
+RFS CRM — fix 27 Nov: "Application error" screen
 
-1. In Supabase → SQL Editor, run  db/migrations/047_permissions_and_booking.sql  (safe to run twice; nothing is removed).
-   Everyone keeps the access they have today.
-2. Upload all the files in this zip to GitHub in ONE commit (same folders as in the zip).
-   Commit message: "Permissions by action, vendor availability check, enquiry progress, UI review, desktop app"
-3. After it deploys, test:
-   a. Administration → Roles & permissions: make a role with only "Local charges & rate cards → View + Edit". Give it to a test user.
-      That user sees Local charges, can change rates, cannot add a card, and sees no other module.
-   b. Open an enquiry: the progress line at the top shows the step and one "Next step" button.
-   c. Confirm a quotation option → the team gets "Customer approved Option N …". Booking tab → "Prepare availability email" → send.
-      When the vendor replies, the AI marks it confirmed or not available (or press "Vendor confirmed" / "Not available").
-      Not available → "Ask the vendor for the next sailing" and "Tell the customer".
-   d. Desktop: in Chrome or Edge, your name (top right) → "Install RFS CRM as an app".
-   e. The sparkle icon next to Outlook shows what the AI is working on.
+No database change. Upload these 3 files to GitHub in one commit (same folders).
+Commit message: "Clear error screen and automatic reload after an update"
