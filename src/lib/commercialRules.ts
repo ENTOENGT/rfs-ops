@@ -90,7 +90,7 @@ export function progressOf(d: any): Progress {
     : { text: 'Make the quotation.', label: 'Prepare quotation', tab: 'rates' };
   else if (now === 2) next = { text: 'Vendor rates received. Ready to compare.', label: 'Compare vendor rates', tab: 'rates' };
   else next = rates.length ? { text: `Waiting for vendor rates (${got} of ${rates.length} received).`, label: 'Open vendor rates', tab: 'rates' }
-    : { text: 'Ask agents or carriers for rates.', label: 'Request vendor rates', tab: d.routes?.length || !d.can?.edit ? 'rates' : 'routing' };
+    : { text: 'Ask agents or carriers for rates.', label: 'Request vendor rates', tab: 'rates' };   // 27 Nov: routing options only when quoting several routes
   const pending = [
     (d.enquiry_gaps ?? []).length ? `${d.enquiry_gaps.length} missing detail${d.enquiry_gaps.length > 1 ? 's' : ''} from the customer` : null,
     d.open_items?.clarifications ? `${d.open_items.clarifications} clarification${d.open_items.clarifications > 1 ? 's' : ''} open` : null,

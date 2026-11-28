@@ -204,7 +204,7 @@ function AiActivity() {
   return (
     <div className="profile" ref={ref}>
       <button className={`icon-btn bell ai-btn${s.working ? ' busy' : ''}`} aria-label={label} title={label} aria-expanded={open} onClick={() => setOpen(!open)}>
-        <Icon name="spark" />{s.working > 0 && <span className="dot">{s.working > 99 ? '99+' : s.working}</span>}</button>
+        <Icon name="spark" /></button>
       {open && <div className="dropdown pop-right menu ai-pop" role="menu">
         <div className="pop-head col"><b>AI assistant</b><small>{s.working ? `Working now: ${busy}.` : 'Nothing waiting.'}</small></div>
         {s.recent.map((r: any, i: number) => <Link key={i} role="menuitem" href={`/job-files/${r.file_id}`} onClick={() => setOpen(false)}>

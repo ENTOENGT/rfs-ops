@@ -23,8 +23,15 @@ const fake = (async (url: any, init: any = {}) => {
     sent.push(JSON.parse(String(init.body)));
     return new Response(null, { status: 202 });
   }
+  // 27 Nov: replying in the same thread — find the earlier email, make the reply, put our text on top, send
+  if (u.includes('/me/messages?$filter=')) { calls.push('find'); return json({ value: decodeURIComponent(u).includes("'<cust-1@desert.ae>'") ? [{ id: 'MSG-1' }] : [] }); }
+  if (u.endsWith('/me/messages/MSG-1/createReply')) { calls.push('createReply'); return json({ id: 'DRAFT-1', subject: 'RE: Enquiry', body: { content: '<div>Omar: earlier mail</div>' } }); }
+  if (u.endsWith('/me/messages/DRAFT-1') && init.method === 'PATCH') { calls.push('patch'); patched.push(JSON.parse(String(init.body))); return json({}); }
+  if (u.endsWith('/me/messages/DRAFT-1/attachments')) { calls.push('attach'); return json({}); }
+  if (u.endsWith('/me/messages/DRAFT-1/send')) { calls.push('send'); return new Response(null, { status: 202 }); }
   return json({ error: { message: 'unknown' } }, 404);
 }) as typeof fetch;
+const calls: string[] = [], patched: any[] = [];
 
 async function connect(a: Actor, email: string) {
   await q(`insert into outlook_connections (user_id, ms_user_id, ms_email, ms_name, refresh_token_enc, access_token_enc, access_expires_at, scope)
@@ -90,4 +97,22 @@ test('someone who cannot open the shipment cannot send about it', async () => {
   await ol.setPilot(admin, other.id, true);
   await assert.rejects(emailSend(other, { kind: 'job_file', id: fileId, to: ['omar@desert.ae'], subject: 's', body: 'b' }), (e: any) => ['NOT_FOUND', 'FORBIDDEN'].includes(e.code));
   assert.equal(sent.length, 2);
+});
+
+test('27 Nov: a customer email replies in the customer\'s own thread (one trail per enquiry); none in the mailbox → a new email', async () => {
+  await q(`insert into email_messages (job_file_id, direction, status, from_addr, subject, message_id, source, created_by, sent_at)
+    values ($1, 'in', 'received', 'omar@desert.ae', 'Enquiry', '<cust-1@desert.ae>', 'mailbox', $2, now())`, [fileId, sales.id]);
+  calls.length = 0; const before = sent.length;
+  const d: any = await emailDraft(sales, { kind: 'job_file', id: fileId });
+  await emailSend(sales, { kind: 'job_file', id: fileId, update: d.update, to: ['omar@desert.ae'], subject: d.subject, body: 'Dear Omar,\nIn the same thread.' });
+  assert.deepEqual(calls, ['find', 'createReply', 'patch', 'send']);
+  assert.equal(sent.length, before, 'not a new email');
+  assert.match(patched[0].body.content, /In the same thread[\s\S]*Omar: earlier mail/, 'our text on top, the earlier mails below');
+  assert.deepEqual(patched[0].toRecipients.map((r: any) => r.emailAddress.address), ['omar@desert.ae']);
+  // the agent has not written yet: their first email is a new one
+  calls.length = 0;
+  const v: any = await emailDraft(sales, { kind: 'vendor_request', id: reqId });
+  await emailSend(sales, { kind: 'vendor_request', id: reqId, to: ['raj@msc.example'], subject: v.subject, body: v.body });
+  assert.deepEqual(calls, [], 'no earlier email from this vendor');
+  assert.equal(sent.length, before + 1);
 });

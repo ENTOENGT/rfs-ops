@@ -110,9 +110,13 @@ h3 { font-weight: 650; }
 /* 26 Nov: a badge grows to the right, away from its icon, so "99+" never covers it */
 .top-actions .bell .dot { left: 22px; right: auto; top: -5px; }
 /* 26 Nov: the AI's live status in the top bar */
-.ai-btn.busy svg { color: var(--navy-700, #2b6cb0); animation: ai-pulse 1.6s ease-in-out infinite; }
-@keyframes ai-pulse { 50% { opacity: .45; } }
-@media (prefers-reduced-motion: reduce) { .ai-btn.busy svg { animation: none; } }
+/* 27 Nov: while the AI works, the sparkle turns and glows (no number) */
+.ai-btn { position: relative; }
+.ai-btn.busy svg { color: var(--gold, #c8962e); animation: ai-spin 2.4s linear infinite, ai-pulse 1.2s ease-in-out infinite; }
+.ai-btn.busy::after { content: ''; position: absolute; inset: 3px; border-radius: 50%; border: 2px solid transparent; border-top-color: var(--gold, #c8962e); animation: ai-spin 1s linear infinite; pointer-events: none; }
+@keyframes ai-pulse { 50% { opacity: .55; } }
+@keyframes ai-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .ai-btn.busy svg, .ai-btn.busy::after { animation: none; } }
 .ai-pop { width: 320px; max-width: calc(100vw - 32px); }
 .ai-pop a span { display: block; min-width: 0; white-space: normal; line-height: 1.35; }
 .top-actions .bell { margin-right: 14px; }
@@ -1005,3 +1009,8 @@ fieldset { min-width: 0; }
 /* on tablets a wide list scrolls sideways inside its panel instead of squeezing every column to one or two words */
 .table-wrap > .t:has(thead th:nth-child(6)) { min-width: 860px; }   /* only real lists (6+ columns); small tables stay as they are */
 .table-wrap > .t:has(thead th:nth-child(6)) td:first-child { min-width: 150px; }
+/* 27 Nov: the AI is working — three moving dots */
+.ai-working { display: flex; align-items: center; gap: 8px; }
+.ai-dots { width: 22px; height: 6px; background: radial-gradient(circle, var(--gold, #c8962e) 2.5px, transparent 3px) 0 50% / 8px 6px repeat-x; animation: ai-dots 1s linear infinite; }
+@keyframes ai-dots { to { background-position: 8px 50%; } }
+@media (prefers-reduced-motion: reduce) { .ai-dots { animation: none; } }

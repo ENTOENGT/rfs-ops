@@ -134,7 +134,8 @@ test('26 Nov: vendor replies are read by the AI in the background, once; automat
   const { emailId } = await setup();
   answer = TWO;
   let calls = 0;
-  setAiNetwork((async () => { calls++; return new Response(JSON.stringify({ content: [{ type: 'tool_use', name: 'record_rate', input: answer }] }), { status: 200 }); }) as typeof fetch);
+  // only the reading of vendor emails is counted here (the best-vendor comparison may run in the same pass)
+  setAiNetwork((async (_u: any, init: any) => { if (/record_rate/.test(String(init?.body))) calls++; return new Response(JSON.stringify({ content: [{ type: 'tool_use', name: 'record_rate', input: answer }] }), { status: 200 }); }) as typeof fetch);
   const r: any = await runBackgroundReads(5);
   assert.ok(r.read >= 1, JSON.stringify(r));
   assert.equal((await one(`select status from ai_suggestions where email_id = $1 and kind = 'quote'`, [emailId])).status, 'open', 'ready when the enquiry is opened');
@@ -283,4 +284,25 @@ test('26 Nov: after the customer approves, the vendor of that rate is asked for 
   const act: any = await aiActivity(cora);
   assert.ok(act.recent.some((r: any) => r.kind === 'availability' && /Not available: MV Alpha/.test(r.summary)));
   assert.equal(typeof act.working, 'number');
+});
+
+test('27 Nov: a rate saved without the split-up gets it later; UAE clearance / delivery are never asked of the vendor', async () => {
+  const { addSplitUp } = await import('../src/server/quotereader');
+  const { quoteGaps } = await import('../src/lib/quoteGaps');
+  const { r, emailId } = await setup();
+  answer = { ...TWO, options: undefined };
+  const s: any = (await readQuote(cora, emailId)).suggestion;
+  await applyQuote(cora, s.id, { use_charges: false });
+  assert.equal((await one('select count(*)::int n from vendor_rate_charges where request_id = $1', [r.id])).n, 0, 'only the total saved');
+  const g: any = await vr.getVendorRequest(cora, r.id);
+  assert.equal(g.split_up_from, s.id, 'the request offers to add the split-up');
+  const res = await addSplitUp(cora, s.id);
+  assert.equal(res.lines, 1);
+  assert.equal((await one('select quoted_cost::text from vendor_requests where id = $1', [r.id])).quoted_cost, '2400.00', 'the rate itself is unchanged');
+  await assert.rejects(addSplitUp(cora, s.id), /already has its split-up/);
+  // imports: a missing destination line (clearance / delivery at the UAE end) is ours, not the vendor's
+  const checks: any = [{ id: 'd', label: 'A destination charge line', ask_text: 'destination charges', field_key: 'destination', modes: [] },
+    { id: 'c', label: 'Customs clearance charges', ask_text: 'clearance', field_key: null, modes: [] }, { id: 't', label: 'Transit time', ask_text: 'transit', field_key: 'transit_days', modes: [] }];
+  assert.deepEqual(quoteGaps({}, ['freight'], checks, 'sea_fcl', 'import').map((x) => x.key), ['t']);
+  assert.deepEqual(quoteGaps({}, ['freight'], checks, 'sea_fcl', 'cross_trade').map((x) => x.key), ['d', 'c', 't']);
 });

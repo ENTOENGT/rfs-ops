@@ -63,7 +63,18 @@ function QuoteChecks({ d, act, reload }: { d: any; act: (b: any) => Promise<bool
   const replied = ['quoted', 'confirmed'].includes(d.status);
   const gaps: any[] = d.quote_gaps ?? [];
   const dirty = JSON.stringify(v) !== JSON.stringify(d.quote_details ?? {});
-  return (
+  const [splitMsg, setSplitMsg] = useState('');
+  // 27 Nov: the rate was saved without the vendor's split-up — add the lines the AI read
+  const addSplit = async () => {
+    setSplitMsg('');
+    try { const r = await api(`/api/ai/quotes/${d.split_up_from}`, { body: { action: 'split_up' } }); setSplitMsg(`Split-up added (${r.lines} lines).`); reload(); }
+    catch (e: any) { setSplitMsg(e.message); }
+  };
+  return (<>
+    {d.split_up_from && d.can.update && <div className="msg warn" style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+      <span>This rate was saved as a total only. The vendor's email has the split-up (charge lines).</span><span className="spacer" />
+      <button className="btn small primary" onClick={addSplit}>Add the split-up</button></div>}
+    {splitMsg && <div className="msg small">{splitMsg}</div>}
     <div className={replied && gaps.length ? 'gap-box' : 'panel'} style={{ marginBottom: 14 }}>
       <div className="role-head">
         <b>{!replied ? 'The agent\'s rate must include' : gaps.length ? `Missing from the agent's rate (${gaps.length})` : 'The agent\'s rate is complete'}</b>
@@ -81,7 +92,7 @@ function QuoteChecks({ d, act, reload }: { d: any; act: (b: any) => Promise<bool
           <button className="btn small primary" disabled={!dirty} onClick={async () => { if (await act({ what: 'quote_details', quote_details: v })) setOpen(false); }}>Save answers</button></div>
       </div>}
     </div>
-  );
+  </>);
 }
 
 export default function VendorRequest({ params }: { params: { id: string } }) {
@@ -117,7 +128,7 @@ export default function VendorRequest({ params }: { params: { id: string } }) {
         {d.can.update && isRate && d.job_file_id && ['requested', 'quoted'].includes(d.status) && <button className="btn" onClick={() => setMore(true)}>Ask more vendors</button>}
         {d.can.update && <EmailButton kind="vendor_request" id={d.id} label="Email vendor" onLogged={load} />}</div>
       {d.cheaper_warning && <div className="msg warn"><b>Another vendor gave a lower price.</b> {d.cheaper_warning}</div>}
-      {isRate && (d.quote_checks ?? []).length > 0 && <QuoteChecks d={d} act={act} reload={load} />}
+      {isRate && ((d.quote_checks ?? []).length > 0 || d.split_up_from) && <QuoteChecks d={d} act={act} reload={load} />}
       {err && <div className="msg err">{err}</div>}
       {step && <div className="panel"><h2>{LABEL[step.status]}</h2>
         {(['quoted', 'revise'].includes(step.status) || (step.status === 'confirmed' && isRate)) && d.can.cost ? <RateFields s={step} set={setStep} d={d} />

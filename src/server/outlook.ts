@@ -181,7 +181,7 @@ export async function canSend(userId: string) {
  * Plain text only; the addresses are checked here again.
  */
 export async function sendMail(userId: string, m: { to: string[]; cc?: string[]; subject: string; body: string; html?: string;
-  attachments?: { name: string; contentType: string; contentBytes: string }[] }) {
+  attachments?: { name: string; contentType: string; contentBytes: string }[]; replyTo?: string | null }) {
   if (!(await isPilot(userId))) throw forbidden('Outlook is only for the pilot users for now');
   const clean = (l?: string[]) => [...new Set((l ?? []).map((x) => String(x).trim().toLowerCase()).filter((x) => EMAIL_RE.test(x)))].slice(0, 20);
   const to = clean(m.to), cc = clean(m.cc).filter((x) => !to.includes(x));
@@ -200,6 +200,12 @@ export async function sendMail(userId: string, m: { to: string[]; cc?: string[];
     files.push({ '@odata.type': '#microsoft.graph.fileAttachment', name: `signature.${sig.mime === 'image/png' ? 'png' : 'jpg'}`, contentType: sig.mime,
       contentBytes: Buffer.from(sig.data).toString('base64'), isInline: true, contentId: 'rfs-signature' });
   }
+  // 27 Nov: a reply in the same Outlook thread when the earlier email (by its internet id) is in this mailbox; else a new email
+  const thread = m.replyTo ? await replyInThread(userId, m.replyTo, { to: to.map(addr), cc: cc.map(addr), html: html ?? (await import('./emails')).toHtml(String(m.body ?? '')), files }) : null;
+  if (thread) {
+    const from = await one('select ms_email from outlook_connections where user_id = $1', [userId]);
+    return { to, cc, subject: thread.subject ?? subject, from: from?.ms_email as string | null, threaded: true };
+  }
   await graph(userId, '/me/sendMail', { method: 'POST', body: JSON.stringify({
     message: { subject, body: html ? { contentType: 'HTML', content: html.slice(0, 300_000) } : { contentType: 'Text', content: String(m.body ?? '').slice(0, 100_000) },
       toRecipients: to.map(addr), ccRecipients: cc.map(addr),
@@ -209,6 +215,25 @@ export async function sendMail(userId: string, m: { to: string[]; cc?: string[];
   }) });
   const from = await one('select ms_email from outlook_connections where user_id = $1', [userId]);
   return { to, cc, subject, from: from?.ms_email as string | null };
+}
+
+/**
+ * 27 Nov: reply to an earlier email so the customer / vendor sees one thread: find it in this mailbox by its internet message id,
+ * make the reply draft (Outlook adds "RE:" and the earlier mails below), put our text on top, add the files, send.
+ * null when the earlier email is not in this person's mailbox (then a new email is sent).
+ */
+async function replyInThread(userId: string, internetId: string, m: { to: any[]; cc: any[]; html: string; files: any[] }) {
+  const found = await graph(userId, `/me/messages?$filter=${encodeURIComponent(`internetMessageId eq '${internetId.replace(/'/g, "''")}'`)}&$select=id&$top=1`).catch(() => null);
+  const id = found?.value?.[0]?.id;
+  if (!id) return null;
+  const draft = await graph(userId, `/me/messages/${encodeURIComponent(id)}/createReply`, { method: 'POST', body: '{}' });
+  if (!draft?.id) return null;
+  const did = encodeURIComponent(draft.id);
+  await graph(userId, `/me/messages/${did}`, { method: 'PATCH', body: JSON.stringify({ toRecipients: m.to, ccRecipients: m.cc,
+    body: { contentType: 'HTML', content: `${m.html.slice(0, 300_000)}<br>${String(draft.body?.content ?? '')}` } }) });
+  for (const f of m.files) await graph(userId, `/me/messages/${did}/attachments`, { method: 'POST', body: JSON.stringify(f) });
+  await graph(userId, `/me/messages/${did}/send`, { method: 'POST', body: '{}' });
+  return { subject: draft.subject as string | undefined };
 }
 
 // ------------------------------------------------------------ 26 Nov: the user's own signature picture

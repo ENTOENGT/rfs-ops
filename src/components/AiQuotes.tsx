@@ -41,6 +41,9 @@ export function AiQuotes({ fileId, onSaved }: { fileId: string; onSaved: () => v
     const rate: any = {};
     for (const k of ['quoted_cost', 'currency', 'transit_days', 'free_days', 'etd', 'routing', 'carrier', 'rate_valid_until', 'vendor_reference', 'exclusions']) rate[k] = val(s, k) === '' ? null : val(s, k);
     const p = opts(s).length ? (pick[s.id] ?? { main: 0, extra: [] }) : null;
+    // 27 Nov: the vendor gave a split-up but the tick is off — say so before saving only the total
+    const seen = (mainOf(s)?.charges_seen ?? []).length;
+    if (seen && lines[s.id] === false && !window.confirm(`The vendor's split-up (${seen} charge line${seen > 1 ? 's' : ''}) is not ticked — only the total will be saved.\n\nSave without the split-up? (You can add it later from the rate request.)`)) return;
     try {
       const r = await api(`/api/ai/quotes/${s.id}`, { body: { action: 'apply', rate, use_charges: lines[s.id] ?? true, ...(p ? { main: p.main, extra: p.extra } : {}) } });
       setOk(`Rate saved on ${s.request_no} (${s.vendor_name}).${r.added?.length ? ` Also added as options for the quotation: ${r.added.join(', ')}.` : ''}`); load(); onSaved();

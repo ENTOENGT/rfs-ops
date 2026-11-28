@@ -83,7 +83,7 @@ export async function readAvailability(actor: Actor, emailId: string) {
   if (!e?.job_file_id || e.direction !== 'in') return { read: false };
   const a = await availabilityOf(e.job_file_id);
   if (!a || a.status !== 'sent' || a.vendor_request_id !== e.vendor_request_id || +new Date(e.created_at) < +new Date(a.sent_at)) return { read: false };
-  if (!aiConfig()) return { read: false };
+  if (!aiConfig().ready) return { read: false };
   const { emailText } = await import('./agent');
   const body = (await emailText(e)).slice(0, 8000);
   const { input: x } = await askWithTool(`You read a shipping line's or agent's reply for Reliance Freight Systems, a freight forwarder in Dubai, UAE.

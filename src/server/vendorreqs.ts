@@ -86,7 +86,7 @@ export async function getVendorRequest(actor: Actor, id: string) {
   const sp: unknown[] = [id];
   const r = await one(`select r.*, v.name vendor_name, v.vendor_type, v.contact_person vendor_contact, v.contact_number vendor_phone, v.email vendor_email,
       vt.name team_name, vt.email team_email, vt.cc_emails team_cc, vt.contact_person team_contact, vt.phone team_phone,
-      f.job_no, f.enquiry_ref, f.shipping_ref, f.mode file_mode, u.full_name created_by_name, au.full_name assigned_to_name, rr.request_no rate_request_no
+      f.job_no, f.enquiry_ref, f.shipping_ref, f.mode file_mode, f.direction file_direction, u.full_name created_by_name, au.full_name assigned_to_name, rr.request_no rate_request_no
       from vendor_requests r join vendors v on v.id = r.vendor_id left join job_files f on f.id = r.job_file_id left join vendor_teams vt on vt.id = r.team_id
       join users u on u.id = r.created_by left join users au on au.id = r.assigned_to left join vendor_requests rr on rr.id = r.rate_request_id
       where r.id = $1${vrScope(actor, sp)}`, sp);
@@ -107,8 +107,12 @@ export async function getVendorRequest(actor: Actor, id: string) {
     const { quoteChecksFor, quoteGaps } = await import('../lib/quoteGaps');
     const all = await allQuoteChecks();
     const sections = (await q('select distinct section from vendor_rate_charges where request_id = $1 and rate_version = $2', [id, r.rate_version])).map((x: any) => x.section);
-    quote = { quote_checks: quoteChecksFor(all, r.file_mode), quote_details: r.quote_details ?? {},
-      quote_gaps: ['quoted', 'confirmed'].includes(r.status) ? quoteGaps(r, sections, all, r.file_mode) : [] };
+    // 27 Nov: a rate saved without the vendor's split-up the AI read — it can be added now
+    const split = !sections.length && actor.fin.buyingView && ['quoted', 'confirmed'].includes(r.status)
+      ? await one(`select id from ai_suggestions where vendor_request_id = $1 and kind = 'quote' and status = 'applied'
+          and (jsonb_array_length(coalesce(answers->'charges', '[]')) > 0 or jsonb_array_length(coalesce(answers->'options', '[]')) > 0) order by created_at desc limit 1`, [id]) : null;
+    quote = { split_up_from: split?.id ?? null, quote_checks: quoteChecksFor(all, r.file_mode), quote_details: r.quote_details ?? {},
+      quote_gaps: ['quoted', 'confirmed'].includes(r.status) ? quoteGaps(r, sections, all, r.file_mode, r.file_direction) : [] };
   }
   return { ...present(actor, r), ...quote, events, compare, cheaper_warning: cheaper, next: NEXT[r.status], charges, versions, agent_coordinators: agentCoordinators,
     can: { update: upd, cost: actor.fin.buyingView, revise: upd && actor.fin.buyingView && ['quoted', 'confirmed'].includes(r.status) && r.service === 'rate',

@@ -52,3 +52,17 @@ export const blankLine = (copy?: Partial<CargoLine>): CargoLine => ({ package_ty
 /** Lines with nothing typed in are dropped before saving (so an untouched blank line is not an error). */
 export const typedLines = (lines: Partial<CargoLine>[] | undefined) =>
   (lines ?? []).filter((l) => ['pieces', 'length', 'width', 'height', 'weight_kg'].some((k) => String((l as any)[k] ?? '').trim() !== ''));
+
+/**
+ * 27 Nov: total packages written in words — "40 pallets (20 pallets per container)" → 40; "20 pallets per container, 2x40HC" → 40.
+ * null when the text does not say. Used when no cargo lines (with sizes) were given.
+ */
+export function packagesFrom(text: unknown): number | null {
+  const s = String(text ?? '');
+  const unit = '(?:pallets?|pkgs?|packages?|cartons?|ctns?|boxes|crates?|drums?|bags?|bales?|rolls?|pieces|pcs|skids?)';
+  for (const m of s.matchAll(new RegExp(`(\\d{1,5})\\s*${unit}\\b(?!\\s*(?:per|each|\\/|in each))`, 'gi'))) return Number(m[1]);
+  const per = s.match(new RegExp(`(\\d{1,5})\\s*${unit}\\s*(?:per|each|\\/|in each)\\s*(?:container|cntr|ctnr|box)`, 'i'));
+  if (!per) return null;
+  const boxes = [...s.matchAll(/(\d{1,3})\s*(?:x|×|\*)\s*(?:20|40|45)/gi)].reduce((t, m) => t + Number(m[1]), 0);
+  return boxes ? Number(per[1]) * boxes : null;
+}

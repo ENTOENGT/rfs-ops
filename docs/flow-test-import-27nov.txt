@@ -1,0 +1,51 @@
+RFS CRM flow test — Import
+1. WORKS — Customer sends the enquiry email to your mailbox
+2. WORKS — Open it and press New enquiry
+3. WORKS — Press Save
+4. PROBLEM — Look at the progress line at the top
+   Note: When i select this it's routed to "routing option page", this should go to the Rate & Quotation page right? Confirm why you keep this route for my understanding.
+5. WORKS — If "Missing details" shows: Ask the customer by email, then Fill in when they reply
+6. WORKS — Add the route option(s): POL and POD
+   Note:  
+7. WORKS — Ask for rates: overseas agents and/or the shipping line for each option
+8. PROBLEM — Vendors reply by email
+   Note: on sparkle icon give some animation instead of blank number on it, Note vendor only quote till Port with port charges, customs clearance and delivery will completely handles by RFS team, that's why we kept rate card for clearance and delivery, So AI don't want to suggest clearance charges is missing delivery rate is missing. vendor given the rate split up's but by mistake user select the save button without tick the save including the split up, need one pop here split up not selected, even they proceed, later they found the split up is not selected they need edit option to select correctly. 
+9. PROBLEM — Compare
+   Note: AI is working very late, when i move to the next screen then come to the this screen then only Ai shows the error. 
+10. PROBLEM — Make quotation and press Use on the rates
+   Note: When i click the make quotation: Vendor mentioned the rate Valid till date, AI also detected it, but here it's not filled, and the customer says 20 pallets for each container, here packages is not detected properly, but in the the cargo details it there "general Cargo (pallets) · 2x40FT · 40 pallets (20 pallets per container)"  
+11. WORKS — Add Local charges (Jebel Ali / Khorfakkan import card, or DXB air card)
+12. WORKS — Add margin, check terms
+13. WORKS — Fill "Shipment details for the customer"
+14. WORKS — Send for approval; Salesman approves
+15. WORKS — Email customer
+16. PROBLEM — Send it to yourself and press Negotiate (target rate) on the email
+   Note: each and every email creating the new trail email that is wrong way for follow ups, email should follow the same email thread, example for the one enquiry from the customer email should be in same one trail mail and the vendor email should be on same email trail accordingly to vendors. - if the customer negotiate, then want to send the target rate to the agent from that screen itself and follows. 
+17. PROBLEM — Customer confirms: press Customer confirmed, pick the option, attach their email
+   Note: When i press the customer confirmed, automatically this need to filled, AI should read who (customer name read from the email or email address) confirmed the rate with the log, and attach the email thread or it should accepted by selecting the "accept button" by the customer, it should be clear.
+18. PROBLEM — Press Prepare availability email (Next step button)
+   Note: This option should be optional not every time, user ask the availability
+19. PROBLEM — Vendor replies "available"
+   Note: This option should be optional not every time, user ask the availability
+20. PROBLEM — Test the other case: vendor says "not available"
+   Note: This option should be optional not every time, user ask the availability
+21. PROBLEM — Send booking request, then Email booking
+   Note: When i send the booking request, confirm confirmed which option also on the email body with the rates, during this time user want to send the supplier details for the collection, supplier should be collected from the customer confirmation, if the customer not send the shipper details AI should say shipper details missing. then user want to send the email and get the shipper details. shipper details saved accordingly where ever required, and consignee details want to pick our customer details if the consignee and notify party is not clear ask to the customer. 
+22. PROBLEM — Vendor sends the booking confirmation
+   Note: Email received and AI reads, but the AI not checking the different, what exactly requested what the vendor is quoted, AI checking checking the what is not in the booking. if anything missing need ask to the vendor button is required, so on so missing. 
+23. PROBLEM — Email customer → Booking confirmed
+   Note: Once the booking is placed, acknowledge email send automatically to the customer. "user should receive indication" 
+24. WORKS — Save vessel details
+25. PROBLEM — BL draft from the agent → send to customer → corrections → Customer confirmed → Final BL received
+   Note: Once booking is confirmed, system shows awaiting pre-alert, but now it should show waiting for the BL draft, agent should give the cutoff or loading date, once the cutoff date or loading passed next day if the BL draft not received from the agent we should ask the agent what is the status of the loading and BL draft. but here this step is not clear. and the AI should read the BL correctly with an existing data, and also required BL draft send to the customer button, so once we received the draft we'll send the draft and get the update from the customer, the customer email should be read by the AI, same need to request to the vendor for the change till BL confirmation these steps follows.  
+26. not tried — Pre-alert arrives: upload, Pre-alert received, tick the checks, Verified
+27. not tried — Type the Job No. from the ERP and press Create job and hand over
+28. not tried — Vessel arrived: mark the milestone Done
+29. not tried — DO received – send to Documentation
+30. not tried — Documentation clears customs (PRO request if needed), then Cleared
+31. not tried — Request transport: delivery address, date, contact
+32. not tried — Driver delivers and uploads the POD in the phone app
+33. not tried — Close Job File
+--- Plan agreed 27 Nov ---
+Commit A (enquiry→quotation): 4 Next step → Rates when one route (user chose); 8 sparkle animation no number, AI not asking vendor for clearance/delivery (RFS does via rate cards), warn when saving vendor rate without split-up + edit later to add it; 9 best-vendor compare shows progress and result in place; 10 quotation valid-until from vendor rate, packages from "20 pallets per container"; 16 emails reply in the same Outlook thread (customer thread; one thread per vendor), negotiate → send target rate to the vendor from that screen; 17 customer confirmed auto-filled (Accept button answer or AI-read reply: who, when, email attached).
+Commit B (booking→BL): 18-20 availability optional ("Proceed to booking" main, "Ask availability first" secondary); 21 booking email with confirmed option + rates + shipper details from customer, AI flags shipper missing + ask-customer email, consignee = our customer, ask if notify unclear; 22 AI compares booking confirmation vs request, "Ask the vendor" per difference; 23 auto email to customer WHEN VENDOR CONFIRMS (user chose) + indication; 25 after booking: "Waiting for BL draft", cut-off/loading date, reminder day after if no draft + ask agent email, AI checks draft vs data, Send BL draft to customer, AI reads corrections, ask vendor to correct, loop to confirmed.

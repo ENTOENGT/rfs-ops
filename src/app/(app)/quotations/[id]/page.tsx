@@ -20,7 +20,26 @@ function ConfirmModal({ d, onClose, act }: { d: any; onClose: () => void; act: (
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
   const [route, setRoute] = useState('');
+  const [from, setFrom] = useState('');
   const opts: any[] = d.options ?? [];
+  // 27 Nov: filled in by itself — the customer pressed Accept in the quotation email, or the AI read their "confirmed" reply
+  useEffect(() => {
+    const day = (t: string) => new Date(t).toLocaleString('en-GB', { timeZone: 'Asia/Dubai', day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' });
+    const pressed = (d.answers ?? []).find((a: any) => a.answer === 'accepted' && a.version_no === d.version_no);
+    if (pressed) {
+      if (pressed.route_id || pressed.option_no) setRoute(pressed.route_id ?? opts.find((o) => o.option_no === pressed.option_no)?.id ?? '');
+      setNote(`${d.customer_name} pressed Accept${pressed.option_no ? ` for Option ${pressed.option_no}` : ''} in the quotation email on ${day(pressed.answered_at)}${pressed.comment ? `: "${pressed.comment}"` : ''}`);
+      setFrom('the Accept button in the quotation email'); return;
+    }
+    api(`/api/quotations/${d.id}/ai-reply`).then((r: any) => {
+      const s = [...(r?.open ?? []), ...(r?.done ?? [])].find((x: any) => x.answers?.decision === 'accepted');
+      if (!s) return;
+      const who = s.from_name ? `${s.from_name} <${s.from_addr}>` : s.from_addr;
+      if (s.answers.chosen_option) setRoute(opts.find((o) => o.option_no === Number(s.answers.chosen_option))?.id ?? '');
+      setNote(`Confirmed by email from ${who} on ${day(s.sent_at ?? s.created_at)}: "${String(s.answers.quote ?? s.summary ?? 'confirmed').slice(0, 300)}"`);
+      setFrom(`their email (read by the AI): ${s.subject ?? ''}`);
+    }).catch(() => {});
+  }, []);
   const go = async () => {
     setBusy(true); setErr('');
     try {
@@ -34,6 +53,7 @@ function ConfirmModal({ d, onClose, act }: { d: any; onClose: () => void; act: (
       <p className="small">This version is kept as the approved one, the system gives the shipment its Shipping Ref, and the next step is the booking.
         Any other open quotation on {d.enquiry_ref ?? d.job_no} is cancelled.</p>
       {err && <div className="msg err">{err}</div>}
+      {from && <div className="msg ok small">Filled in from {from}. Check it, then save — that email stays on the shipment's Emails tab.</div>}
       {opts.length > 1 && <label className="f"><span>Which option did the customer choose? <em>*</em></span><select value={route} onChange={(e) => setRoute(e.target.value)}>
         <option value="">Choose</option>{opts.map((o) => <option key={o.id} value={o.id}>{routeLabel(o)}{o.sell_total ? ` — ${fmtMoney(o.sell_total, d.currency)}` : ''}</option>)}</select></label>}
       <label className="f"><span>Customer's confirmation (email saved as .msg / .eml / PDF, or a signed copy)</span><input type="file" onChange={(e) => setFile(e.target.files?.[0] ?? null)} /></label>

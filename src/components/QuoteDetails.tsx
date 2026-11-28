@@ -2,6 +2,7 @@
 import { useState } from 'react';
 import { api, fmtDateTime, fmtMoney } from './api';
 import { routeLabel } from '@/lib/routingRules';
+import { EmailButton } from './EmailButton';
 import { detailText } from '@/lib/jobfileRules';
 
 const FIELDS: [string, string, string][] = [['pol', 'POL', 'text'], ['pod', 'POD', 'text'], ['line', 'Line / airline', 'text'], ['transit_days', 'Transit (days)', 'number'],
@@ -61,7 +62,9 @@ export function QuoteAnswers({ d, onSaved }: { d: any; onSaved: (r: any) => void
           {a.comment && <div className="small">Comment: {a.comment}</div>}
           <div className="muted small">{fmtDateTime(a.answered_at)}{a.handled_at && ` · handled by ${a.handled_by_name ?? '—'}`}</div>
         </div>
-        {!a.handled_at && <button className="btn small" onClick={() => handled(a.id)}>Handled</button>}
+        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+          {a.answer === 'negotiate' && a.vendor_request_id && !a.handled_at && <EmailButton kind="vendor_request" id={a.vendor_request_id} update="target_rate_request" className="btn small primary" label="Ask the vendor for this rate" />}
+          {!a.handled_at && <button className="btn small" onClick={() => handled(a.id)}>Handled</button>}</div>
       </div>)}
       <p className="muted small" style={{ marginBottom: 0 }}>Nothing changes by itself: confirm the option with "Customer confirmed", or make a revision for a negotiation.</p>
     </div>

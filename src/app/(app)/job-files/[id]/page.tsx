@@ -56,7 +56,7 @@ function Milestones({ d, act }: { d: any; act: (b: any) => Promise<unknown> }) {
 /** The tab that holds the next piece of work for the current stage. */
 function defaultTab(d: any, show: Record<string, boolean>) {
   const st = d.status === 'enquiry' ? d.stage : null;
-  const want = st === 'enquiry' ? (show.routing && !(d.routes?.length) ? 'routing' : 'rates')
+  const want = st === 'enquiry' ? 'rates'   // 27 Nov: straight to rates; Routing options is there when several routes are quoted
     : ['rates_requested', 'rates_received', 'quotation_draft', 'pending_approval', 'sent_to_customer'].includes(st) ? 'rates'
     : ['customer_confirmed', 'booking_requested'].includes(st) ? 'booking'
     : st === 'booking_confirmed' ? 'vessel' : 'overview';

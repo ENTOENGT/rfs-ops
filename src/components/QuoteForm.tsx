@@ -96,7 +96,10 @@ export function QuoteFields({ f, setF, fe = {}, minMargin, vendorRates = [], job
         return { ...base, description: c.description, charge_unit: unitOf(c.basis), quantity: String(c.quantity || 1), cost_original: orig, cost_rate: r2(Number(orig) * fx) }; })
       : [{ ...base, description: r.service === 'rate' ? 'Freight and charges (all-in)' : `${r.service} (all-in)`, cost_original: r2(Number(r.quoted_cost)), cost_rate: r2(Number(r.quoted_cost) * fx) }];
     const blank = lines.length === 1 && !lines[0].description && !lines[0].cost_rate && !lines[0].sell_rate;
-    setF({ ...f, lines: blank ? out : [...lines, ...out] }); setPick(null);
+    // 27 Nov: the quotation is valid no longer than the vendor's rate (the earliest of the rates used)
+    const vu = r.rate_valid_until ? String(r.rate_valid_until).slice(0, 10) : '';
+    const validUntil = vu && (!f.valid_until || vu < f.valid_until) ? vu : f.valid_until;
+    setF({ ...f, valid_until: validUntil, lines: blank ? out : [...lines, ...out] }); setPick(null);
   };
   // changing the quotation currency: offer to convert the amounts (vendor costs from their own amount and currency)
   const [conv, setConv] = useState<any>(null);

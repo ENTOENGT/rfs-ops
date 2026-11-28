@@ -24,7 +24,7 @@ import { parseField } from './masters';
 import { MASTERS } from '../lib/masters';
 import { decideServices, dgFromText, ownWords, READY_REMARK, saysReady } from '../lib/opsRules';
 import { INCOTERMS } from '../lib/jobfileRules';
-import { PACKAGE_TYPES, cargoTotals, lineProblem } from '../lib/cargoRules';
+import { PACKAGE_TYPES, cargoTotals, lineProblem, packagesFrom } from '../lib/cargoRules';
 
 const isUuid = (v: unknown): v is string => typeof v === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v);
 const PUBLIC = new Set(['gmail.com', 'googlemail.com', 'yahoo.com', 'hotmail.com', 'outlook.com', 'live.com', 'icloud.com', 'aol.com', 'msn.com', 'yandex.com', 'proton.me', 'protonmail.com']);
@@ -293,6 +293,7 @@ Read it like an experienced forwarding executive: "general cargo" means non-DG; 
     pickup_address: String(x.pickup_address ?? '').trim() || null, delivery_address: String(x.delivery_address ?? '').trim() || null,
     cargo_description: cargo, gross_weight_kg: Number(x.gross_weight_kg) > 0 ? Number(x.gross_weight_kg) : lines.length ? cargoTotals(lines).weight : null,
     cargo_lines: lines.length ? lines : undefined, hs_codes: hsCodes,
+    packages: lines.length ? undefined : packagesFrom(cargo) ?? undefined,   // 27 Nov: "40 pallets (20 per container)" with no sizes
     cargo_value: Number(x.cargo_value) > 0 ? Math.round(Number(x.cargo_value) * 100) / 100 : null,
     cargo_value_currency: Number(x.cargo_value) > 0 && ['AED', 'USD', 'EUR', 'INR', 'CNY'].includes(String(x.cargo_value_currency ?? '').toUpperCase()) ? String(x.cargo_value_currency).toUpperCase() : null,
     enquiry_details: Object.keys(details).length ? details : undefined,
@@ -385,14 +386,14 @@ export async function sendAck(actor: Actor, fileId: string) {
   if (!canEdit(actor, await loadFile(actor, fileId))) throw forbidden();
   if (f.ack_sent_at) return { sent: true, already: true };
   // the enquiry email it was made from (filed on it when saved)
-  const src = await one(`select from_addr, from_name from email_messages where job_file_id = $1 and direction = 'in' and from_addr is not null order by coalesce(sent_at, created_at) limit 1`, [fileId]);
+  const src = await one(`select from_addr, from_name, message_id from email_messages where job_file_id = $1 and direction = 'in' and from_addr is not null order by coalesce(sent_at, created_at) limit 1`, [fileId]);
   if (!src) return { sent: false, error: 'No customer email on this enquiry' };
   const name = String(src.from_name ?? '').trim() || f.customer_name || 'Sir / Madam';
   const subject = `Enquiry Received – ${f.enquiry_ref}`;
   const text = `Dear ${name},\n\nThank you for your enquiry.\n\nWe have received your request and are currently coordinating with our agents and carriers to obtain the best possible rates.\n\nWe will share our quotation with you at the earliest.\n\nThank you for considering us.\n\nBest Regards,\n${actor.full_name}`;
   try {
     const { sendMail } = await import('./outlook');
-    const sent = await sendMail(actor.id, { to: [src.from_addr], subject, body: text });
+    const sent = await sendMail(actor.id, { to: [src.from_addr], subject, body: text, replyTo: src.message_id });   // 27 Nov: in the customer's own thread
     await tx(async (c) => {
       const won = await c.query('update job_files set ack_sent_at = now(), ack_error = null where id = $1 and ack_sent_at is null', [fileId]);
       if (!won.rowCount) return;                                          // sent at the same moment by a second click: kept once

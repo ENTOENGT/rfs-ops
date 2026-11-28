@@ -94,6 +94,8 @@ export async function runRecommend(actor: Actor, fileId: string) {
     `Shipment: ${f.direction} ${f.mode}, Incoterm ${f.incoterm ?? 'not given'}, ${f.port_of_loading ?? f.origin ?? '?'} → ${f.port_of_discharge ?? f.destination ?? '?'}`,
     scope ? `Under ${f.incoterm} our customer's side covers: ${[...scope].map((s) => SVC_LABEL[s]).join(', ') || 'nothing (the other party pays all)'}.` : '',
     `Our UAE services ticked: customs clearance ${f.needs_clearance ? 'yes' : 'no'}, transport (pickup / delivery) ${f.needs_transport ? 'yes' : 'no'}.`,
+    // 27 Nov: vendors quote up to the port; the UAE side is ours, priced from our own local charges rate cards
+    ['import', 'export'].includes(f.direction) ? `IMPORTANT: Reliance Freight Systems does the UAE side itself (customs clearance, ${f.direction === 'import' ? 'delivery' : 'pickup'} and UAE port / local charges), priced from our own rate cards. Vendors quote only up to the port. A vendor NOT quoting UAE clearance, ${f.direction === 'import' ? 'delivery' : 'pickup'} or UAE local charges is normal: never list it as missing, a mismatch or an issue.` : '',
     f.pickup_address ? `Pickup: ${f.pickup_address}` : '', f.delivery_address ? `Delivery: ${f.delivery_address}` : '',
     `Cargo: ${f.cargo_description ?? '?'}${f.gross_weight_kg ? `, ${f.gross_weight_kg} kg` : ''}${f.volume_cbm ? `, ${f.volume_cbm} CBM` : ''}`,
     details ? `Details: ${details}` : '', f.remarks ? `Customer remarks: ${f.remarks}` : '',

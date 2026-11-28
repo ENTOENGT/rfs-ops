@@ -6,7 +6,7 @@ import { progressOf } from '../src/lib/commercialRules';
 const now = (d: any) => progressOf(d).steps.findIndex((s) => s.state === 'now');
 test('each stage gives the right step and next action', () => {
   const rate = (q: string | null) => ({ service: 'rate', status: q ? 'quoted' : 'requested', quoted_cost: q });
-  assert.deepEqual([now({ stage: 'enquiry' }), progressOf({ stage: 'enquiry', routes: [{}], can: { edit: true } }).next.label], [1, 'Request vendor rates']);
+  assert.deepEqual([now({ stage: 'enquiry' }), progressOf({ stage: 'enquiry', can: { edit: true } }).next.tab], [1, 'rates']);
   const waiting = progressOf({ stage: 'rates_requested', vendor_requests: [rate('100'), rate(null)] });
   assert.equal(waiting.next.text, 'Waiting for vendor rates (1 of 2 received).');
   assert.deepEqual(waiting.pending, ['1 vendor rate awaited']);

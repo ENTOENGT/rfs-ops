@@ -7,7 +7,7 @@ import { q, one } from './db';
 import { aiConfig } from './ai';
 
 export async function aiActivity(actor: Actor) {
-  if (!aiConfig()) return { working: 0, sorting: 0, drafting: 0, reading: 0, recent: [] };   // no AI key: nothing runs
+  if (!aiConfig().ready) return { working: 0, sorting: 0, drafting: 0, reading: 0, recent: [] };   // no AI key: nothing runs
   const mine = `(f.salesman_id = $1 or f.coordinator_id = $1 or e.created_by = $1)`;
   const w = await one(`select
       (select count(*)::int from outlook_inbox where user_id = $1 and ai_checked_at is null and status in ('screen', 'unmatched') and received_at > now() - interval '3 days') sorting,

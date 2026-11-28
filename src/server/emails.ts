@@ -157,12 +157,17 @@ async function vendorDraft(actor: Actor, id: string, key?: string): Promise<Draf
       RequestDetails: [many && optText ? `Please quote for this option only:\n${optText}` : null, r.description, `Our request no. ${r.request_no}`].filter(Boolean).join('\n\n'),
       RouteOption: opt ? routeLabel(opt) : null, CorrectionNotes: bl?.correction_notes ?? null, BLNumber: bl?.bl_no ?? f.mbl_mawb ?? f.hbl_hawb,
       NeededBy: r.needed_by ? `We need your ${r.service === 'rate' ? 'rate' : 'reply'} by ${D(r.needed_by)}.` : '',
+      // 27 Nov: the customer's target from "Negotiate" on the quotation email (the person changes it to the cost needed)
+      TargetRate: await (async () => { const t = await one(`select a.target_rate, a.target_currency from quote_answers a join quotation_lines l on l.quotation_id = a.quotation_id
+          and (a.route_id is null or l.route_id = a.route_id) where l.vendor_request_id = $1 and a.answer = 'negotiate' and a.target_rate is not null order by a.answered_at desc limit 1`, [r.id]);
+        return t ? `a rate of ${money(t.target_rate, t.target_currency || 'USD')}` : '[the rate you need]'; })(),
       // 26 Nov: the rate we are booking on, as the vendor quoted it (their own figure; only people who see cost get the amount)
       AgreedRate: `Your quotation: ${[r.vendor_reference && `ref. ${r.vendor_reference}`, `our request ${r.request_no}`, r.carrier, r.routing,
         actor.fin.buyingView && r.quoted_cost ? `${money(r.quoted_cost, r.currency || 'USD')}` : null, r.rate_valid_until && `valid until ${D(r.rate_valid_until)}`].filter(Boolean).join(' · ')}`,
       Greeting: `Dear ${r.vendor_contact ? r.vendor_contact.split(' ')[0] : `${r.vendor_name} team`},`, Signature: await signature(actor) };
     const t = await fromTemplate(key!, f, vals);
-    return { kind: 'vendor_request', id, recipients, ...t, note, options, update: key };
+    const warn = key === 'target_rate_request' ? 'The figure is the customer\'s target (selling price). Change it to the cost you need from the vendor before sending.' : undefined;
+    return { kind: 'vendor_request', id, recipients, ...t, note: note ?? warn, options, update: key };
   }
   // other services (trucking, customs, storage…) keep the plain request
   const rate = r.service === 'rate';
@@ -408,6 +413,27 @@ export async function emailPrepared(actor: Actor, b: any) {
 }
 
 /** Outlook Step 2: send the checked email from the person's own Outlook, then note it as sent in the same histories. */
+/**
+ * 27 Nov: the email this one answers, so the customer sees one thread per enquiry and each vendor one thread per shipment:
+ * the latest email from the customer (or from that vendor) filed on the shipment. null = start a new email.
+ */
+export async function threadAnchor(kind: string, id: string): Promise<string | null> {
+  const vendorKinds = ['vendor_request', 'vendor_missing', 'clarify_vendor'];
+  if (vendorKinds.includes(kind)) {
+    const vr = kind === 'clarify_vendor' ? (await one('select vendor_request_id id from scope_issues where id = $1', [id]))?.id : id;
+    const r = vr ? await one('select job_file_id, vendor_id from vendor_requests where id = $1', [vr]) : null;
+    if (!r?.job_file_id) return null;
+    return (await one(`select e.message_id from email_messages e join vendor_requests x on x.id = e.vendor_request_id
+      where e.job_file_id = $1 and x.vendor_id = $2 and e.direction = 'in' and e.message_id is not null order by e.created_at desc limit 1`, [r.job_file_id, r.vendor_id]))?.message_id ?? null;
+  }
+  const fileId = ['job_file', 'enquiry_missing'].includes(kind) ? id
+    : kind === 'quotation' ? (await one('select job_file_id from quotations where id = $1', [id]))?.job_file_id
+    : kind === 'clarify_customer' ? (await one('select job_file_id from scope_issues where id = $1', [id]))?.job_file_id : null;
+  if (!fileId) return null;
+  return (await one(`select e.message_id from email_messages e where e.job_file_id = $1 and e.direction = 'in' and e.vendor_request_id is null and e.message_id is not null
+      and not exists (select 1 from vendors v where lower(v.email) = lower(e.from_addr)) order by e.created_at desc limit 1`, [fileId]))?.message_id ?? null;
+}
+
 export async function emailSend(actor: Actor, b: any) {
   const draft = await emailDraft(actor, { kind: b.kind, id: b.id, update: b.update }); // also re-checks permission
   const { sendMail } = await import('./outlook');
@@ -419,7 +445,8 @@ export async function emailSend(actor: Actor, b: any) {
   let sent: Awaited<ReturnType<typeof sendMail>>;
   try {
     sent = await sendMail(actor.id, { to: Array.isArray(b.to) ? b.to : [], cc: Array.isArray(b.cc) ? b.cc : [],
-      subject: String(b.subject ?? draft.subject), body: text, html: draft.blocks ? toHtml(text, draft.blocks) : undefined, attachments });
+      subject: String(b.subject ?? draft.subject), body: text, html: draft.blocks ? toHtml(text, draft.blocks) : undefined, attachments,
+      replyTo: b.new_thread ? null : await threadAnchor(b.kind, b.id) });
   } catch (e: any) {
     // 26 Nov: a failed send is kept too, so the rates table shows "Failed" (not "Sent", not "Not sent")
     const to = (Array.isArray(b.to) ? b.to : []).map(String), cc = (Array.isArray(b.cc) ? b.cc : []).map(String);

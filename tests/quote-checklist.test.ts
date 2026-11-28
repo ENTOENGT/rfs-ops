@@ -42,8 +42,9 @@ test('a thin sea rate lists what the agent left out; filling it in clears the li
   await vr.vendorRequestAction(cora, id, { status: 'quoted', currency: 'USD', quoted_cost: '1800', transit_days: 22 });
   r = await vr.getVendorRequest(cora, id);
   const labels = r.quote_gaps.map((g: any) => g.label);
-  for (const l of ['Validity', 'Routing (direct / via)', 'Carrier / airline', 'Free days', 'Origin charges', 'Destination charges', 'Equipment availability']) assert.ok(labels.includes(l), l);
-  for (const l of ['Freight rate', 'Currency', 'Transit time', 'Weight breaks']) assert.ok(!labels.includes(l), l);
+  for (const l of ['Validity', 'Routing (direct / via)', 'Carrier / airline', 'Free days', 'Origin charges', 'Equipment availability']) assert.ok(labels.includes(l), l);
+  // 27 Nov: an import's destination side (clearance, delivery) is RFS's own work — never asked of the agent
+  for (const l of ['Freight rate', 'Currency', 'Transit time', 'Weight breaks', 'Destination charges']) assert.ok(!labels.includes(l), l);
   const eq = r.quote_checks.find((c: any) => c.label === 'Equipment availability').id;
   await vr.vendorRequestAction(cora, id, { what: 'quote_details', quote_details: { [eq]: 'Yes, for 20 Nov' } });
   r = await vr.getVendorRequest(cora, id);

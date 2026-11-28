@@ -19,7 +19,13 @@ export function AiRecommend({ fileId, onChanged }: { fileId: string; onChanged: 
   useEffect(() => { load(); }, [fileId]);
   const run = async () => {
     setBusy(true); setErr('');
-    try { setD(await api(`/api/job-files/${fileId}/recommend`, { method: 'POST' })); onChanged(); } catch (e: any) { setErr(e.message); }
+    try { setD(await api(`/api/job-files/${fileId}/recommend`, { method: 'POST' })); onChanged(); setBusy(false); return; } catch (e: any) { setErr(e.message); }
+    // 27 Nov: the AI may still finish (or the background check does it): look again here, without leaving the page
+    for (let i = 0; i < 8; i++) {
+      await new Promise((r) => setTimeout(r, 8000));
+      const x = await api(`/api/job-files/${fileId}/recommend`).catch(() => null);
+      if (x?.current) { setD(x); setErr(''); onChanged(); break; }
+    }
     setBusy(false);
   };
   // the rates changed (or never compared): compare by itself, once per visit
@@ -38,8 +44,8 @@ export function AiRecommend({ fileId, onChanged }: { fileId: string; onChanged: 
       <div className="ai-head"><span className="ai-tag">AI</span><b>Best vendor for this enquiry</b>
         <span className="muted small">— compares the full quotes with what the customer needs, not just the price.</span>
         <span className="spacer" />{d.configured && !busy && <button className="btn small" onClick={run}>{d.current ? 'Compare again' : 'Compare now'}</button>}</div>
-      {busy && <p className="small">Comparing the vendor rates…</p>}
-      {err && <div className="msg err small">{err}</div>}
+      {busy && <p className="small ai-working"><span className="ai-dots" aria-hidden /> Comparing the vendor rates…{err && ' The AI is taking longer than usual; the result appears here by itself.'}</p>}
+      {err && !busy && <div className="msg err small">{err}</div>}
       {r && !busy && <>
         {!d.current && <p className="muted small">The rates changed since this comparison.</p>}
         {r.recommended_request_id

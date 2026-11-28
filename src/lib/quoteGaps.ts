@@ -14,12 +14,15 @@ export const quoteChecksFor = (checks: QuoteCheck[], mode: string | null | undef
 const blank = (v: unknown) => v === null || v === undefined || String(v).trim() === '';
 
 /** r = the request; sections = the charge sections it has (freight / origin / destination / other). */
-export function quoteGaps(r: Record<string, any>, sections: string[], checks: QuoteCheck[], mode: string | null | undefined): QuoteGap[] {
+export function quoteGaps(r: Record<string, any>, sections: string[], checks: QuoteCheck[], mode: string | null | undefined, direction?: string | null): QuoteGap[] {
+  // 27 Nov: the UAE side (clearance, delivery / pickup, local charges) is RFS's own work, priced from our rate cards — never asked of the vendor
+  const uaeSide = direction === 'import' ? 'destination' : direction === 'export' ? 'origin' : null;
+  const ours = (c: QuoteCheck) => !!uaeSide && (c.field_key === uaeSide || (!c.field_key && /customs clearance|clearance charge|delivery|trucking|transportation/i.test(`${c.label} ${c.ask_text}`)));
   const d = r.quote_details ?? {};
   const has = (k: string) => {
     if (k === 'freight') return sections.includes('freight') || (!blank(r.quoted_cost) && Number(r.quoted_cost) > 0);
     if (k === 'origin' || k === 'destination') return sections.includes(k);
     return !blank(r[k]);
   };
-  return quoteChecksFor(checks, mode).filter((c) => c.field_key ? !has(c.field_key) : blank(d[c.id])).map((c) => ({ key: c.id, label: c.label, ask: c.ask_text }));
+  return quoteChecksFor(checks, mode).filter((c) => !ours(c)).filter((c) => c.field_key ? !has(c.field_key) : blank(d[c.id])).map((c) => ({ key: c.id, label: c.label, ask: c.ask_text }));
 }

@@ -359,3 +359,26 @@ export async function dismissQuote(actor: Actor, id: string) {
   await q(`update ai_suggestions set status = 'dismissed', decided_by = $2, decided_at = now() where id = $1`, [id, actor.id]);
   return { ok: true };
 }
+
+/**
+ * 27 Nov: the rate was saved without the vendor's split-up (the tick was off). Add the charge lines the AI read, later.
+ * Only when they add up to the saved rate in its currency; the rate itself does not change (kept as a revision with its reason).
+ */
+export async function addSplitUp(actor: Actor, id: string) {
+  if (!isUuid(id)) throw notFound('Suggestion');
+  if (!canRead(actor)) throw forbidden('Only people who handle rate requests and see cost can change a rate');
+  const s = await one(`select * from ai_suggestions where id = $1 and kind = 'quote' and status = 'applied'`, [id]);
+  if (!s) throw notFound('Saved AI rate');
+  const r = await one('select id, status, quoted_cost, currency from vendor_requests where id = $1', [s.vendor_request_id]);
+  if (!r || !['quoted', 'confirmed'].includes(r.status)) throw new ApiError(409, 'VR_STATE', 'This rate is no longer open to change');
+  if ((await one('select count(*)::int n from vendor_rate_charges where request_id = $1', [r.id])).n) throw bad('This rate already has its split-up');
+  const opts: any[] = Array.isArray(s.answers?.options) && s.answers.options.length ? s.answers.options : [s.answers ?? {}];
+  const sum = (ch: any[]) => Math.round(ch.reduce((t, l) => t + Number(l.quantity) * Number(l.amount) * 100, 0)) / 100;
+  // the option that was saved: its lines add up to the saved rate, in its currency
+  const o = opts.find((x) => Array.isArray(x.charges) && x.charges.length && sum(x.charges) === Number(r.quoted_cost) && x.charges.every((l: any) => l.currency === r.currency));
+  if (!o) throw bad('The split-up the AI read does not add up to the saved rate — add the lines by hand on the request');
+  const { vendorRequestAction } = await import('./vendorreqs');
+  await vendorRequestAction(actor, r.id, { what: 'revise_rate', note: 'Split-up added from the vendor\'s email (read by AI)', currency: r.currency,
+    charges: o.charges.map((l: any) => ({ section: l.section, description: l.description, basis: l.basis, quantity: String(l.quantity), amount: String(l.amount), currency: l.currency, exchange_rate: '1' })) });
+  return { ok: true, lines: o.charges.length };
+}

@@ -20,6 +20,9 @@ export const EMAIL_TEMPLATES: [string, string, EmailContext, string, string][] =
   // 26 Nov (Point 13): before booking, the vendor who gave the approved rate confirms space and rate
   ['availability_check', 'Space and rate confirmation', 'vendor', '{{ThreadSubject}}',
     '{{Greeting}}\n\nThank you for your rate. Our customer has confirmed the shipment below at your quotation. Before we book, please confirm that space and your rate are still available.\n\n{{AgreedRate}}\n\n{{ShipmentDetails}}\n\nPlease reply with the vessel / flight, ETD and the cut-off for the next sailing.\n\n{{Signature}}'],
+  // 27 Nov: the customer asked to negotiate — ask the same vendor for a better rate
+  ['target_rate_request', 'Rate revision (customer target)', 'vendor', '{{ThreadSubject}}',
+    '{{Greeting}}\n\nThank you for your rate. Our customer has asked us to revise the price for the shipment below. To secure the business we need {{TargetRate}}.\n\nPlease check and send us your best possible rate.\n\n{{AgreedRate}}\n\n{{ShipmentDetails}}\n\n{{Signature}}'],
   ['availability_followup', 'Next available sailing', 'vendor', '{{ThreadSubject}}',
     '{{Greeting}}\n\nThank you for letting us know that the quoted space is not available. Please send us the next available sailing or an alternative routing, with the rate, transit time and validity, so we can share it with our customer.\n\n{{ShipmentDetails}}\n\n{{Signature}}'],
   ['prealert_followup', 'Pre-alert follow-up', 'vendor', '{{ThreadSubject}}',
@@ -72,6 +75,7 @@ export const PLACEHOLDERS: [string, string, EmailContext[]][] = [
   ['RequestNumber', 'Rate / booking request number', ['vendor']],
   ['RequestDetails', 'What was asked of the vendor', ['vendor']],
   ['NeededBy', '"We need your rate by …" line', ['vendor']],
+  ['TargetRate', 'The target rate the customer asked for (change it to the cost you need)', ['vendor']],
   ['AgreedRate', 'The vendor\'s rate we agreed, with their quote reference', ['vendor']],
   ['RouteOption', 'The route option this request is for (Option 2 · Ningbo → Jebel Ali)', ['vendor']],
   ['CorrectionNotes', "The customer's BL corrections", ['vendor']],

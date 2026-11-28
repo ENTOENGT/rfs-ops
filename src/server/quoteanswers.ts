@@ -87,7 +87,11 @@ export async function answerQuote(token: string, b: any, ip: string) {
 
 /** In RFS CRM: the answers on a quotation, and "Handled". */
 export async function answersFor(quotationId: string) {
-  return q(`select a.id, a.version_no, a.answer, a.reason, a.target_rate, a.target_currency, a.comment, a.answered_at, a.handled_at, u.full_name handled_by_name,
+  // 27 Nov: vendor_request_id = the freight vendor of that option, to ask them for the customer's target
+  return q(`select a.id, a.route_id, a.version_no, a.answer, a.reason, a.target_rate, a.target_currency, a.comment, a.answered_at, a.handled_at, u.full_name handled_by_name,
+      (select l.vendor_request_id from quotation_lines l join vendor_requests vr on vr.id = l.vendor_request_id join vendors v on v.id = vr.vendor_id
+        where l.quotation_id = a.quotation_id and (a.route_id is null or l.route_id = a.route_id) and coalesce(v.vendor_type, '') not in ('customs_broker', 'transporter', 'warehouse')
+        order by l.sort_order limit 1) vendor_request_id,
       r.option_no, r.pol, r.pod, r.origin_city, r.destination_city, r.label
     from quote_answers a left join enquiry_routes r on r.id = a.route_id left join users u on u.id = a.handled_by
     where a.quotation_id = $1 and a.answer is not null order by a.answered_at desc`, [quotationId]);

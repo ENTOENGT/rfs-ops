@@ -6,6 +6,7 @@ import { api } from '@/components/api';
 import { useMe } from '@/components/Shell';
 import { QuoteFields, emptyLine } from '@/components/QuoteForm';
 import { SERVICE_TYPES } from '@/lib/jobfileRules';
+import { packagesFrom } from '@/lib/cargoRules';
 
 function NewQuotationForm() {
   const { can } = useMe();
@@ -24,7 +25,8 @@ function NewQuotationForm() {
       setF((x: any) => ({ ...x, job_file_id: j.id, customer_id: j.customer_id, direction: j.direction,
         service_type: SERVICE_TYPES.some(([c]) => c === j.mode) ? j.mode : x.service_type, enquiry_reference: j.customer_reference ?? '',
         origin: j.origin ?? j.port_of_loading ?? '', destination: j.destination ?? j.port_of_discharge ?? '', cargo_description: j.cargo_description ?? '',
-        packages: j.packages ?? '', gross_weight_kg: j.gross_weight_kg ?? '', volume_cbm: j.volume_cbm ?? '', chargeable_weight_kg: j.chargeable_weight_kg ?? '' }));
+        packages: j.packages ?? packagesFrom(j.cargo_description) ?? '',   // 27 Nov: "40 pallets" in the cargo text
+        gross_weight_kg: j.gross_weight_kg ?? '', volume_cbm: j.volume_cbm ?? '', chargeable_weight_kg: j.chargeable_weight_kg ?? '' }));
     }).catch((e) => setErr(e.message));
   }, [jobFileId]);
   // Part G1: the default Scope, Exclusions and Terms for this customer / division / mode (only fills empty boxes)

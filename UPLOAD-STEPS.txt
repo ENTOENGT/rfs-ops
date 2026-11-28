@@ -1,4 +1,7 @@
-RFS CRM — fix 27 Nov: quotation page "This page hit a problem" (React error #310)
+RFS CRM — fixes from your Import test, part A (steps 4–17). No database change.
 
-No database change. Upload this 1 file to GitHub (src/components/AiQuoteReply.tsx).
-Commit message: "Fix quotation page error"
+1. Upload all files in this zip to GitHub in ONE commit (same folders).
+   Commit message: "Flow test fixes A: enquiry to quotation"
+2. After it deploys, try again: enquiry Next step → Rates; vendor reply with split-up; Best vendor; Make quotation (valid until, packages);
+   send the quotation (it now replies in the customer's own email thread); press Negotiate → "Ask the vendor for this rate";
+   press Accept on the email → Customer confirmed is filled in.
