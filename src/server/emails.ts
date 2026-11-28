@@ -26,7 +26,7 @@ import { pickEmailTemplate } from './templates';
 export type Recipient = { name: string; email: string; role?: string | null; picked: boolean; place?: 'to' | 'cc'; side?: 'customer' | 'ours'; removable?: boolean };
 export type Draft = { kind: string; id: string; file_id?: string | null; recipients: Recipient[]; subject: string; body: string; note?: string; options?: [string, string][]; update?: string;
   template?: { key: string; name: string; source: string }; missing?: string[];
-  /** 23 Nov: a file attached by itself when sent from Outlook (the quotation PDF) */ attach?: { name: string };
+  /** 23 Nov: a file attached by itself when sent from Outlook (the quotation PDF; 27 Nov: the BL draft, href = its download) */ attach?: { name: string; href?: string };
   /** 23 Nov: parts of the text sent as an HTML table instead (the quotation's charges) */ blocks?: { text: string; html: string }[] };
 
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -157,6 +157,21 @@ async function vendorDraft(actor: Actor, id: string, key?: string): Promise<Draf
       RequestDetails: [many && optText ? `Please quote for this option only:\n${optText}` : null, r.description, `Our request no. ${r.request_no}`].filter(Boolean).join('\n\n'),
       RouteOption: opt ? routeLabel(opt) : null, CorrectionNotes: bl?.correction_notes ?? null, BLNumber: bl?.bl_no ?? f.mbl_mawb ?? f.hbl_hawb,
       NeededBy: r.needed_by ? `We need your ${r.service === 'rate' ? 'rate' : 'reply'} by ${D(r.needed_by)}.` : '',
+      // 27 Nov (booking): what the customer confirmed, at which rate, and the parties (empty ones are flagged before sending)
+      ...(r.service === 'booking' ? await (async () => {
+        const rate = r.rate_request_id ? await one(`select r.request_no, r.quoted_cost, r.currency, r.carrier, r.routing, r.vendor_reference, o.option_no, o.pol, o.pod, o.origin_city, o.destination_city, o.label
+          from vendor_requests r left join enquiry_routes o on o.id = r.route_id where r.id = $1`, [r.rate_request_id]) : null;
+        const p = await one(`select f.shipper, f.consignee, f.notify_party, c.name customer_name, c.address customer_address from job_files f join customers c on c.id = f.customer_id where f.id = $1`, [f.id]);
+        const bk = await one(`select answers from ai_suggestions where job_file_id = $1 and kind = 'booking' and status in ('open', 'applied') order by created_at desc limit 1`, [f.id]);
+        const { bookingChecks, bookingContext } = await import('./bookingreader');
+        const qs = bk ? bookingChecks(await bookingContext(await one('select * from job_files where id = $1', [f.id])), bk.answers) : [];
+        return {
+          BookingQuestions: qs.length ? qs.map((x) => `- ${x}`).join('\n') : null,
+          BookedOption: rate ? [rate.option_no ? routeLabel(rate) : null, [rate.carrier, rate.routing].filter(Boolean).join(', ') || null,
+            `your rate ${rate.vendor_reference ? `${rate.vendor_reference} / ` : ''}our ref. ${rate.request_no}${actor.fin.buyingView && rate.quoted_cost ? ` — ${money(rate.quoted_cost, rate.currency || 'USD')}` : ''}`].filter(Boolean).join(' · ') : null,
+          Shipper: p?.shipper || null, Consignee: p?.consignee || [p?.customer_name, p?.customer_address].filter(Boolean).join(', ') || null, NotifyParty: p?.notify_party || null,
+        };
+      })() : {}),
       // 27 Nov: the customer's target from "Negotiate" on the quotation email (the person changes it to the cost needed)
       TargetRate: await (async () => { const t = await one(`select a.target_rate, a.target_currency from quote_answers a join quotation_lines l on l.quotation_id = a.quotation_id
           and (a.route_id is null or l.route_id = a.route_id) where l.vendor_request_id = $1 and a.answer = 'negotiate' and a.target_rate is not null order by a.answered_at desc limit 1`, [r.id]);
@@ -245,7 +260,7 @@ async function quotationDraft(actor: Actor, id: string, key?: string): Promise<D
 }
 
 // ------------------------------------------------------------ shipment emails to the customer
-const UPDATES: [string, string][] = [['space_unavailable', 'Quoted sailing not available'], ['booking_confirmed', 'Booking confirmed'], ['departed', 'Departed'], ['arrived', 'Arrived'],
+const UPDATES: [string, string][] = [['parties_needed', 'Shipper / consignee details needed'], ['space_unavailable', 'Quoted sailing not available'], ['booking_confirmed', 'Booking confirmed'], ['departed', 'Departed'], ['arrived', 'Arrived'],
   ['customs_cleared', 'Customs cleared'], ['delivered', 'Delivered'], ['documents_needed', 'Documents needed from customer'], ['general', 'General update']];
 async function jobFileDraft(actor: Actor, id: string, choice: string): Promise<Draft> {
   const g = await getJobFile(actor, id);
@@ -269,6 +284,8 @@ async function jobFileDraft(actor: Actor, id: string, choice: string): Promise<D
     delivered: 'Your shipment has been delivered. Thank you for choosing us. If anything is not in order, please let us know.',
     documents_needed: missing.length ? `To avoid delays, please send us the following documents for your shipment:\n${missing.join('\n')}` : 'Please send us the documents for your shipment.',
     general: 'Please see the latest update on your shipment below.',
+    // 27 Nov: before booking — the shipper (collection) and notify party, asked once
+    parties_needed: 'Thank you for confirming. To place the booking we need the shipper / supplier details for the cargo collection: company name, full address, contact person and phone number. Please also confirm the consignee and the notify party (if different from you).',
     // 26 Nov (Point 13): polite note when the approved sailing is gone; the approved option is not changed
     space_unavailable: 'Thank you for confirming the quotation. Unfortunately, the originally quoted sailing is currently unavailable. We are checking the next available option and will share an updated schedule and quotation shortly.',
   };
@@ -276,7 +293,10 @@ async function jobFileDraft(actor: Actor, id: string, choice: string): Promise<D
   const vals = { ...(await shipmentVals(f, false)), UpdateText: upd ? opening[upd] : null, Greeting: dear(recipients, `${f.customer_name} team`), Signature: await signature(actor),
     BLNumber: f.final_bl_no ?? bl?.bl_no ?? f.mbl_mawb ?? f.hbl_hawb };
   const t = await fromTemplate(key, f, vals);
-  return { kind: 'job_file', id, recipients, ...t, options, update: choice,
+  // 27 Nov: the BL draft goes with its email (the latest version)
+  const blDoc = ['bl_draft_to_customer', 'bl_revised_to_customer'].includes(key)
+    ? await one(`select d.id, d.file_name from bl_drafts b join jf_documents d on d.id = b.document_id where b.job_file_id = $1 and d.deleted_at is null order by b.version desc limit 1`, [id]) : null;
+  return { kind: 'job_file', id, recipients, ...t, options, update: choice, ...(blDoc ? { attach: { name: blDoc.file_name, href: `/api/jf-files/${blDoc.id}` } } : {}),
     note: recipients.length ? undefined : 'This customer has no email saved — add one under Customers → contacts.' };
 }
 
@@ -441,7 +461,13 @@ export async function emailSend(actor: Actor, b: any) {
   // 23 Nov: the quotation PDF goes with it (unless unticked), and the charges as a table
   const attachments = draft.attach && b.attach_pdf !== false && b.kind === 'quotation'
     ? await (async () => { const { quotationPdf } = await import('./quotepdf'); const p = await quotationPdf(actor, b.id);
-      return [{ name: p.filename, contentType: 'application/pdf', contentBytes: Buffer.from(p.bytes).toString('base64') }]; })() : [];
+      return [{ name: p.filename, contentType: 'application/pdf', contentBytes: Buffer.from(p.bytes).toString('base64') }]; })()
+    // 27 Nov: a stored file (the BL draft) goes as it is
+    : draft.attach?.href && b.attach_pdf !== false ? await (async () => {
+      const doc = await one('select storage_path, file_name, mime_type from jf_documents where id = $1 and deleted_at is null', [draft.attach!.href!.split('/').pop()]);
+      if (!doc) return [];
+      const { fileStore } = await import('./storage');
+      return [{ name: doc.file_name, contentType: doc.mime_type, contentBytes: (await fileStore().read(doc.storage_path)).toString('base64') }]; })() : [];
   let sent: Awaited<ReturnType<typeof sendMail>>;
   try {
     sent = await sendMail(actor.id, { to: Array.isArray(b.to) ? b.to : [], cc: Array.isArray(b.cc) ? b.cc : [],
@@ -467,9 +493,16 @@ async function recordEmail(actor: Actor, b: any, draft: Draft, to: string[], cc:
   const sent = sentFrom !== null;
   const detail = `To ${to.join(', ') || '(typed in email program)'}${cc.length ? ` · CC ${cc.join(', ')}` : ''} — "${subject}"${sent ? ' — sent from Outlook' : ''}${b.attached?.length ? ` — attached: ${b.attached.join(', ')}` : ''}`;
   const t = (prepared: string, done: string) => failed ? `${done.replace('sent', 'NOT sent')} — sending failed` : sent ? done : prepared;
+  let blMail = null as { fileId: string | null; to: string; corr: boolean } | null;   // set inside the transaction
   await tx(async (c) => {
     let fileId: string | null = null, vr: string | null = null, qid: string | null = null;
     if (b.kind === 'vendor_request' && b.update === 'availability_check' && !failed) await (await import('./availability')).markAvailabilityAsked(c, actor, b.id);
+    // 27 Nov: emailing the BL draft or the corrections moves the BL step on by itself (the person no longer types who it went to)
+    if (sent && !failed && ((b.kind === 'job_file' && ['bl_draft_to_customer', 'bl_revised_to_customer'].includes(String(b.update)))
+      || (b.kind === 'vendor_request' && b.update === 'bl_correction_request'))) blMail = { fileId: b.kind === 'job_file' ? b.id : (await one('select job_file_id from vendor_requests where id = $1', [b.id], c))?.job_file_id, to: to.join(', '), corr: b.kind === 'vendor_request' };
+    // 27 Nov: the customer was told about the booking (by itself or with the button)
+    if (b.kind === 'job_file' && b.update === 'shipment_update:booking_confirmed' && !failed)
+      await c.query('update job_files set booking_mail_at = coalesce(booking_mail_at, now()), booking_mail_error = null where id = $1', [b.id]);
     if (b.kind === 'vendor_request' || b.kind === 'vendor_missing') {
       await c.query('insert into vendor_request_events (request_id, title, details, user_id, user_name) values ($1,$2,$3,$4,$5)',
         [b.id, b.kind === 'vendor_missing' ? 'Missing quote details asked from the agent' : t('Email prepared', 'Email sent'), detail, actor.id, actor.full_name]);
@@ -505,6 +538,14 @@ async function recordEmail(actor: Actor, b: any, draft: Draft, to: string[], cc:
         await (await import('./emailpeople')).rememberTyped(c, actor, fileId, draft.recipients, to, cc);
     }
   });
+  // after the email is on record: the BL step it stands for (only when the step fits where the BL stands)
+  const bm = blMail as { fileId: string | null; to: string; corr: boolean } | null;
+  if (bm?.fileId) {
+    const { blAction } = await import('./routing');
+    const st = (await one('select bl_status from job_files where id = $1', [bm.fileId]))?.bl_status;
+    const step = bm.corr ? (st === 'correction_required' ? 'correction_sent' : null) : (['received', 'under_review', 'revised_received'].includes(st) ? 'send' : null);
+    if (step) await blAction(actor, bm.fileId, { action: 'bl', step, sent_to: bm.to || 'by email' }).catch(() => {});
+  }
 }
 
 // ------------------------------------------------------------ the shipment's Emails tab

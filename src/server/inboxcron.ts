@@ -56,6 +56,10 @@ export async function runBackgroundReads(n = 3) {
   // 26 Nov (Point 13): vendor replies to the availability email
   const { availabilityReplies, readAvailability } = await import('./availability');
   const avail = await availabilityReplies(Math.max(1, n - mails.length));
+  // 27 Nov: the customer's answer to a BL draft
+  const { blReplies, readBlReply } = await import('./blai');
+  const bls = await blReplies(2);
+  if (bls.length) await q('update email_messages set ai_bg_tries = ai_bg_tries + 1 where id = any($1)', [bls.map((m: any) => m.id)]);
   // 27 Nov: the best-vendor comparison is made here as soon as a rate is saved, so it is ready when the person opens the enquiry
   const recs = await q(`select f.id, f.coordinator_id uid from job_files f where f.stage in ('enquiry', 'rates_requested', 'rates_received') and f.coordinator_id is not null
       and exists (select 1 from vendor_requests r where r.job_file_id = f.id and r.service = 'rate' and r.quoted_cost is not null and r.updated_at > now() - interval '30 minutes'   -- shortcut: retried for 30 min if the AI fails, then left to the person's Compare button
@@ -76,6 +80,7 @@ export async function runBackgroundReads(n = 3) {
       return m.service;
     }),
     ...avail.map((m: any) => async () => { const actor = m.uid ? await loadActor(m.uid) : null; if (!actor) return 'skipped'; await readAvailability(actor, m.id); return 'availability'; }),
+    ...bls.map((m: any) => async () => { const actor = m.uid ? await loadActor(m.uid) : null; if (!actor) return 'skipped'; await readBlReply(actor, m.id); return 'bl_reply'; }),
     ...recs.map((m: any) => async () => { const actor = await loadActor(m.uid); if (!actor?.fin.buyingView) return 'skipped'; await (await import('./recommend')).runRecommend(actor, m.id); return 'compare'; }),
     ...drafts.map((m: any) => async () => { const actor = await loadActor(m.user_id); if (!actor) return 'skipped'; await draftEnquiry(actor, m.id); return 'enquiry'; }),
   ];

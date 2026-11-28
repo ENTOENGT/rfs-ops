@@ -79,9 +79,9 @@ export function EmailButton({ kind, id, label = 'Email', className = 'btn', upda
         {d.attach && <div className="attach-row">
           {canSend ? <label className="small" style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
             <input type="checkbox" style={{ width: 'auto' }} checked={attachPdf} onChange={(e) => setAttachPdf(e.target.checked)} />
-            📎 Attach <b>{d.attach.name}</b> (made by RFS CRM){d.blocks && ' · the charges go as a table'}</label>
-            : <span className="small">📎 For "Open in my email": <a href={`/api/quotations/${id}?format=pdf`}>download {d.attach.name}</a> and attach it.</span>}
-          {canSend && <a className="small" href={`/api/quotations/${id}?format=pdf`} target="_blank" rel="noreferrer">See the PDF</a>}
+            📎 Attach <b>{d.attach.name}</b>{d.attach.href ? '' : ' (made by RFS CRM)'}{d.blocks && ' · the charges go as a table'}</label>
+            : <span className="small">📎 For "Open in my email": <a href={d.attach.href ?? `/api/quotations/${id}?format=pdf`}>download {d.attach.name}</a> and attach it.</span>}
+          {canSend && <a className="small" href={d.attach.href ? `${d.attach.href}?view=1` : `/api/quotations/${id}?format=pdf`} target="_blank" rel="noreferrer">See the file</a>}
         </div>}
         {mailto.length > 1900 && <p className="muted small">This email is long. If your email program shows it cut short, use "Copy text" and paste it instead.</p>}
         {copied && <div className="msg ok small">Copied. Paste it into a new email.</div>}

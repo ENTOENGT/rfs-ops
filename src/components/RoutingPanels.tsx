@@ -1,6 +1,6 @@
 'use client';
-import { useState } from 'react';
-import { fmtDate, fmtDateTime } from '@/components/api';
+import { useEffect, useState } from 'react';
+import { api, fmtDate, fmtDateTime } from '@/components/api';
 import { useMe } from '@/components/Shell';
 import { EmailButton } from '@/components/EmailButton';
 import { uploadToShipment } from '@/components/CommercialPanels';
@@ -128,6 +128,7 @@ export function BlPanel({ d, act }: { d: any; act: Act }) {
           <td className="small">{b.customer_reply === 'confirmed' ? <><b style={{ color: '#22543D' }}>Confirmed</b> {fmtDateTime(b.customer_reply_at)}<div className="muted">{b.confirmation_evidence}</div></>
             : b.customer_reply === 'correction' ? <><b style={{ color: '#C53030' }}>Corrections</b><div>{b.correction_notes}</div></> : '—'}</td>
           <td className="small">{b.correction_sent_at ? <>{fmtDateTime(b.correction_sent_at)}<div className="muted">{b.correction_sent_to}</div></> : '—'}</td></tr>)}</tbody></table></div>}
+      {d.can.edit && <BlAi d={d} reload={() => {}} />}
       {d.can.edit && <div style={{ marginTop: 10 }}>
         {(st === 'awaiting' || ['correction_required', 'correction_sent'].includes(st) || amend) && <div className="grid g4" style={{ alignItems: 'end' }}>
           {fileBox(st === 'awaiting' ? 'BL draft from the agent / line' : 'Revised BL draft')}
@@ -160,4 +161,45 @@ export function BlPanel({ d, act }: { d: any; act: Act }) {
       </div>}
     </div>
   );
+}
+
+/**
+ * 27 Nov (flow test point 25): on the BL tab — ask the agent when the draft is late, the AI's check of the draft against the
+ * shipment, and the customer's answer read by the AI (Record uses the normal BL step).
+ */
+function BlAi({ d }: { d: any; reload: () => void }) {
+  const [x, setX] = useState<any>(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+  const [notes, setNotes] = useState<Record<string, string>>({});
+  const load = () => api(`/api/job-files/${d.id}/bl-ai`).then(setX).catch(() => setX(null));
+  useEffect(() => { load(); }, [d.id, d.bl_status, (d.bl_drafts ?? []).length]);
+  const post = async (b: any) => { setBusy(true); setErr(''); try { setX(await api(`/api/job-files/${d.id}/bl-ai`, { body: b })); if (b.action === 'record') window.location.reload(); } catch (e: any) { setErr(e.message); } setBusy(false); };
+  const st = d.bl_status, chk = x?.draft?.ai_check;
+  const load_day = String(d.cutoff_gate ?? d.cutoff_si ?? d.etd ?? '').slice(0, 10);
+  const late = st === 'awaiting' && load_day && load_day < new Date(Date.now() - 864e5).toLocaleDateString('en-CA', { timeZone: 'Asia/Dubai' });
+  return <div style={{ margin: '10px 0' }}>
+    {err && <div className="msg err small">{err}</div>}
+    {st === 'awaiting' && d.booking && <div className={`msg ${late ? 'warn' : ''} small`} style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+      <span>{late ? <><b>No BL draft yet</b> — the cut-off / loading date was {fmtDate(load_day)}.</> : <>Waiting for the BL draft from {d.booking.vendor_name}{load_day ? ` (cut-off / loading ${fmtDate(load_day)})` : ''}.</>}</span>
+      <EmailButton kind="vendor_request" id={d.booking.id} update="bl_draft_followup" className={`btn small${late ? ' primary' : ''}`} label="Ask the agent for the BL draft" /></div>}
+    {x?.draft && x.configured && <div className="ai-box" style={{ marginBottom: 8 }}>
+      <div className="ai-head"><span className="ai-tag">AI</span><b>Check of draft v{x.draft.version}</b><span className="spacer" />
+        <button className="btn small" disabled={busy} onClick={() => post({ action: 'check' })}>{busy ? 'Reading the draft…' : chk && chk.version === x.draft.version ? 'Check again' : 'Check with AI'}</button></div>
+      {chk && chk.version === x.draft.version && <>
+        {chk.summary && <p className="small" style={{ margin: '4px 0' }}>{chk.summary}</p>}
+        {chk.differences.length === 0 && chk.not_on_draft.length === 0 ? <p className="small" style={{ color: '#22543D', margin: 0 }}>No differences with the shipment record.</p> : <ul className="small" style={{ margin: '4px 0 0 18px', padding: 0 }}>
+          {chk.differences.map((v: any, i: number) => <li key={i}><b>{v.field}</b>: draft says "{v.on_draft || '—'}", our record "{v.on_record || '—'}"</li>)}
+          {chk.not_on_draft.map((v: string, i: number) => <li key={`n${i}`}><b>{v}</b>: empty on the draft</li>)}</ul>}</>}
+    </div>}
+    {(x?.replies ?? []).map((r: any) => <div key={r.id} className="ai-box" style={{ marginBottom: 8 }}>
+      <div className="ai-head"><span className="ai-tag">AI</span><b>{r.answers.answer === 'confirmed' ? 'The customer confirmed the BL draft' : 'The customer asks for corrections'}</b>
+        <span className="muted small">— {r.from_name || r.from_addr}, {fmtDateTime(r.sent_at)}</span></div>
+      {r.answers.quote && <p className="small" style={{ margin: '4px 0' }}>"{r.answers.quote}"</p>}
+      {r.answers.answer === 'corrections' && <textarea rows={3} style={{ width: '100%' }} value={notes[r.id] ?? r.answers.corrections ?? ''} onChange={(e) => setNotes({ ...notes, [r.id]: e.target.value })} aria-label="Corrections" />}
+      <div style={{ display: 'flex', gap: 6, marginTop: 6 }}>
+        <button className="btn small primary" disabled={busy} onClick={() => post({ action: 'record', id: r.id, notes: notes[r.id] })}>{r.answers.answer === 'confirmed' ? 'Record: customer confirmed' : 'Record the corrections'}</button>
+        <button className="btn small" disabled={busy} onClick={() => post({ action: 'dismiss', id: r.id })}>Dismiss</button></div>
+    </div>)}
+  </div>;
 }

@@ -1,7 +1,13 @@
-RFS CRM — fixes from your Import test, part A (steps 4–17). No database change.
+RFS CRM — fixes from your Import test, part B (steps 18–25)
 
-1. Upload all files in this zip to GitHub in ONE commit (same folders).
-   Commit message: "Flow test fixes A: enquiry to quotation"
-2. After it deploys, try again: enquiry Next step → Rates; vendor reply with split-up; Best vendor; Make quotation (valid until, packages);
-   send the quotation (it now replies in the customer's own email thread); press Negotiate → "Ask the vendor for this rate";
-   press Accept on the email → Customer confirmed is filled in.
+1. In Supabase → SQL Editor, run  db/migrations/048_booking_and_bl.sql  (safe to run twice; nothing is removed).
+2. Upload all files in this zip to GitHub in ONE commit (same folders).
+   Commit message: "Flow test fixes B: booking to BL"
+3. Re-test from step 18 of your checklist:
+   - Booking tab: "Ask availability first" is now optional; Proceed to booking is the main step.
+   - Fill Shipper / Consignee / Notify (or press "Ask the customer" when the shipper is missing) → Send booking request → Email booking.
+   - When the line's confirmation is read by the AI, differences from your request show with an "Ask the vendor" button.
+   - Save the booking confirmation → the customer is emailed by itself (a green note says so; if not, the reason and an "Email customer" button).
+   - BL documents tab: waiting for the BL draft; the day after the cut-off you get a reminder and "Ask the agent for the BL draft".
+   - Save the draft → "Check with AI" → "Email draft to customer" (the file goes with it and the step moves on by itself).
+   - The customer's reply is read by the AI → "Record the corrections" / "Record: customer confirmed" → "Email corrections to agent / line".

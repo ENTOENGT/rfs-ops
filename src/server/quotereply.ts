@@ -66,6 +66,10 @@ const TOOL = {
       target_currency: { type: 'string' },
       question: { type: 'string', description: 'When question: their question, short.' },
       chosen_option: { type: 'integer', description: 'When accepted and the quotation had route options: the option number they chose.' },
+      // 27 Nov: the parties for the booking, when the customer gives them with the confirmation
+      shipper: { type: 'string', description: 'Shipper / supplier for collection, as they wrote it: company, address, contact person and phone. Only if they give it.' },
+      consignee: { type: 'string', description: 'Consignee, as they wrote it. Only if they give it.' },
+      notify_party: { type: 'string', description: 'Notify party, as they wrote it. Only if they give it.' },
       quote: { type: 'string', description: 'The few words that show their answer (copied, max 160 characters).' },
       summary: { type: 'string', description: 'One short sentence.' },
     },
@@ -99,6 +103,7 @@ export async function readReply(actor: Actor, quotationId: string, emailId: stri
     target_currency: String(a?.target_currency ?? '').trim().toUpperCase().slice(0, 3) || null,
     question: String(a?.question ?? '').slice(0, 400) || null,
     chosen_option: Number.isInteger(a?.chosen_option) ? a.chosen_option : null,
+    shipper: String(a?.shipper ?? '').slice(0, 600) || null, consignee: String(a?.consignee ?? '').slice(0, 600) || null, notify_party: String(a?.notify_party ?? '').slice(0, 600) || null,
     quote: String(a?.quote ?? '').slice(0, 200) || null,
   };
   const s = await one(`insert into ai_suggestions (job_file_id, email_id, kind, status, summary, answers, unclear, model, read_by)
@@ -130,6 +135,10 @@ export async function applyReply(actor: Actor, id: string, b: any) {
     let route_id = b?.route_id;
     if (!route_id && s.answers.chosen_option) route_id = (await one('select id from enquiry_routes where job_file_id = $1 and option_no = $2', [x.job_file_id, s.answers.chosen_option]))?.id;
     await quotationAction(actor, qid, { action: 'accept', route_id, evidence_note: `Confirmed by email from ${who} on ${when}: "${said || 'confirmed'}"` });
+    // 27 Nov: shipper / consignee / notify they gave with the confirmation go on the shipment (never over what is already there)
+    const party = (v: unknown) => { const t = String(v ?? '').trim(); return t && !/^(n\/?a|not (given|stated)|tbc|tba)$/i.test(t) ? t.slice(0, 600) : null; };
+    await q(`update job_files set shipper = coalesce(shipper, $2), consignee = coalesce(consignee, $3), notify_party = coalesce(notify_party, $4) where id = $1`,
+      [x.job_file_id, party(s.answers.shipper), party(s.answers.consignee), party(s.answers.notify_party)]);
   } else if (action === 'changes') {
     const what = [...(s.answers.changes ?? []), s.answers.target_price ? `target ${s.answers.target_currency ?? x.currency} ${s.answers.target_price}` : ''].filter(Boolean).join('; ');
     await quotationAction(actor, qid, { action: 'response', response: 'revision_requested', note: String(b?.note ?? '').trim() || `${what || said} (email from ${who}, ${when})` });

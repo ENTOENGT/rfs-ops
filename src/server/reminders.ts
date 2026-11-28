@@ -23,10 +23,10 @@ async function once(c: any, fileId: string, kind: string, forDate: string | null
 export async function runShipmentReminders(today = dubai()) {
   const live = `f.deleted_at is null and f.status not in ('closed', 'cancelled') and coalesce(f.stage, '') <> 'lost'
     and (f.booking_reference is not null or f.vessel_flight is not null)`;
-  const rows = await q(`select f.id, to_char(f.etd, 'YYYY-MM-DD') etd, to_char(f.eta, 'YYYY-MM-DD') eta, f.atd, f.ata, f.vessel_flight, f.voyage, f.mode,
+  const rows = await q(`select f.id, f.bl_status, f.enquiry_ref, to_char(f.etd, 'YYYY-MM-DD') etd, to_char(f.eta, 'YYYY-MM-DD') eta, f.atd, f.ata, f.vessel_flight, f.voyage, f.mode,
       to_char(f.cutoff_si, 'YYYY-MM-DD HH24:MI') cutoff_si, to_char(f.cutoff_vgm, 'YYYY-MM-DD HH24:MI') cutoff_vgm, to_char(f.cutoff_gate, 'YYYY-MM-DD HH24:MI') cutoff_gate
     from job_files f where ${live} limit 2000`);
-  const sent: Record<string, number> = { etd_passed: 0, eta_soon: 0, eta_changed: 0, cutoff_soon: 0 };
+  const sent: Record<string, number> = { etd_passed: 0, eta_soon: 0, eta_changed: 0, cutoff_soon: 0, bl_draft_late: 0 };
   for (const f of rows) {
     await tx(async (c) => {
       const what = f.mode === 'air' ? 'flight' : 'vessel';
@@ -44,6 +44,11 @@ export async function runShipmentReminders(today = dubai()) {
           const told = await one(`select 1 from notifications where job_file_id = $1 and event in ('vessel_changed', 'eta_changed') and created_at > now() - interval '6 hours' limit 1`, [f.id], c);
           if (!told) { await notifyGroup(c, null, f.id, 'eta_changed', `from ${fmt(last.d)} to ${fmt(f.eta)}`); sent.eta_changed++; }
         }
+      }
+      // 27 Nov: by sea, the day after the cut-off / loading date and still no BL draft — ask the agent (once per date)
+      const loading = (f.cutoff_gate ?? f.cutoff_si ?? f.etd ?? '').slice(0, 10);
+      if (f.enquiry_ref && !['air', 'road'].includes(f.mode) && f.bl_status === 'awaiting' && loading && loading < today && await once(c, f.id, 'bl_draft_late', loading)) {
+        await notifyGroup(c, null, f.id, 'bl_draft_late', `cut-off / loading was ${fmt(loading)} — ask the agent for the loading status and the BL draft`); sent.bl_draft_late++;
       }
       if (!f.atd) for (const [k, label] of [['cutoff_si', 'SI / documents'], ['cutoff_vgm', 'VGM'], ['cutoff_gate', 'port / gate-in']] as const) {
         const v: string | null = f[k];

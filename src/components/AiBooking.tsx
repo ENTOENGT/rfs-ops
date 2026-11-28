@@ -1,5 +1,6 @@
 'use client';
 import { useEffect, useRef, useState } from 'react';
+import { EmailButton } from './EmailButton';
 import { api, fmtDate, fmtDateTime } from './api';
 
 const KIND: Record<string, [string, string]> = { confirmation: ['Booking confirmed', 'rec-best'], update: ['Update', 'rec-ok'], pending: ['Still pending', 'rec-ok'] };
@@ -46,6 +47,10 @@ export function AiBooking({ fileId, onChanged }: { fileId: string; onChanged: ()
           <b>{s.from_name || s.from_addr}</b> · {fmtDateTime(s.sent_at)} — {s.summary}</p>
         {a.quote && <span className="ai-quote">“{a.quote}”</span>}
         {(s.unclear ?? []).map((u: any, i: number) => <p key={i} className="small" style={{ color: '#B7791F', margin: '2px 0' }}>{u.note}</p>)}
+        {/* 27 Nov: what differs from our booking request or is missing — ask the vendor in one email */}
+        {(s.checks ?? []).length > 0 && <div className="msg warn small" style={{ margin: '6px 0' }}><b>Check with {d.booking.vendor_name}:</b>
+          <ul style={{ margin: '4px 0 6px 18px', padding: 0 }}>{s.checks.map((x: string, i: number) => <li key={i}>{x}</li>)}</ul>
+          <EmailButton kind="vendor_request" id={d.booking.id} update="booking_query" className="btn small primary" label="Ask the vendor" /></div>}
         {nothing && <p className="small muted" style={{ margin: '4px 0' }}>Everything in this email is already on the shipment.</p>}
         {s.changes.length > 0 && <div className="table-wrap"><table className="t compact" style={{ marginTop: 6 }}>
           <thead><tr><th style={{ width: 28 }}></th><th>Detail</th><th>On the shipment now</th><th>The email says</th></tr></thead>

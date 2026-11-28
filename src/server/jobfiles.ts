@@ -461,7 +461,7 @@ export function closureBlockers(f: any, w: { trips: any[]; pro: any[]; runs: any
 export async function getJobFile(actor: Actor, id: string) {
   const f = await loadFile(actor, id);
   const [extra, containers, milestones, events, work] = await Promise.all([
-    one(`select c.name customer_name, c.service_instructions, dep.name department_name, u.full_name created_by_name, cb.full_name closed_by_name,
+    one(`select c.name customer_name, c.address customer_address, c.service_instructions, dep.name department_name, u.full_name created_by_name, cb.full_name closed_by_name,
        sm.full_name salesman_name, co.full_name coordinator_name, cf.full_name confirmed_by_name, ho.full_name handed_over_by_name,
        (select x.full_name from users x where x.id = f.cs_handler_id) cs_handler_name,
        (select x.full_name from users x where x.id = f.ops_handler_id) ops_handler_name, (select x.full_name from users x where x.id = f.docs_handler_id) docs_handler_name,

@@ -23,7 +23,7 @@ export const EVENTS: [string, string][] = [
   ['handed_over', 'Operational job created and handed over'], ['email_saved', 'Email saved on the shipment'],
   // migration 042: tracking and reminders
   ['sailed', 'Vessel sailed'], ['arrived', 'Vessel arrived'], ['etd_passed', 'ETD passed — sailing not confirmed'],
-  ['eta_soon', 'Arriving in 2 days'], ['eta_changed', 'ETA changed'], ['cutoff_soon', 'Cut-off tomorrow'],
+  ['eta_soon', 'Arriving in 2 days'], ['eta_changed', 'ETA changed'], ['cutoff_soon', 'Cut-off tomorrow'], ['bl_draft_late', 'BL draft not received'],
 ];
 export const eventName = (c: string | null | undefined) => EVENTS.find(([k]) => k === c)?.[1] ?? c ?? '';
 

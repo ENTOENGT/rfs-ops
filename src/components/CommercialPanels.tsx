@@ -227,7 +227,8 @@ export function BookingPanel({ d, act, reload }: { d: any; act: (b: any, done?: 
   const rates = (d.vendor_requests ?? []).filter((r: any) => r.service === 'rate' && r.status !== 'cancelled' && r.quoted_cost !== null
     && (!d.selected_route_id || !r.route_id || r.route_id === d.selected_route_id));
   const preferred = rates.find((r: any) => r.id === d.approved_rate?.id) ?? rates.find((r: any) => r.status === 'confirmed') ?? rates.find((r: any) => r.lowest) ?? rates[0];
-  const [b, setB] = useState<any>({ rate_request_id: preferred?.id ?? '', needed_by: '', description: '' });
+  const [b, setB] = useState<any>({ rate_request_id: preferred?.id ?? '', needed_by: '', description: '',
+    shipper: d.shipper ?? '', consignee: d.consignee ?? [d.customer_name, d.customer_address].filter(Boolean).join(', '), notify_party: d.notify_party ?? '' });
   const [c, setC] = useState<any>({ booking_reference: '', carrier: d.carrier ?? '', vessel_flight: d.vessel_flight ?? '', voyage: d.voyage ?? '', etd: d.etd ?? '', eta: d.eta ?? '', prealert_expected: '',
     booking_confirmed_on: new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Dubai' }), port_of_loading: d.port_of_loading ?? '', port_of_discharge: d.port_of_discharge ?? '', booked_equipment: '', routing_type: 'direct' });
   const [bcFile, setBcFile] = useState<File | null>(null);
@@ -236,6 +237,11 @@ export function BookingPanel({ d, act, reload }: { d: any; act: (b: any, done?: 
   return (
     <div className="panel"><h2>Booking</h2>
       {d.can.book && <Availability d={d} act={act} reload={reload} />}
+      {/* 27 Nov: the customer is told by itself when the booking is confirmed */}
+      {d.booking_mail_at && <div className="msg ok small">Booking confirmation emailed to the customer {fmtDateTime(d.booking_mail_at)}.</div>}
+      {!d.booking_mail_at && d.booking_mail_error && <div className="msg warn small" style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+        <span>The customer was not emailed about the booking: {d.booking_mail_error}</span>
+        <EmailButton kind="job_file" id={d.id} update="shipment_update:booking_confirmed" className="btn small" label="Email customer" /></div>}
       {d.booking && <p className="small" style={{ marginTop: 0 }}>Booking request <Link href={`/vendor-requests/${d.booking.id}`}><b>{d.booking.request_no}</b></Link> with {d.booking.vendor_name}
         {' '}— {d.booking.status === 'confirmed' ? <>confirmed{d.booking.vendor_reference && <>, ref. <b>{d.booking.vendor_reference}</b></>}</> : d.booking.status}
         {' '}<EmailButton kind="vendor_request" id={d.booking.id} className="btn small" label="Email booking" /></p>}
@@ -245,6 +251,14 @@ export function BookingPanel({ d, act, reload }: { d: any; act: (b: any, done?: 
           <label className="f span2"><span>Book with (the rate used)</span><select value={b.rate_request_id} onChange={(e) => setB({ ...b, rate_request_id: e.target.value })}>
             {rates.map((r: any) => <option key={r.id} value={r.id}>{r.vendor_name} — {r.request_no}{me.financial_access.buyingView && r.quoted_cost ? ` — ${fmtMoney(r.quoted_cost, r.currency)}` : ''}{r.lowest ? ' (lowest)' : ''}</option>)}</select></label>
           <label className="f"><span>Confirmation needed by</span><input type="date" value={b.needed_by} onChange={(e) => setB({ ...b, needed_by: e.target.value })} /></label>
+          {/* 27 Nov: the parties go in the booking email; the consignee is our customer unless they said otherwise */}
+          <label className="f span3"><span>Shipper / supplier for collection <em>*</em></span><textarea rows={2} value={b.shipper} placeholder="Company, address, contact person, phone"
+            onChange={(e) => setB({ ...b, shipper: e.target.value })} /></label>
+          <label className="f"><span>Consignee</span><textarea rows={2} value={b.consignee} onChange={(e) => setB({ ...b, consignee: e.target.value })} /></label>
+          <label className="f span2"><span>Notify party</span><textarea rows={2} value={b.notify_party} placeholder="Same as consignee, or the name and address" onChange={(e) => setB({ ...b, notify_party: e.target.value })} /></label>
+          {(!b.shipper.trim() || !b.notify_party.trim()) && <div className="span3 msg warn small" style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', margin: 0 }}>
+            <span>{[!b.shipper.trim() && 'Shipper details missing', !b.notify_party.trim() && 'notify party not clear'].filter(Boolean).join(' · ')} — the customer did not send them.</span>
+            <EmailButton kind="job_file" id={d.id} update="shipment_update:parties_needed" className="btn small" label="Ask the customer" /></div>}
           <label className="f span3"><span>Booking instructions (optional)</span><textarea rows={2} value={b.description} onChange={(e) => setB({ ...b, description: e.target.value })}
             placeholder="Shipper, cargo ready date, special handling…" /></label>
         </div>}
@@ -294,7 +308,8 @@ function Availability({ d, act, reload }: { d: any; act: (b: any, done?: string)
   const box = (tone: string, children: React.ReactNode) => <div className={`msg ${tone}`} style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>{children}</div>;
   return (
     <div style={{ marginBottom: 12 }} role="region" aria-label="Vendor availability">
-      {!a && box('', <><span><b>{approved}.</b> Confirm space and rate with {r.vendor_name} ({r.request_no}) before booking.</span><span className="spacer" />{ask('Prepare availability email')}</>)}
+      {!a && <p className="small" style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', margin: '0 0 4px' }}>
+        <span><b>{approved}.</b> Optional: ask {r.vendor_name} to confirm space and rate before you book.</span>{ask('Ask availability first', 'btn small')}</p>}
       {a?.status === 'sent' && !no && box('warn', <><span>Waiting for {a.vendor_name} to confirm availability — asked {fmtDateTime(a.sent_at)}. Their reply is read automatically.</span><span className="spacer" />
         <button className="btn small" onClick={() => act({ action: 'availability', result: 'confirmed' }, 'Availability confirmed — go ahead with the booking')}>Vendor confirmed</button>
         <button className="btn small" onClick={() => setNo({ reason: '', alternative: '' })}>Not available</button></>)}

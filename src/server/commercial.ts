@@ -239,6 +239,11 @@ export async function requestBooking(actor: Actor, fileId: string, b: any) {
     if (f.selected_route_id && r.route_id && r.route_id !== f.selected_route_id) throw bad('This rate is for a route option the customer did not choose');
     const open = f.booking_vendor_request_id && await one(`select request_no from vendor_requests where id = $1 and status not in ('cancelled')`, [f.booking_vendor_request_id], c);
     if (open) throw new ApiError(409, 'BOOKING_OPEN', `Booking ${open.request_no} is already open. Cancel it first to book with another vendor.`);
+    // 27 Nov: the parties for the booking, as checked on the screen (shipper = where the cargo is collected)
+    const party = (v: unknown) => (v === undefined ? undefined : txt(v, 600));
+    const parties = { shipper: party(b.shipper), consignee: party(b.consignee), notify_party: party(b.notify_party) };
+    for (const [k, v] of Object.entries(parties)) if (v !== undefined && String(v ?? '') !== String(f[k] ?? ''))
+      await c.query(`update job_files set ${k} = $2, updated_at = now() where id = $1`, [fileId, v]);
     const { createVendorRequest, vendorRequestAction } = await import('./vendorreqs');
     const instructions = txt(b.description, 2000) ?? `Please book as per your rate ${r.request_no}${r.vendor_reference ? ` (your ref. ${r.vendor_reference})` : ''}.`;
     const made = await createVendorRequest(actor, { vendor_id: r.vendor_id, service: 'booking', job_file_id: fileId, description: instructions,
@@ -298,8 +303,30 @@ export async function confirmBooking(actor: Actor, fileId: string, b: any) {
     await jfEvent(c, actor, fileId, { kind: 'status', title: `Booking confirmed — ${ref}`, new_value: expected ? `Pre-alert expected ${expected}` : null, remarks: txt(b.note, 500) });
     await setStage(c, actor, fileId, 'prealert_awaited');
   });
+  await bookingMail(actor, fileId);
   const { getJobFile } = await import('./jobfiles');
   return getJobFile(actor, fileId);
+}
+
+/**
+ * 27 Nov: when the booking is confirmed the customer is told by itself, once — from the person's Outlook, in the customer's
+ * thread, with the "Booking confirmed" update (booking ref., vessel, ETD, ETA). If it cannot go, the reason shows on the Booking tab.
+ */
+export async function bookingMail(actor: Actor, fileId: string) {
+  const f = await one('select booking_mail_at from job_files where id = $1', [fileId]);
+  if (!f || f.booking_mail_at) return;
+  const fail = (why: string) => q('update job_files set booking_mail_error = $2 where id = $1', [fileId, why.slice(0, 300)]);
+  try {
+    const { canSend } = await import('./outlook');
+    if (!(await canSend(actor.id))) return void (await fail('Your Outlook is not connected here — use "Email customer" to send it.'));
+    const { emailDraft, emailSend } = await import('./emails');
+    const update = 'shipment_update:booking_confirmed';
+    const d = await emailDraft(actor, { kind: 'job_file', id: fileId, update });
+    const pick = (place: 'to' | 'cc') => d.recipients.filter((r) => r.picked && (r.place ?? 'to') === place).map((r) => r.email);
+    if (!pick('to').length) return void (await fail('The customer has no email saved — add one under Customers → contacts.'));
+    await emailSend(actor, { kind: 'job_file', id: fileId, update, to: pick('to'), cc: pick('cc'), subject: d.subject, body: d.body });
+    await q('update job_files set booking_mail_at = now(), booking_mail_error = null where id = $1', [fileId]);
+  } catch (e: any) { await fail(`Not sent: ${String(e?.message ?? e)}`); }
 }
 
 // ------------------------------------------------------------ pre-alert

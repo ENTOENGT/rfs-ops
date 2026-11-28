@@ -20,6 +20,7 @@ import { readAttachments } from './attachments';
 import { canEdit, event, loadFile } from './jobfiles';
 import { blank, isBounce, lineOnly } from './quotereader';
 import { containerCheckOk } from './pro';
+import { containersFrom } from './localcharges';
 
 const isUuid = (v: unknown): v is string => typeof v === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v);
 const today = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Dubai' });
@@ -74,6 +75,13 @@ const bookingOf = (f: any) => (f.booking_vendor_request_id
   : Promise.resolve(null));
 
 // ------------------------------------------------------------------ the box on the shipment
+/** The shipment plus what the booking was asked on: the approved rate's line and ETD, and the containers asked for. */
+export async function bookingContext(f: any) {
+  const rate = f.booking_vendor_request_id ? await one(`select r.carrier, to_char(r.etd, 'YYYY-MM-DD') etd from vendor_requests b join vendor_requests r on r.id = b.rate_request_id where b.id = $1`, [f.booking_vendor_request_id]) : null;
+  const k = containersFrom([f.booked_equipment, f.cargo_description].filter(Boolean).join(' '));
+  return { ...f, rate_carrier: rate?.carrier ?? null, rate_etd: rate?.etd ?? null, containers_n: k, containers_wanted: k ? [k.n20 && `${k.n20}x20`, k.n40 && `${k.n40}x40`].filter(Boolean).join(', ') : null };
+}
+
 export async function bookingBox(actor: Actor, fileId: string) {
   const f = await fileFor(actor, fileId);
   if (!canEdit(actor, f)) return { allowed: false };
@@ -89,9 +97,33 @@ export async function bookingBox(actor: Actor, fileId: string) {
     where s.job_file_id = $1 and s.kind = 'booking' order by e.sent_at desc nulls last`, [fileId]);
   const conts = await q('select container_no from job_file_containers where job_file_id = $1 and deleted_at is null', [fileId]);
   const have = new Set(conts.map((k: any) => k.container_no));
-  const open = sugs.filter((s: any) => s.status === 'open').map((s: any) => ({ ...s, changes: changesFor(f, s.answers), new_containers: (s.answers.containers ?? []).filter((k: any) => !have.has(k.container_no)) }));
+  const g = await bookingContext(f);
+  const open = sugs.filter((s: any) => s.status === 'open').map((s: any) => ({ ...s, checks: bookingChecks(g, s.answers), changes: changesFor(f, s.answers), new_containers: (s.answers.containers ?? []).filter((k: any) => !have.has(k.container_no)) }));
   return { allowed: true, watching: true, configured: aiConfig().ready, stage: f.stage, booking: vr, first: f.stage === 'booking_requested',
     open, done: sugs.filter((s: any) => s.status !== 'open').slice(0, 8), unread: mails.filter((m: any) => !sugs.some((s: any) => s.email_id === m.id)).slice(0, 5) };
+}
+
+/**
+ * 27 Nov: what we asked for against what the vendor booked — differences and missing essentials, each to ask the vendor about.
+ * f = the shipment (with the approved rate's carrier / ETD as rate_carrier / rate_etd), a = what the AI read.
+ */
+export function bookingChecks(f: any, a: any): string[] {
+  const v = a?.fields ?? {};
+  const out: string[] = [];
+  const has = (k: string) => v[k] !== null && v[k] !== undefined && String(v[k]).trim() !== '';
+  const norm = (x: unknown) => String(x ?? '').toLowerCase().replace(/[^a-z0-9]/g, '');
+  const same = (x: unknown, y: unknown) => { const p = norm(x), q2 = norm(y); return !p || !q2 || p.includes(q2) || q2.includes(p); };
+  if (has('carrier') && f.rate_carrier && !same(v.carrier, f.rate_carrier)) out.push(`Line is ${v.carrier}, but your rate was with ${f.rate_carrier} — please confirm the rate and terms stay the same.`);
+  if (has('port_of_loading') && f.port_of_loading && !same(v.port_of_loading, f.port_of_loading)) out.push(`Port of loading is ${v.port_of_loading}; we asked for ${f.port_of_loading}.`);
+  if (has('port_of_discharge') && f.port_of_discharge && !same(v.port_of_discharge, f.port_of_discharge)) out.push(`Port of discharge is ${v.port_of_discharge}; we asked for ${f.port_of_discharge}.`);
+  const got = has('booked_equipment') ? containersFrom(v.booked_equipment) : null, want = f.containers_n;
+  if (got && want && (got.n20 !== want.n20 || got.n40 !== want.n40)) out.push(`Containers booked: ${v.booked_equipment}; we asked for ${f.containers_wanted}.`);
+  if (has('etd') && f.rate_etd && Math.abs(+new Date(v.etd) - +new Date(f.rate_etd)) > 3 * 864e5) out.push(`ETD is ${v.etd}; your rate was for a sailing around ${f.rate_etd}.`);
+  const need: [string, string][] = [['booking_reference', 'the booking number'], ['vessel_flight', f.mode === 'air' ? 'the flight' : 'the vessel name and voyage'], ['etd', 'the ETD'], ['eta', 'the ETA'],
+    ...(f.mode === 'air' ? [] : [['cutoff_si', 'the SI / documents cut-off'], ['cutoff_gate', 'the port / gate-in cut-off']] as [string, string][])];
+  const miss = need.filter(([k]) => !has(k) && !(k === 'vessel_flight' && f.vessel_flight)).map(([, l]) => l);
+  if (miss.length) out.push(`Please send ${miss.join(', ')}.`);
+  return out;
 }
 
 /** old → new for every detail the email gives that is not already on the shipment. */
